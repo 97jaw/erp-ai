@@ -1,0 +1,48 @@
+# OOA Docker Compose — Development
+# Three services per Phase 4 architecture:
+#   gateway      : FastAPI (STT/TTS)
+#   orchestrator : LangGraph + Claude
+#   odoo_bridge  : Version Adapters
+
+version: "3.9"
+
+services:
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/gateway.Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      - orchestrator
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: docker/orchestrator.Dockerfile
+    env_file: .env
+    depends_on:
+      - odoo_bridge
+      - postgres
+
+  odoo_bridge:
+    build:
+      context: .
+      dockerfile: docker/bridge.Dockerfile
+    env_file: .env
+    volumes:
+      - .cache:/app/.cache   # Persist schema cache across restarts
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ooa_sessions
+      POSTGRES_USER: ooa
+      POSTGRES_PASSWORD: changeme
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

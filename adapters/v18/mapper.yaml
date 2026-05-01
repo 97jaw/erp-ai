@@ -1,0 +1,15 @@
+# Odoo 18 — Tier-1 Semantic Registry
+# ====================================
+# Same canonical terms, mapped to v18 technical names.
+# Differences from v14 are documented inline.
+#
+# Standard Models
+customer: res.partner
+invoice: account.move        # Same as v14
+stock: stock.quant
+sale_order: sale.order
+purchase_order: purchase.order
+employee: hr.employee
+#
+# v18-specific: journal entries field renames handled here
+# journal: account.journal

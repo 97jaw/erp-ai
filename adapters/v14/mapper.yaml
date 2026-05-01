@@ -1,0 +1,21 @@
+# Odoo 14 — Tier-1 Semantic Registry
+# ====================================
+# Maps human/canonical terms to Odoo 14 technical names.
+# Used BEFORE live ir.model.fields discovery (Tier-2).
+#
+# Format:
+#   canonical_term: odoo_technical_name
+#
+# Standard Models
+customer: res.partner
+invoice: account.move
+stock: stock.quant
+sale_order: sale.order
+purchase_order: purchase.order
+employee: hr.employee
+#
+# Custom: marketplace_core
+vendor: marketplace.vendor
+payout: marketplace.payout
+commission: marketplace.commission.rule
+marketplace_stats: marketplace.stats
