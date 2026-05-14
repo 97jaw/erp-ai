@@ -1,0 +1,31 @@
+# Cursor AI Rules for Odoo Omni-Agent
+
+## CRITICAL — READ FIRST
+1. PRODUCT_QUALITY_FRAMEWORK.md is the law
+2. Every response must pass the "CFO test"
+3. No raw API syntax visible to users
+4. All money formatted as "AED X,XXX,XXX"
+5. Comparison queries MUST use BAR_CHART, not nested lists
+6. Zero-data results MUST trigger retry or explanation
+
+## Before Implementing
+- Read PROJECT_CONTEXT.md
+- Check task files (TASKS_FEATURES.md, TASKS_ARCHITECTURE.md)
+- Reference appropriate plan (BACKEND_HARDENING_PLAN.md, etc.)
+
+## Code Quality
+- Apply 7-layer quality pipeline
+- Run validate_response_quality before returning
+- Add test case to quality suite
+- Match visualization to user intent
+
+## Output Standards
+- Numbers: format_currency, format_percentage helpers
+- Fields: humanize via FIELD_LABELS dict
+- Narratives: 2-3 sentences with key insight
+- Errors: user-friendly, never raw stack traces
+
+## Production Mindset
+This is Claude — the most advanced AI.
+Output must reflect that capability.
+When in doubt: would a CFO accept this?
