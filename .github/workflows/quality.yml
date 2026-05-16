@@ -1,0 +1,23 @@
+name: Quality Check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Run quality tests
+        run: pytest tests/quality/ tests/test_quality_formatting.py tests/test_quality_validation.py
+      - name: Lint sample responses
+        run: python tools/lint_responses.py

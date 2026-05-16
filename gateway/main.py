@@ -18,25 +18,204 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import base64
+import asyncio
+import time
 from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
+from pathlib import Path
+
 import anthropic
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import tempfile
 from integrations.voice_engine import WhisperSTT, ElevenLabsTTS
+from core.suggestion_engine import FALLBACK_SUGGESTIONS, FIXED_SUGGESTIONS
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+AGENT_MODEL = "claude-sonnet-4-20250514"
+MAX_AGENT_TOKENS = 4096
+TOOL_RESULT_CHAR_LIMIT = 12000
+
+TOOL_STATUS_LABELS = {
+    "get_financial_report"    : "Loading financial report...",
+    "get_project_expenses"    : "Loading project expenses...",
+    "get_project_financial_data": "Loading project financial data...",
+    "get_general_ledger"      : "Loading general ledger...",
+    "get_trial_balance"       : "Loading trial balance...",
+    "query_accounting"        : "Running accounting report...",
+    "get_partner_ageing"      : "Loading partner ageing...",
+    "get_partner_ledger"      : "Loading partner ledger...",
+    "get_projects_summary"    : "Finding projects...",
+    "get_purchase_orders"     : "Looking up purchase orders...",
+    "get_top_projects_by_metric": "Ranking projects...",
+    "get_project_cost_categories": "Breaking down project costs...",
+    "get_period_comparison"   : "Comparing periods...",
+    "get_projects_with_overrun": "Checking budget overruns...",
+    "get_projects_by_client"  : "Finding client projects...",
+    "get_project_counts_by_client": "Grouping projects by client...",
+    "group_and_aggregate"     : "Grouping and aggregating records...",
+    "sql_aggregate"           : "Synthesizing analytics...",
+    "compose_report"          : "Structuring report...",
+    "calculate"               : "Calculating metrics...",
+    "generate_pdf_report"     : "Generating PDF report...",
+    "synthesize_pdf"          : "Generating PDF report...",
+    "search_odoo"             : "Gathering records...",
+}
+
+TOOL_SUGGESTIONS = {
+    "get_project_expenses": FIXED_SUGGESTIONS[
+        ("KPI", "project.financial.service", "get_project_expense_dashboard")
+    ],
+    "get_project_financial_data": FIXED_SUGGESTIONS[
+        ("KPI", "project.financial.service", "get_project_financial_data")
+    ],
+    "get_financial_report": FIXED_SUGGESTIONS[
+        ("ACCOUNTING", "ins.financial.report", "get_report_values")
+    ],
+    "get_general_ledger": FIXED_SUGGESTIONS[
+        ("ACCOUNTING", "ins.general.ledger", "get_report_datas")
+    ],
+    "get_partner_ageing": FIXED_SUGGESTIONS[
+        ("ACCOUNTING", "ins.partner.ageing", "get_report_datas")
+    ],
+    "get_projects_summary": FIXED_SUGGESTIONS[
+        ("RAG", "project.project", None)
+    ],
+    "get_purchase_orders": [
+        "Show the latest 10 purchase orders for this client",
+        "Show expense details for the first project",
+        "Show all active projects for this client",
+    ],
+    "get_top_projects_by_metric": [
+        "Show cost categories for the top project",
+        "Compare this month vs last month",
+        "Show projects over budget",
+    ],
+    "get_project_cost_categories": [
+        "Show the top items in the largest category",
+        "Compare this project vs last month",
+        "Show active projects for this client",
+    ],
+    "get_period_comparison": [
+        "Show profit and loss this month",
+        "Show top 3 profitable projects",
+        "Show projects over budget",
+    ],
+    "get_projects_with_overrun": [
+        "Show cost categories for the first project",
+        "Show active projects for this client",
+        "Compare this month vs last month",
+    ],
+    "get_projects_by_client": [
+        "Show cost categories for the first project",
+        "Show purchase orders for this client",
+        "Show top 3 profitable projects",
+    ],
+    "get_project_counts_by_client": [
+        "Show projects for the top client",
+        "Compare with the previous year",
+        "Show purchase orders for the top client",
+    ],
+    "group_and_aggregate": [
+        "Drill into the top group",
+        "Compare with the previous period",
+        "Generate a PDF report from this breakdown",
+    ],
+    "sql_aggregate": [
+        "Generate a PDF report from this data",
+        "Compare this month vs last month",
+        "Show top 3 profitable projects",
+    ],
+    "generate_pdf_report": [
+        "Generate the same report for last month",
+        "Create an executive summary only",
+        "Compare with the previous period",
+    ],
+    "search_odoo": FALLBACK_SUGGESTIONS["en"],
+}
+
+
+def _tool_status_label(tool_name: str, tool_input: dict | None = None) -> str:
+    tool_input = tool_input or {}
+    if tool_name == "search_odoo":
+        model = tool_input.get("model", "")
+        if model == "purchase.order":
+            return "Looking up purchase orders..."
+        if model == "project.project":
+            return "Finding projects..."
+        if model == "res.partner":
+            return "Finding client records..."
+        if model == "account.move":
+            return "Gathering invoices..."
+        return "Gathering records..."
+    return TOOL_STATUS_LABELS.get(tool_name, "Preparing your answer...")
+
+
 from adapters.v14.connector import OdooV14Adapter
+from gateway.purchase_order_routing import (
+    fetch_purchase_orders,
+    prefetch_purchase_orders,
+    prefetch_system_block,
+    purchase_order_search_via_get_tool,
+)
+from gateway.project_client_grouping import (
+    prefetch_projects_by_client,
+    prefetch_system_block as prefetch_project_client_block,
+)
+from gateway.auth import (
+    get_profile,
+    login_with_file_id,
+    logout,
+)
+from gateway.visualization_builder import choose_response_visualization
+from gateway.analytics_tools import (
+    get_period_comparison,
+    get_project_cost_categories,
+    get_project_counts_by_client,
+    get_projects_by_client,
+    get_projects_with_overrun,
+    get_top_projects_by_metric,
+)
+from gateway.session_entities import (
+    build_session_context_prompt,
+    enrich_tool_input,
+    infer_scope_from_messages,
+    update_scope_from_tool_result,
+)
+from gateway.session_scope import SessionScopeStore
+from gateway.tool_cache import ToolResultCache
+from gateway.tool_validation import (
+    format_tool_exception,
+    should_bust_cache,
+    validate_tool_result,
+)
+from gateway.aggregate_tools import sql_aggregate
+from gateway.group_aggregate_tools import group_and_aggregate
+from gateway.accounting_sql.query_accounting import execute_query_accounting
+from gateway.quality_formatting import (
+    FIELD_LABELS,
+    VALUE_LABELS,
+    format_currency,
+    format_percentage,
+    humanize_field,
+    humanize_value,
+)
+from gateway.quality_response import QUALITY_METRICS, polish_agent_response
+from gateway.tool_input_normalization import normalize_tool_input
+from gateway.compose_tools import calculate, compose_report
+from gateway.pdf_reports import REPORTS_DIR, generate_pdf_report
 from core.base_adapter import OdooConnectionConfig
 from core.state import OdooVersion
 
@@ -56,7 +235,17 @@ app.add_middleware(
     allow_credentials = True,
     allow_methods     = ["*"],
     allow_headers     = ["*"],
+    expose_headers    = [
+        "X-Session-Id",
+        "X-Language",
+        "X-Transcript",
+        "X-Response",
+        "X-Transcript-B64",
+        "X-Response-B64",
+    ],
 )
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 # ← ADD HERE — Voice engines (lazy loaded)
 _stt: WhisperSTT | None = None
 _tts: ElevenLabsTTS | None = None
@@ -72,6 +261,124 @@ def get_tts() -> ElevenLabsTTS:
     if _tts is None:
         _tts = ElevenLabsTTS()
     return _tts
+
+
+def _ascii_header(value: str, *, max_length: int = 4000) -> str:
+    sanitized = re.sub(r"[\x00-\x1f\x7f]+", " ", value or "")
+    sanitized = re.sub(r"\s+", " ", sanitized).strip()
+    sanitized = sanitized.encode("ascii", errors="ignore").decode("ascii").strip()
+    if len(sanitized) > max_length:
+        sanitized = sanitized[: max_length - 3].rstrip() + "..."
+    return sanitized
+
+
+def _utf8_header(value: str, *, max_length: int = 4000) -> str:
+    text = (value or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+", " ", text).strip()
+    if len(text) > max_length:
+        text = text[: max_length - 3].rstrip() + "..."
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+_agent_client: anthropic.Anthropic | None = None
+
+
+def get_agent_client() -> anthropic.Anthropic:
+    global _agent_client
+    if _agent_client is None:
+        _agent_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    return _agent_client
+
+
+class StreamTextFilter:
+    """Suppress visualization JSON and viz hints while streaming answer text."""
+
+    _ORPHAN_VIZ_RE = re.compile(
+        r'(?:\n|^)\s*(?:\{\s*)?"visual_type"\s*:',
+        re.IGNORECASE,
+    )
+    _VIZ_HINT_RE = re.compile(
+        r"<viz-hint>\s*([^<]+?)\s*</viz-hint>",
+        re.IGNORECASE,
+    )
+
+    def __init__(self) -> None:
+        self._pending = ""
+        self._in_visualization = False
+        self.viz_hint: str | None = None
+
+    def _strip_viz_hints(self, text: str) -> str:
+        def _capture(match: re.Match[str]) -> str:
+            self.viz_hint = match.group(1).strip().upper()
+            return ""
+
+        return self._VIZ_HINT_RE.sub(_capture, text)
+
+    def push(self, chunk: str) -> str:
+        if not chunk:
+            return ""
+
+        text = self._pending + chunk
+        self._pending = ""
+        visible = []
+
+        while text:
+            if self._in_visualization:
+                end = text.find("</visualization>")
+                if end == -1:
+                    self._pending = text
+                    break
+                text = text[end + len("</visualization>"):]
+                self._in_visualization = False
+                continue
+
+            start = text.find("<visualization>")
+            if start == -1:
+                orphan = self._ORPHAN_VIZ_RE.search(text)
+                if orphan:
+                    if orphan.start():
+                        visible.append(text[:orphan.start()])
+                    self._pending = text[orphan.start():]
+                    self._in_visualization = True
+                    break
+                visible.append(text)
+                text = ""
+                break
+
+            if start:
+                visible.append(text[:start])
+            text = text[start + len("<visualization>"):]
+            self._in_visualization = True
+
+        return self._strip_viz_hints("".join(visible))
+
+
+def _strip_visualization_markup(text: str) -> str:
+    cleaned = text or ""
+    cleaned = re.sub(
+        r"<viz-hint>\s*[^<]+?\s*</viz-hint>",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if "<visualization>" in cleaned:
+        cleaned = cleaned[:cleaned.index("<visualization>")].strip()
+    cleaned = re.sub(r"</visualization>\s*", "", cleaned)
+    cleaned = re.sub(
+        r'\{\s*"visual_type"[\s\S]*?(?:\}\s*</visualization>|\}\s*$)',
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r'(?:\n|^)\s*(?:\{\s*)?"visual_type"\s*:[\s\S]*$',
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\n\*\*Suggestions:\*\*[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+
 # ---------------------------------------------------------------------------
 # In-memory conversation store
 # ---------------------------------------------------------------------------
@@ -83,10 +390,12 @@ class ConversationStore:
     """
     _memory: dict[str, list] = {}
     _use_postgres = bool(os.environ.get("POSTGRES_DSN"))
+    _pg_table_ready = False
 
     @classmethod
     def _ensure_table(cls, conn) -> None:
-        import psycopg2
+        if cls._pg_table_ready:
+            return
         with conn.cursor() as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS ooa_conversations (
@@ -96,6 +405,7 @@ class ConversationStore:
                 )
             """)
         conn.commit()
+        cls._pg_table_ready = True
 
     @classmethod
     def _get_pg_connection(cls):
@@ -106,24 +416,30 @@ class ConversationStore:
 
     @classmethod
     def get(cls, session_id: str) -> list:
+        if session_id in cls._memory:
+            return list(cls._memory[session_id])
+
         if cls._use_postgres:
             try:
                 conn = cls._get_pg_connection()
                 with conn.cursor() as cur:
                     cur.execute(
                         "SELECT messages FROM ooa_conversations WHERE session_id = %s",
-                        (session_id,)
+                        (session_id,),
                     )
                     row = cur.fetchone()
                 conn.close()
-                return row[0] if row else []
+                messages = row[0] if row else []
+                cls._memory[session_id] = list(messages)
+                return list(messages)
             except Exception as exc:
                 logger.error("[ConversationStore] PG get failed: %s", exc)
-                return cls._memory.get(session_id, [])
-        return cls._memory.get(session_id, [])
+
+        return []
 
     @classmethod
     def save(cls, session_id: str, messages: list) -> None:
+        cls._memory[session_id] = list(messages)
         if cls._use_postgres:
             try:
                 conn = cls._get_pg_connection()
@@ -138,17 +454,15 @@ class ConversationStore:
                 conn.close()
             except Exception as exc:
                 logger.error("[ConversationStore] PG save failed: %s", exc)
-                cls._memory[session_id] = messages
-        else:
-            cls._memory[session_id] = messages
 
     @classmethod
-    def append(cls, session_id: str, role: str, content: Any) -> None:
+    def append(cls, session_id: str, role: str, content: Any) -> list:
         messages = cls.get(session_id)
         messages.append({"role": role, "content": content})
         if len(messages) > 20:
             messages = messages[-20:]
         cls.save(session_id, messages)
+        return messages
 
     @classmethod
     def clear(cls, session_id: str) -> None:
@@ -244,9 +558,10 @@ TOOLS = [
     {
         "name"       : "get_project_expenses",
         "description": (
-            "Get financial data for a SPECIFIC project: total cost, expense breakdown, "
-            "budget status, weekly trend, cost distribution (LPO, Petty Cash, Labor, Staff). "
-            "Use this when user mentions a specific project name."
+            "Get the expense dashboard for ONE specific project: total cost, budget, "
+            "status, weekly trend, and high-level category totals. "
+            "Use for total cost, budget status, or a high-level expense overview. "
+            "Do NOT use for detailed category breakdowns; use get_project_cost_categories."
         ),
         "input_schema": {
             "type"      : "object",
@@ -279,8 +594,9 @@ TOOLS = [
     {
         "name"       : "get_project_financial_data",
         "description": (
-            "Get detailed P&L financial data for a SPECIFIC project with date range. "
-            "Returns income, expense, net profit, margin for the project."
+            "Get project P&L for ONE specific project with a date range: income, expense, "
+            "net profit, and margin. Use for profitability questions about a named project. "
+            "Do NOT use for category breakdowns or top-N rankings."
         ),
         "input_schema": {
             "type"      : "object",
@@ -326,6 +642,41 @@ TOOLS = [
         },
     },
     {
+        "name"       : "query_accounting",
+        "description": (
+            "Primary financial reporting tool using direct PostgreSQL against Odoo "
+            "account.move.line. Use for trial balance, P&L, balance sheet, general "
+            "ledger, partner ageing, and cost analysis. Prefer this over sql_aggregate "
+            "for official financial statements."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "report_type": {
+                    "type": "string",
+                    "enum": [
+                        "trial_balance",
+                        "pandl",
+                        "balance_sheet",
+                        "general_ledger",
+                        "partner_ageing",
+                        "cost_analysis",
+                    ],
+                },
+                "date_from": {"type": "string"},
+                "date_to": {"type": "string"},
+                "as_of_date": {"type": "string"},
+                "result_selection": {
+                    "type": "string",
+                    "description": "For partner_ageing: customer (receivable) or supplier (payable)",
+                },
+                "company_id": {"type": "integer", "default": 1},
+                "limit": {"type": "integer", "default": 5000},
+            },
+            "required": ["report_type"],
+        },
+    },
+    {
         "name"       : "get_trial_balance",
         "description": "Get Trial Balance — summary of all accounts with debit, credit, balance totals.",
         "input_schema": {
@@ -346,9 +697,9 @@ TOOLS = [
     {
         "name"       : "get_projects_summary",
         "description": (
-            "Get a summary list of all active projects with their financial data. "
-            "Use when user asks for ALL projects breakdown, project list with costs, "
-            "or wants to compare multiple projects."
+            "List active projects without ranking or financial comparison. "
+            "Use only when the user wants a project directory. "
+            "Do NOT use for top profitable projects, overruns, or client financial rollups."
         ),
         "input_schema": {
             "type"      : "object",
@@ -356,6 +707,160 @@ TOOLS = [
                 "limit": {
                     "type"       : "integer",
                     "description": "Max projects to return. Default 20.",
+                },
+            },
+        },
+    },
+    {
+        "name"       : "get_top_projects_by_metric",
+        "description": (
+            "Rank the top N projects by a financial metric using real Odoo data. "
+            "Use for top profitable projects, most expensive projects, best margin, "
+            "or biggest budget overrun. Do NOT invent project names or numbers."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "metric": {
+                    "type"       : "string",
+                    "enum"       : [
+                        "net_profit",
+                        "revenue",
+                        "total_cost",
+                        "budget_overrun",
+                        "margin_percent",
+                    ],
+                    "description": "Metric to rank by",
+                },
+                "limit": {
+                    "type"       : "integer",
+                    "description": "How many projects to return. Default 5.",
+                },
+                "order": {
+                    "type"       : "string",
+                    "enum"       : ["desc", "asc"],
+                    "description": "Sort order. Default desc.",
+                },
+                "date_from": {"type": "string"},
+                "date_to"  : {"type": "string"},
+            },
+            "required": ["metric"],
+        },
+    },
+    {
+        "name"       : "get_project_cost_categories",
+        "description": (
+            "Get a categorized cost breakdown for ONE project: LPO, Petty Cash, Labor, "
+            "Staff, Materials, and related categories. Use for follow-ups like "
+            "categorize the expenses, break down by type, or drill into categories. "
+            "Do NOT reuse get_project_expenses when the user asks for category detail."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "project_id"  : {"type": "integer"},
+                "project_name": {"type": "string"},
+                "date_from"   : {"type": "string"},
+                "date_to"     : {"type": "string"},
+            },
+        },
+    },
+    {
+        "name"       : "get_period_comparison",
+        "description": (
+            "Compare company financial metrics between two periods. "
+            "Use for this month vs last month or quarter-over-quarter questions."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "report_type": {
+                    "type": "string",
+                    "enum": ["pandl", "expenses", "revenue"],
+                },
+                "period_1_from": {"type": "string"},
+                "period_1_to"  : {"type": "string"},
+                "period_1_label": {"type": "string"},
+                "period_2_from": {"type": "string"},
+                "period_2_to"  : {"type": "string"},
+                "period_2_label": {"type": "string"},
+            },
+            "required": [
+                "report_type",
+                "period_1_from",
+                "period_1_to",
+                "period_2_from",
+                "period_2_to",
+            ],
+        },
+    },
+    {
+        "name"       : "get_projects_with_overrun",
+        "description": (
+            "List projects that are over budget or above a budget usage threshold. "
+            "Use for which projects are over budget or at risk."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "threshold_percent": {
+                    "type"       : "number",
+                    "description": "Minimum budget usage percent to include. Default 100.",
+                },
+                "limit": {
+                    "type"       : "integer",
+                    "description": "Maximum projects to return. Default 10.",
+                },
+            },
+        },
+    },
+    {
+        "name"       : "get_projects_by_client",
+        "description": (
+            "List projects for a specific client or partner, optionally with financial KPIs. "
+            "Use when the user asks for all projects for a client."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "client_name": {"type": "string"},
+                "client_id"  : {"type": "integer"},
+                "include_financials": {
+                    "type"       : "boolean",
+                    "description": "Attach project expense KPIs when true.",
+                },
+                "limit": {
+                    "type"       : "integer",
+                    "description": "Maximum projects to return. Default 20.",
+                },
+            },
+        },
+    },
+    {
+        "name"       : "get_project_counts_by_client",
+        "description": (
+            "Count projects grouped by client for a year or date range using Odoo read_group. "
+            "Use for questions like projects by client in 2024. "
+            "Prefer this over sql_aggregate or search_odoo for client project counts."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "year": {
+                    "type"       : "integer",
+                    "description": "Calendar year, e.g. 2024.",
+                },
+                "date_from": {
+                    "type"       : "string",
+                    "description": "Start date YYYY-MM-DD.",
+                },
+                "date_to": {
+                    "type"       : "string",
+                    "description": "End date YYYY-MM-DD.",
+                },
+                "limit": {
+                    "type"       : "integer",
+                    "description": "Maximum client groups to return. Default 100.",
                 },
             },
         },
@@ -382,11 +887,206 @@ TOOLS = [
         },
     },
     {
+        "name"       : "get_purchase_orders",
+        "description": (
+            "Get recent purchase orders for a client or project. "
+            "Use client_name when the user mentions a customer/client company. "
+            "Use partner_ids when client res.partner IDs are already known. "
+            "On purchase.order, partner_id is the supplier/vendor and the client "
+            "is stored on a separate client field. "
+            "Use project_name or project_id when the project is already known. "
+            "Includes locked, approved, and completed purchase orders."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "client_name": {
+                    "type"       : "string",
+                    "description": "Client/customer company name",
+                },
+                "partner_ids": {
+                    "type"       : "array",
+                    "description": "Known res.partner IDs for the client",
+                    "items"      : {"type": "integer"},
+                },
+                "project_name": {
+                    "type"       : "string",
+                    "description": "Project name if known",
+                },
+                "project_id": {
+                    "type"       : "integer",
+                    "description": "Project ID if known",
+                },
+                "limit": {
+                    "type"       : "integer",
+                    "description": "How many purchase orders to return. Default 20.",
+                },
+            },
+        },
+    },
+    {
+        "name"       : "group_and_aggregate",
+        "description": (
+            "Query any Odoo model with filters, grouping, and aggregation using read_group. "
+            "Use for group by, breakdown, totals per dimension, top-N grouped results, "
+            "and pivot-style analysis. Do not iterate records manually with search_odoo."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "model": {
+                    "type"       : "string",
+                    "description": "Odoo model such as project.project or account.move.",
+                },
+                "domain": {
+                    "type"       : "array",
+                    "description": "Odoo domain filter as a list of tuples.",
+                    "items"      : {},
+                },
+                "group_by": {
+                    "type"       : "array",
+                    "items"      : {"type": "string"},
+                    "description": "Fields to group by, e.g. partner_id or date:month.",
+                },
+                "aggregates": {
+                    "type"       : "array",
+                    "items"      : {"type": "string"},
+                    "description": "Aggregate specs such as amount_total:sum or id:count.",
+                },
+                "order_by": {
+                    "type"       : "string",
+                    "description": "Sort grouped results, e.g. amount_total:sum desc.",
+                },
+                "limit": {
+                    "type"       : "integer",
+                    "description": "Maximum groups to return. Default 50, max 200.",
+                },
+                "having": {
+                    "type"       : "object",
+                    "description": "Post-aggregation filter such as {'balance:sum': ['>', 1000]}.",
+                },
+            },
+            "required": ["model", "group_by"],
+        },
+    },
+    {
+        "name"       : "sql_aggregate",
+        "description": (
+            "Aggregate Odoo records with read_group when no direct report tool exists. "
+            "Use for trial balance synthesis and custom groupings. "
+            "For project counts by client in a period, use get_project_counts_by_client. "
+            "When ordering grouped results, use partner_id_count or __count, not partner_id:count."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "model": {"type": "string"},
+                "filters": {"type": "array", "items": {}},
+                "group_by": {"type": "array", "items": {"type": "string"}},
+                "aggregates": {"type": "array", "items": {"type": "string"}},
+                "having": {"type": "object"},
+                "order": {"type": "string"},
+                "limit": {"type": "integer", "default": 100},
+            },
+            "required": ["model", "aggregates"],
+        },
+    },
+    {
+        "name"       : "compose_report",
+        "description": (
+            "Structure raw rows into a report payload with headers, rows, and totals. "
+            "Use after sql_aggregate or search_odoo when the user wants a formatted report."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "title": {"type": "string"},
+                "subtitle": {"type": "string"},
+                "date_range": {"type": "string"},
+                "report_type": {"type": "string"},
+                "columns": {"type": "array", "items": {"type": "string"}},
+                "rows": {"type": "array", "items": {}},
+                "notes": {"type": "string"},
+            },
+            "required": ["title"],
+        },
+    },
+    {
+        "name"       : "calculate",
+        "description": (
+            "Run deterministic math on values already fetched from Odoo. "
+            "Supports sum, average, median, min, max, count, percent change, ratio, and difference."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "operations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "label": {"type": "string"},
+                            "op": {"type": "string"},
+                            "values": {"type": "array", "items": {"type": "number"}},
+                        },
+                        "required": ["op", "values"],
+                    },
+                },
+            },
+            "required": ["operations"],
+        },
+    },
+    {
+        "name"       : "synthesize_pdf",
+        "description": (
+            "Generate a downloadable PDF from a JSON section specification. "
+            "Alias of generate_pdf_report for composed or synthesized report output."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "title": {"type": "string"},
+                "subtitle": {"type": "string"},
+                "date_range": {"type": "string"},
+                "language": {"type": "string", "enum": ["en", "ar"]},
+                "theme": {"type": "string", "enum": ["light", "dark"]},
+                "sections": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                },
+            },
+            "required": ["title", "sections"],
+        },
+    },
+    {
+        "name"       : "generate_pdf_report",
+        "description": (
+            "Generate a downloadable PDF report from a JSON section specification. "
+            "Use when the user asks for PDF, export, download, print, or executive summary."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "title": {"type": "string"},
+                "subtitle": {"type": "string"},
+                "date_range": {"type": "string"},
+                "language": {"type": "string", "enum": ["en", "ar"]},
+                "theme": {"type": "string", "enum": ["light", "dark"]},
+                "sections": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                },
+            },
+            "required": ["title", "sections"],
+        },
+    },
+    {
         "name"       : "search_odoo",
         "description": (
-            "Search any Odoo model for records. Use for: projects, invoices, "
-            "employees, customers, purchase orders, etc. "
-            "Returns a list of matching records."
+            "Search Odoo records for projects, invoices, employees, customers, "
+            "and partners. Do not use this tool to list purchase orders by client; "
+            "use get_purchase_orders instead."
         ),
         "input_schema": {
             "type"      : "object",
@@ -428,24 +1128,51 @@ def execute_tool(
     tool_name  : str,
     tool_input : dict,
     adapter    : OdooV14Adapter,
+    session_id : str | None = None,
+    user_message: str = "",
 ) -> Any:
     """Executes a tool call and returns the result."""
+    started = time.time()
+    tool_input = enrich_tool_input(tool_name, tool_input or {}, session_id)
+    tool_input = normalize_tool_input(tool_name, tool_input)
+    cached = False
+
+    if should_bust_cache(user_message):
+        ToolResultCache.delete(tool_name, tool_input)
+    else:
+        cached_result = ToolResultCache.get(tool_name, tool_input)
+        if cached_result is not None:
+            cached = True
+            result = validate_tool_result(tool_name, cached_result)
+            update_scope_from_tool_result(session_id, tool_name, tool_input, result)
+            logger.info(
+                "[TOOL] %s",
+                json.dumps({
+                    "tool": tool_name,
+                    "cached": True,
+                    "duration_ms": int((time.time() - started) * 1000),
+                    "result_has_error": bool(isinstance(result, dict) and result.get("error")),
+                }),
+            )
+            return result
+
     logger.info("[Tool] %s(%s)", tool_name, tool_input)
 
     try:
         if tool_name == "get_financial_report":
-            return adapter.accounting.get_financial_report(
+            result = adapter.accounting.get_financial_report(
                 report_type = tool_input.get("report_type", "pandl"),
                 date_from   = tool_input.get("date_from"),
                 date_to     = tool_input.get("date_to"),
             )
-        if tool_name == "get_trial_balance":
-            return adapter.call_method(
-                "project.financial.service",
-                "get_ai_trial_balance",
-                [tool_input.get("date_from"), tool_input.get("date_to")],
+        elif tool_name == "get_trial_balance":
+            result = adapter.accounting.get_trial_balance(
+                date_from = tool_input.get("date_from"),
+                date_to   = tool_input.get("date_to"),
             )
-        if tool_name == "get_projects_summary":
+        elif tool_name == "query_accounting":
+            result = execute_query_accounting(tool_input, adapter=adapter)
+        elif tool_name == "get_projects_summary":
             limit = tool_input.get("limit", 20)
             projects = adapter.search_read(
                 model  = "project.project",
@@ -455,23 +1182,23 @@ def execute_tool(
                 limit  = limit,
                 order  = "name asc",
             )
-            return {
+            result = {
                 "projects"     : projects,
                 "total_count"  : len(projects),
                 "note"         : "For financial data per project, use get_project_expenses with project name",
             }
-        if tool_name == "get_partner_ageing":
-            return adapter.call_method(
-                "project.financial.service",
-                "get_ai_partner_ageing",
-                [
-                    tool_input.get("date_from"),
-                    tool_input.get("result_selection", "customer"),
-                ],
+        elif tool_name == "get_partner_ageing":
+            result = adapter.accounting.get_partner_ageing(
+                date_from=tool_input.get("date_from"),
+                date_to=tool_input.get("date_to"),
+                as_of_date=tool_input.get("as_of_date"),
+                result_selection=tool_input.get("result_selection", "customer"),
+                partner_ids=tool_input.get("partner_ids"),
+                company_id=int(tool_input.get("company_id", 1)),
+                operating_unit_ids=tool_input.get("operating_unit_ids"),
             )
-
-        if tool_name == "get_partner_ledger":
-            return adapter.call_method(
+        elif tool_name == "get_partner_ledger":
+            result = adapter.call_method(
                 "project.financial.service",
                 "get_ai_partner_ledger",
                 [
@@ -480,7 +1207,7 @@ def execute_tool(
                     tool_input.get("result_selection", "customer_supplier"),
                 ],
             )
-        if tool_name == "get_project_expenses":
+        elif tool_name == "get_project_expenses":
             from core.base_adapter import KPIRequest
             from adapters.v14.connector import ProjectAmbiguousError, ProjectNotFoundError
 
@@ -495,9 +1222,8 @@ def execute_tool(
             )
             try:
                 response = adapter.get_kpi_data(request)
-                return response.raw_data
+                result = response.raw_data
             except ProjectAmbiguousError as exc:
-                # Return candidates so Claude can ask user to pick
                 candidates = []
                 for c in exc.candidates:
                     candidates.append({
@@ -506,18 +1232,17 @@ def execute_tool(
                         "wo_ref_no": c.get("wo_ref_no"),
                         "client"   : c.get("partner_id")[1] if isinstance(c.get("partner_id"), list) else c.get("partner_id"),
                     })
-                return {
+                result = {
                     "error"     : "multiple_projects_found",
                     "message"   : f"Found {len(candidates)} projects matching your search.",
                     "candidates": candidates,
                 }
             except ProjectNotFoundError as exc:
-                return {
+                result = {
                     "error"  : "project_not_found",
                     "message": f"No project found matching '{exc.search_term}'. Please provide the WO reference number or full project name.",
                 }
-
-        if tool_name == "get_project_financial_data":
+        elif tool_name == "get_project_financial_data":
             from core.base_adapter import KPIRequest
             from adapters.v14.connector import ProjectAmbiguousError, ProjectNotFoundError
 
@@ -534,7 +1259,7 @@ def execute_tool(
             )
             try:
                 response = adapter.get_kpi_data(request)
-                return response.raw_data
+                result = response.raw_data
             except ProjectAmbiguousError as exc:
                 candidates = []
                 for c in exc.candidates:
@@ -544,49 +1269,86 @@ def execute_tool(
                         "wo_ref_no": c.get("wo_ref_no"),
                         "client"   : c.get("partner_id")[1] if isinstance(c.get("partner_id"), list) else c.get("partner_id"),
                     })
-                return {
+                result = {
                     "error"     : "multiple_projects_found",
                     "message"   : f"Found {len(candidates)} projects matching your search.",
                     "candidates": candidates,
                 }
             except ProjectNotFoundError as exc:
-                return {
+                result = {
                     "error"  : "project_not_found",
                     "message": f"No project found matching '{exc.search_term}'. Please provide the WO reference number or full project name.",
                 }
-
-        if tool_name == "get_general_ledger":
-            return adapter.accounting.get_general_ledger(
+        elif tool_name == "get_general_ledger":
+            result = adapter.accounting.get_general_ledger(
                 date_from = tool_input.get("date_from"),
                 date_to   = tool_input.get("date_to"),
             )
-
-        if tool_name == "get_trial_balance":
-            return adapter.accounting.get_trial_balance(
-                date_from = tool_input.get("date_from"),
-                date_to   = tool_input.get("date_to"),
+        elif tool_name == "get_top_projects_by_metric":
+            result = get_top_projects_by_metric(adapter, tool_input)
+        elif tool_name == "get_project_cost_categories":
+            result = get_project_cost_categories(adapter, tool_input, session_id)
+        elif tool_name == "get_period_comparison":
+            result = get_period_comparison(adapter, tool_input)
+        elif tool_name == "get_projects_with_overrun":
+            result = get_projects_with_overrun(adapter, tool_input)
+        elif tool_name == "get_projects_by_client":
+            result = get_projects_by_client(adapter, tool_input)
+        elif tool_name == "get_project_counts_by_client":
+            result = get_project_counts_by_client(adapter, tool_input)
+        elif tool_name == "group_and_aggregate":
+            result = group_and_aggregate(adapter, tool_input)
+        elif tool_name == "get_purchase_orders":
+            result = fetch_purchase_orders(
+                adapter,
+                client_name  = tool_input.get("client_name"),
+                partner_ids  = tool_input.get("partner_ids"),
+                project_name = tool_input.get("project_name"),
+                project_id   = tool_input.get("project_id"),
+                limit        = tool_input.get("limit", 20),
+                session_id   = session_id,
             )
-
-        if tool_name == "get_partner_ageing":
-            return adapter.accounting.get_partner_ageing(
-                date_from        = tool_input.get("date_from"),
-                result_selection = tool_input.get("result_selection", "customer"),
-            )
-
-        if tool_name == "search_odoo":
-            return adapter.search_read(
-                model  = tool_input["model"],
-                domain = tool_input.get("filters", []),
-                fields = tool_input["fields"],
-                limit  = tool_input.get("limit", 10),
-                order  = tool_input.get("order"),
-            )
-
-        return {"error": f"Unknown tool: {tool_name}"}
+        elif tool_name == "sql_aggregate":
+            result = sql_aggregate(adapter, tool_input)
+        elif tool_name == "compose_report":
+            result = compose_report(tool_input)
+        elif tool_name == "calculate":
+            result = calculate(tool_input)
+        elif tool_name in {"generate_pdf_report", "synthesize_pdf"}:
+            result = generate_pdf_report(tool_input, session_id=session_id)
+        elif tool_name == "search_odoo":
+            if tool_input.get("model") == "purchase.order":
+                result = purchase_order_search_via_get_tool(adapter, tool_input)
+            else:
+                result = adapter.search_read(
+                    model  = tool_input["model"],
+                    domain = tool_input.get("filters", []),
+                    fields = tool_input["fields"],
+                    limit  = tool_input.get("limit", 10),
+                    order  = tool_input.get("order"),
+                )
+        else:
+            result = {"error": f"Unknown tool: {tool_name}"}
 
     except Exception as exc:
         logger.error("[Tool] %s failed: %s", tool_name, exc)
-        return {"error": str(exc)}
+        result = format_tool_exception(exc)
+
+    if isinstance(result, dict) and not result.get("error"):
+        ToolResultCache.set(tool_name, tool_input, result)
+
+    result = validate_tool_result(tool_name, result)
+    update_scope_from_tool_result(session_id, tool_name, tool_input, result)
+    logger.info(
+        "[TOOL] %s",
+        json.dumps({
+            "tool": tool_name,
+            "cached": cached,
+            "duration_ms": int((time.time() - started) * 1000),
+            "result_has_error": bool(isinstance(result, dict) and result.get("error")),
+        }),
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -610,6 +1372,13 @@ Guidelines:
 - You can answer general questions (date, greetings, capabilities) directly
 - For financial reports without a date: always ask which period before fetching
 - For project queries without a project name: always ask which project
+- If the user already gives a count such as "last 10" or "last 20", use that limit and do not ask again
+- For purchase orders by client name, use get_purchase_orders with client_name or partner_ids. On purchase.order, partner_id is the supplier/vendor and the client is stored on a separate client field
+- get_purchase_orders includes locked, approved, done, and older purchase orders; do not infer that a client has no orders from unrelated draft purchase orders
+- If get_purchase_orders returns orders, describe only those rows and do not mix in unrelated purchase.order search results
+- Do not use search_odoo on purchase.order for client purchase-order requests; partner_id filters are vendor/supplier filters, not client filters
+- If projects for a client are already known from earlier turns, reuse those project IDs instead of asking again
+- Never put numbered suggestion lists or a "Suggestions:" section in the visible answer text
 - Always be helpful, professional, and accurate
 
 Company context:
@@ -617,13 +1386,62 @@ Company context:
 - Construction, facilities management, maintenance projects
 - Multiple projects with Arabic and English names
 - Currency: AED
+
+GROUPING AND FILTERING:
+- For group by, breakdown, totals per dimension, top-N grouped results, or pivot-style analysis, use group_and_aggregate
+- Never loop search_odoo over records to compute grouped totals
+- Phrases such as group by, breakdown by, totals per, top N by, per client, per project, or per month signal grouping
+- Projects: model project.project; common groupings partner_id, user_id, stage_id; aggregates wo_amount:sum, id:count
+- Invoices and revenue: model account.move with type out_invoice and state posted; group by partner_id or date:month
+- Bills and expenses: model account.move with type in_invoice and state posted
+- Journal lines: model account.move.line with parent_state posted; group by account_id, partner_id, analytic_account_id, date:month
+- Sales and purchase orders: model sale.order or purchase.order; group by partner_id, state, or date_order:month
+- Time groupings use :day, :week, :month, :quarter, or :year on date fields
+- Use limit 10 for top-N queries and 50 for broader breakdowns; sort by the aggregate descending for top queries
+- For projects grouped by client in a year or date range, get_project_counts_by_client remains valid for that narrow case
+
+DATA INTEGRITY RULES:
+- Never report numbers that did not come from a tool call
+- If a tool returns empty or zero data, say so explicitly and do not fabricate values
+- Project names must come from Odoo records returned by tools
+- For top-N project questions, use get_top_projects_by_metric instead of guessing
+- For category breakdown follow-ups on a project, use get_project_cost_categories
+- For projects grouped by client in a year or date range, use get_project_counts_by_client or group_and_aggregate instead of sql_aggregate or search_odoo
+- If a tool returns an error payload, surface it instead of guessing
+
+AUTONOMOUS PROBLEM SOLVING:
+- If no direct tool exists, compose existing tools or use group_and_aggregate, sql_aggregate, or search_odoo to synthesize the answer
+- Use compose_report to shape raw rows into report tables and calculate for deterministic math on fetched values
+- Never say a feature is unavailable; explain what you can build from underlying Odoo data instead
+- Mark synthesized answers as computed from underlying data when relevant
+
+PRODUCTION QUALITY RULES:
+- Never expose raw Odoo field syntax such as amount_total:sum or partner_id:
+- Format money as AED with thousands separators
+- Comparison questions must use BAR_CHART ranked by value, not nested expandable lists
+- If grouped results are all zero, retry with corrected filters or explain why no data was found
+- Include a 2-3 sentence narrative with the key insight when data is shown
+- Use posted-only filters for financial data and company_id=1 unless the user specifies otherwise
+
+EARLY VISUALIZATION SIGNAL:
+- Before the visualization block, output this on the first line when a visualization will follow:
+  <viz-hint>KPI_CARD|BAR_CHART|LINE_CHART|DATA_TABLE|GROUPED_TABLE|FINANCIAL_REPORT|PDF_REPORT|NONE</viz-hint>
+
+IMPORTANT — VISUAL-FIRST RESPONSES:
+- When any Odoo tool returns data, keep visible prose short and executive-ready
+- Do not write markdown tables, bullet lists, or numbered lists in the visible answer
+- Put structured values in the visualization block and use 2-3 sentences for the key insight
+- Use KPI_CARD for single totals and counts
+- Use DATA_TABLE for record lists such as purchase orders, projects, and invoices
+- Use FINANCIAL_REPORT for P&L and balance-sheet style outputs
+- Keep labels short and factual
+
 IMPORTANT — STRUCTURED OUTPUT:
-After your natural language response, if you fetched any data, you MUST append 
-a visualization block in this exact format (no spaces before <visualization>):
+When you fetched any data, append only this visualization block (no visible prose before it):
 
 <visualization>
 {
-  "visual_type": "KPI_CARD|BAR_CHART|LINE_CHART|DATA_TABLE|FINANCIAL_REPORT",
+  "visual_type": "KPI_CARD|BAR_CHART|LINE_CHART|DATA_TABLE|GROUPED_TABLE|FINANCIAL_REPORT|PDF_REPORT",
   "label": "short title",
   "value": 0,
   "unit": "AED",
@@ -637,12 +1455,282 @@ Visual type rules:
 - Comparison across categories (expense by type) → BAR_CHART  
 - Time series (monthly trend, weekly) → LINE_CHART
 - List of records (projects, invoices) → DATA_TABLE
+- Hierarchical grouped breakdowns → GROUPED_TABLE
 - P&L / Balance Sheet hierarchy → FINANCIAL_REPORT
+- Downloadable PDF report → PDF_REPORT
 
-For suggestions: provide 3 natural follow-up questions the user might ask next,
-in the SAME language as the response.
+For suggestions: when any tool was used, include exactly 3 short follow-up prompts
+(4-10 words each) in the SAME language as the response inside the visualization block.
+Do not repeat clarification questions that the user already answered.
 
 If no data was fetched (greetings, general questions), omit the visualization block."""
+
+
+def _build_agent_system_prompt(
+    today        : str,
+    user_message : str = "",
+    adapter      : OdooV14Adapter | None = None,
+    session_id   : str | None = None,
+) -> str:
+    system = SYSTEM_PROMPT.replace("{today}", today)
+    if adapter is None:
+        return system
+
+    prefetch = prefetch_purchase_orders(
+        adapter,
+        user_message,
+        session_id = session_id,
+    )
+    if prefetch:
+        system += prefetch_system_block(prefetch)
+    project_counts = prefetch_projects_by_client(adapter, user_message)
+    if project_counts:
+        system += prefetch_project_client_block(project_counts)
+    if session_id:
+        inferred = infer_scope_from_messages(ConversationStore.get(session_id))
+        if inferred:
+            SessionScopeStore.update(session_id, **inferred)
+        system += build_session_context_prompt(session_id)
+    return system
+
+
+def _fallback_suggestions(tool_names: list[str], language: str) -> list[str]:
+    lang = language if language in FALLBACK_SUGGESTIONS else "en"
+    for tool_name in reversed(tool_names):
+        suggestions = TOOL_SUGGESTIONS.get(tool_name)
+        if suggestions:
+            return suggestions[:3]
+    return FALLBACK_SUGGESTIONS.get(lang, FALLBACK_SUGGESTIONS["en"])[:3]
+
+
+def _normalize_suggestions(
+    suggestions: list[str] | None,
+    tool_names : list[str],
+    language   : str,
+) -> list[str]:
+    cleaned: list[str] = []
+    for suggestion in suggestions or []:
+        text = re.sub(r"^\d+\.\s*", "", str(suggestion).strip())
+        text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text or len(text) > 90:
+            continue
+        if text.endswith("?") and len(text.split()) > 14:
+            continue
+        cleaned.append(text)
+
+    if cleaned:
+        return cleaned[:3]
+
+    return _fallback_suggestions(tool_names, language)
+
+
+def _summarize_large_result(data: dict) -> dict:
+    """Truncates large Odoo responses to prevent token overflow."""
+    summary: dict[str, Any] = {}
+    for key, value in data.items():
+        if key == "report_lines" and isinstance(value, list):
+            summary[key] = [
+                line for line in value
+                if line.get("level", 0) <= 2
+            ][:20]
+        elif key == "accounts" and isinstance(value, dict):
+            items = list(value.items())[:30]
+            summary[key] = {
+                account_id: {
+                    "name"   : account.get("name"),
+                    "debit"  : account.get("debit"),
+                    "credit" : account.get("credit"),
+                    "balance": account.get("balance"),
+                }
+                for account_id, account in items
+            }
+        elif key == "distribution" and isinstance(value, list):
+            summary[key] = value[:10]
+        elif key in ("weekly_trend", "trend", "rows", "lines") and isinstance(value, list):
+            summary[key] = value[:12]
+        elif key == "projects" and isinstance(value, list):
+            summary[key] = value[:10]
+        elif key == "orders" and isinstance(value, list):
+            summary[key] = value[:20]
+        elif key in ("kpis", "totals", "filters",
+                     "report_name", "date_from", "date_to",
+                     "project_name", "exceed_percent",
+                     "commitment_total", "cost_totals", "project_id"):
+            summary[key] = value
+        elif isinstance(value, list):
+            summary[key] = value[:10]
+        elif isinstance(value, dict):
+            summary[key] = dict(list(value.items())[:20])
+        else:
+            summary[key] = value
+    return summary
+
+
+def _prepare_tool_result(result: Any) -> str:
+    if isinstance(result, dict):
+        result = _summarize_large_result(result)
+
+    result_str = json.dumps(result, default=str)
+    if len(result_str) > TOOL_RESULT_CHAR_LIMIT:
+        if isinstance(result, dict):
+            result = _summarize_large_result(result)
+        result_str = json.dumps(result, default=str)
+    if len(result_str) > TOOL_RESULT_CHAR_LIMIT:
+        result_str = result_str[:TOOL_RESULT_CHAR_LIMIT] + "..."
+    return result_str
+
+
+def _parse_assistant_payload(text: str) -> tuple[str, dict | None, list[str]]:
+    visualization = None
+    suggestions   = []
+    clean_text    = _strip_visualization_markup(text)
+
+    if "<visualization>" in text and "</visualization>" in text:
+        try:
+            viz_start = text.index("<visualization>") + len("<visualization>")
+            viz_end   = text.index("</visualization>")
+            viz_json  = text[viz_start:viz_end].strip()
+
+            if viz_json.startswith("```"):
+                viz_json = "\n".join(
+                    line for line in viz_json.split("\n")
+                    if not line.strip().startswith("```")
+                )
+
+            viz_data      = json.loads(viz_json)
+            suggestions   = viz_data.pop("suggestions", []) or []
+            visualization = viz_data
+            clean_text    = _strip_visualization_markup(text[:text.index("<visualization>")])
+        except Exception as exc:
+            logger.warning("[Agent] Visualization parse error: %s", exc)
+            clean_text = _strip_visualization_markup(text)
+    else:
+        raw_json = re.search(r'\{\s*"visual_type"[\s\S]*\}', text)
+        if raw_json:
+            try:
+                viz_data      = json.loads(raw_json.group(0))
+                suggestions   = viz_data.pop("suggestions", []) or []
+                visualization = viz_data
+                clean_text    = _strip_visualization_markup(text[:raw_json.start()])
+            except Exception as exc:
+                logger.warning("[Agent] Visualization JSON parse error: %s", exc)
+
+    return clean_text, visualization, suggestions
+
+
+def _finalize_agent_response(
+    clean_text    : str,
+    visualization : dict | None,
+    suggestions   : list[str],
+    tool_names    : list[str],
+    tool_results  : list[Any],
+    language      : str,
+    user_message  : str = "",
+) -> tuple[str, dict | None, list[str]]:
+    visualization = choose_response_visualization(
+        visualization,
+        tool_names,
+        tool_results,
+    )
+
+    suggestions = _normalize_suggestions(suggestions, tool_names, language)
+
+    clean_text, visualization = polish_agent_response(
+        user_message,
+        clean_text,
+        visualization,
+        tool_names,
+        tool_results,
+        language,
+    )
+
+    if visualization is None and not clean_text.strip() and tool_results:
+        for result in reversed(tool_results):
+            if not isinstance(result, dict) or result.get("error"):
+                continue
+            clients = result.get("clients") or []
+            if clients:
+                total_projects = sum(int(client.get("project_count") or 0) for client in clients)
+                clean_text = (
+                    f"Found {len(clients)} clients with {total_projects} projects "
+                    f"between {result.get('date_from')} and {result.get('date_to')}."
+                )
+                break
+
+    return clean_text, visualization, suggestions
+
+
+def _log_agent_response(
+    *,
+    user_message: str,
+    raw_text: str,
+    clean_text: str,
+    visualization: dict | None,
+    suggestions: list[str],
+    tool_names: list[str],
+) -> None:
+    logger.info(
+        "[Agent] Response summary query=%r text_chars=%s clean_chars=%s visual_type=%s suggestion_count=%s tools=%s",
+        user_message[:120],
+        len(raw_text or ""),
+        len(clean_text or ""),
+        (visualization or {}).get("visual_type"),
+        len(suggestions or []),
+        tool_names,
+    )
+    if raw_text and not visualization:
+        logger.warning(
+            "[Agent] No visualization parsed from assistant payload preview=%r",
+            (raw_text or "")[:500],
+        )
+
+
+async def _execute_tool_blocks(
+    blocks: list[Any],
+    adapter: OdooV14Adapter,
+    session_id: str | None = None,
+    user_message: str = "",
+) -> tuple[list[dict[str, Any]], list[str], list[Any]]:
+    tool_blocks = [block for block in blocks if block.type == "tool_use"]
+    if not tool_blocks:
+        return [], [], []
+
+    tool_results = []
+    tool_names   = []
+    raw_results  = []
+    for block in tool_blocks:
+        result = await asyncio.to_thread(
+            execute_tool,
+            block.name,
+            block.input,
+            adapter,
+            session_id,
+            user_message,
+        )
+        tool_names.append(block.name)
+        raw_results.append(result)
+        tool_results.append({
+            "type"       : "tool_result",
+            "tool_use_id": block.id,
+            "content"    : _prepare_tool_result(result),
+        })
+
+    return tool_results, tool_names, raw_results
+
+
+def _progress_steps_for_blocks(blocks: list[Any]) -> list[dict[str, str]]:
+    steps: list[dict[str, str]] = []
+    for block in blocks:
+        if block.type != "tool_use":
+            continue
+        steps.append({
+            "id": block.id,
+            "tool": block.name,
+            "label": TOOL_STATUS_LABELS.get(block.name, f"Running {block.name}..."),
+            "status": "queued",
+        })
+    return steps
 
 
 async def run_agent(
@@ -653,16 +1741,14 @@ async def run_agent(
     Runs the Claude agent with tool use.
     Claude decides what tools to call and how to respond.
     """
-    client  = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    client  = get_agent_client()
     adapter = get_adapter()
     today   = datetime.now().strftime("%A, %d %B %Y")
+    language = _detect_language(user_message)
+    tools_used: list[str] = []
+    tool_payloads: list[Any] = []
 
-    # Get conversation history
-    history = ConversationStore.get(session_id)
-
-    # Add user message to history
-    ConversationStore.append(session_id, "user", user_message)
-    messages = ConversationStore.get(session_id)
+    messages = ConversationStore.append(session_id, "user", user_message)
 
     logger.info(
         "[Agent] session=%s | turn=%d | input='%s'",
@@ -672,9 +1758,14 @@ async def run_agent(
     # Agentic loop — Claude may call multiple tools
     while True:
         response = client.messages.create(
-            model      = "claude-sonnet-4-20250514",
-            max_tokens = 4096,
-            system     = SYSTEM_PROMPT.replace("{today}", today),
+            model      = AGENT_MODEL,
+            max_tokens = MAX_AGENT_TOKENS,
+            system     = _build_agent_system_prompt(
+                today,
+                user_message,
+                adapter,
+                session_id,
+            ),
             tools      = TOOLS,
             messages   = messages,
         )
@@ -692,46 +1783,30 @@ async def run_agent(
                 if hasattr(block, "text"):
                     text += block.text
 
-            # Parse visualization block if present
-            visualization = None
-            suggestions   = []
+            parsed_text, visualization, suggestions = _parse_assistant_payload(text)
+            clean_text, visualization, suggestions = _finalize_agent_response(
+                parsed_text,
+                visualization,
+                suggestions,
+                tools_used,
+                tool_payloads,
+                language,
+                user_message,
+            )
+            _log_agent_response(
+                user_message=user_message,
+                raw_text=text,
+                clean_text=clean_text,
+                visualization=visualization,
+                suggestions=suggestions,
+                tool_names=tools_used,
+            )
 
-            if "<visualization>" in text and "</visualization>" in text:
-                try:
-                    viz_start = text.index("<visualization>") + len("<visualization>")
-                    viz_end   = text.index("</visualization>")
-                    viz_json  = text[viz_start:viz_end].strip()
-
-                    # Strip markdown fences if Claude wrapped it
-                    if viz_json.startswith("```"):
-                        lines     = viz_json.split("\n")
-                        viz_json  = "\n".join(
-                            l for l in lines
-                            if not l.strip().startswith("```")
-                        )
-
-                    viz_data      = json.loads(viz_json)
-                    suggestions   = viz_data.pop("suggestions", [])
-                    visualization = viz_data
-
-                    # Remove the visualization block from text
-                    text = text[:text.index("<visualization>")].strip()
-
-                except json.JSONDecodeError as exc:
-                    logger.warning(
-                        "[Agent] Visualization JSON parse failed: %s | raw: %s",
-                        exc,
-                        viz_json[:200] if 'viz_json' in dir() else "N/A",
-                    )
-                except Exception as exc:
-                    logger.warning("[Agent] Visualization parse error: %s", exc)
-
-            # Save assistant response to history
-            ConversationStore.append(session_id, "assistant", text)
+            ConversationStore.append(session_id, "assistant", clean_text)
 
             return {
-                "text"         : text,
-                "language"     : _detect_language(user_message),
+                "text"         : clean_text,
+                "language"     : language,
                 "visualization": visualization,
                 "suggestions"  : suggestions,
                 "turn_number"  : len(ConversationStore.get(session_id)),
@@ -739,47 +1814,24 @@ async def run_agent(
 
         # Claude wants to use tools
         if response.stop_reason == "tool_use":
-            # Add Claude's response to messages
             messages.append({
                 "role"   : "assistant",
                 "content": response.content,
             })
 
-            # Execute all tool calls
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    logger.info(
-                        "[Agent] Tool call: %s(%s)",
-                        block.name,
-                        json.dumps(block.input, default=str)[:100],
-                    )
+            tool_messages, tool_names, raw_results = await _execute_tool_blocks(
+                response.content,
+                adapter,
+                session_id,
+                user_message,
+            )
+            tools_used.extend(tool_names)
+            tool_payloads.extend(raw_results)
 
-                    import asyncio
-                    result = await asyncio.to_thread(execute_tool, block.name, block.input, adapter)
-
-                    # Truncate large results to avoid token overflow
-                    result_str = json.dumps(result, default=str)
-                    if len(result_str) > 50000:
-                        # For large reports keep only summary
-                        if isinstance(result, dict):
-                            result = _summarize_large_result(result)
-                        result_str = json.dumps(result, default=str)
-
-                    tool_results.append({
-                        "type"       : "tool_result",
-                        "tool_use_id": block.id,
-                        "content"    : result_str,
-                    })
-
-            # Add tool results to messages
             messages.append({
                 "role"   : "user",
-                "content": tool_results,
+                "content": tool_messages,
             })
-
-            # Update conversation store
-            # ConversationStore.save(session_id, messages)
             continue
 
         # Unexpected stop reason
@@ -787,45 +1839,11 @@ async def run_agent(
 
     return {
         "text"        : "I encountered an issue processing your request.",
-        "language"    : "en",
+        "language"    : language,
         "visualization": None,
-        "suggestions" : [],
-        "turn_number" : 1,
+        "suggestions" : _fallback_suggestions(tools_used, language) if tools_used else [],
+        "turn_number" : len(ConversationStore.get(session_id)),
     }
-
-
-def _summarize_large_result(data: dict) -> dict:
-    """Truncates large Odoo responses to prevent token overflow."""
-    summary = {}
-    for key, value in data.items():
-        if key == "report_lines" and isinstance(value, list):
-            # Keep only top-level lines (level 0,1,2)
-            summary[key] = [
-                l for l in value
-                if l.get("level", 0) <= 2
-            ][:20]
-        elif key == "accounts" and isinstance(value, dict):
-            # Keep first 30 accounts summary only
-            items = list(value.items())[:30]
-            summary[key] = {
-                k: {
-                    "name"   : v.get("name"),
-                    "debit"  : v.get("debit"),
-                    "credit" : v.get("credit"),
-                    "balance": v.get("balance"),
-                }
-                for k, v in items
-            }
-        elif key == "distribution" and isinstance(value, list):
-            summary[key] = value
-        elif key in ("kpis", "totals", "filters",
-                     "report_name", "date_from", "date_to",
-                     "project_name", "exceed_percent",
-                     "commitment_total", "cost_totals"):
-            summary[key] = value
-        else:
-            summary[key] = value
-    return summary
 
 
 def _detect_language(text: str) -> str:
@@ -854,6 +1872,33 @@ class ChatResponse(BaseModel):
     turn_number   : int
 
 
+class LoginRequest(BaseModel):
+    file_id: str
+
+
+class LoginResponse(BaseModel):
+    status          : str
+    session_id      : str
+    user_name       : str
+    language        : str
+    file_id         : str | None = None
+    welcome_title   : str | None = None
+    welcome_message : str | None = None
+    audio_response  : str | None = None
+
+
+class ProfileResponse(BaseModel):
+    user_name       : str
+    language        : str
+    file_id         : str | None = None
+    welcome_title   : str | None = None
+    welcome_message : str | None = None
+
+
+class SessionRequest(BaseModel):
+    session_id: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -866,6 +1911,36 @@ async def health():
         "model"  : "claude-sonnet-4-20250514",
     }
 
+
+@app.get("/quality/metrics")
+async def quality_metrics():
+    total = QUALITY_METRICS["responses"] or 1
+    return {
+        **QUALITY_METRICS,
+        "quality_pass_rate": round(QUALITY_METRICS["quality_pass"] / total, 4),
+    }
+
+
+@app.post("/auth/login", response_model=LoginResponse)
+async def auth_login(request: LoginRequest):
+    try:
+        return login_with_file_id(request.file_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[/auth/login] Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Authentication failed") from exc
+
+
+@app.post("/auth/logout")
+async def auth_logout(request: SessionRequest):
+    return logout(request.session_id)
+
+
+@app.get("/user/profile", response_model=ProfileResponse)
+async def user_profile(session_id: str | None = None):
+    return get_profile(session_id)
+
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
     """
@@ -874,99 +1949,126 @@ async def chat_stream(request: ChatRequest):
     Frontend renders text immediately.
     """
     from fastapi.responses import StreamingResponse as SR
-    import asyncio
 
     session_id = request.session_id or str(uuid4())
 
     async def generate():
-        client  = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        adapter = get_adapter()
-        today   = datetime.now().strftime("%A, %d %B %Y")
+        client   = get_agent_client()
+        adapter  = get_adapter()
+        today    = datetime.now().strftime("%A, %d %B %Y")
+        language = _detect_language(request.message)
+        tools_used: list[str] = []
+        tool_payloads: list[Any] = []
 
-        ConversationStore.append(session_id, "user", request.message)
-        messages = ConversationStore.get(session_id)
+        messages = ConversationStore.append(session_id, "user", request.message)
 
         full_text = ""
+        stream_filter = StreamTextFilter()
 
         # Agentic loop
         while True:
-            # Use streaming
             with client.messages.stream(
-                model      = "claude-sonnet-4-20250514",
-                max_tokens = 2048,
-                system     = SYSTEM_PROMPT.replace("{today}", today),
+                model      = AGENT_MODEL,
+                max_tokens = MAX_AGENT_TOKENS,
+                system     = _build_agent_system_prompt(
+                    today,
+                    request.message,
+                    adapter,
+                    session_id,
+                ),
                 tools      = TOOLS,
                 messages   = messages,
             ) as stream:
-                tool_calls_made = False
-
                 for event in stream:
                     if hasattr(event, "type"):
                         if event.type == "content_block_delta":
                             if hasattr(event.delta, "text"):
                                 chunk = event.delta.text
                                 full_text += chunk
-                                # Stream text chunk to client
-                                yield f"data: {json.dumps({'type': 'text', 'chunk': chunk})}\n\n"
+                                visible = stream_filter.push(chunk)
+                                if stream_filter.viz_hint:
+                                    yield f"data: {json.dumps({'type': 'viz_hint', 'visual_type': stream_filter.viz_hint})}\n\n"
+                                if visible:
+                                    yield f"data: {json.dumps({'type': 'text', 'chunk': visible})}\n\n"
 
                 final_message = stream.get_final_message()
 
                 if final_message.stop_reason == "tool_use":
-                    tool_calls_made = True
                     messages.append({
                         "role"   : "assistant",
                         "content": final_message.content,
                     })
 
-                    tool_results = []
-                    for block in final_message.content:
-                        if block.type == "tool_use":
-                            yield f"data: {json.dumps({'type': 'tool', 'name': block.name})}\n\n"
-                            result = await asyncio.to_thread(
-                                execute_tool, block.name, block.input, adapter
-                            )
-                            result_str = json.dumps(result, default=str)
-                            if len(result_str) > 50000:
-                                if isinstance(result, dict):
-                                    result = _summarize_large_result(result)
-                                result_str = json.dumps(result, default=str)
+                    tool_blocks = [block for block in final_message.content if block.type == "tool_use"]
+                    progress_steps = _progress_steps_for_blocks(final_message.content)
+                    if progress_steps:
+                        yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
 
-                            tool_results.append({
-                                "type"       : "tool_result",
-                                "tool_use_id": block.id,
-                                "content"    : result_str,
-                            })
+                    tool_messages: list[dict[str, Any]] = []
+                    tool_names: list[str] = []
+                    raw_results: list[Any] = []
+                    for index, block in enumerate(tool_blocks):
+                        progress_steps[index]["status"] = "running"
+                        status = _tool_status_label(block.name, block.input)
+                        yield f"data: {json.dumps({'type': 'status', 'message': status})}\n\n"
+                        yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
+
+                        result = await asyncio.to_thread(
+                            execute_tool,
+                            block.name,
+                            block.input,
+                            adapter,
+                            session_id,
+                            request.message,
+                        )
+                        tool_names.append(block.name)
+                        raw_results.append(result)
+                        tool_messages.append({
+                            "type"       : "tool_result",
+                            "tool_use_id": block.id,
+                            "content"    : _prepare_tool_result(result),
+                        })
+                        progress_steps[index]["status"] = (
+                            "failed"
+                            if isinstance(result, dict) and result.get("error")
+                            else "done"
+                        )
+                        yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
+                    tools_used.extend(tool_names)
+                    tool_payloads.extend(raw_results)
 
                     messages.append({
                         "role"   : "user",
-                        "content": tool_results,
+                        "content": tool_messages,
                     })
-                    full_text = ""  # Reset for next response
+                    full_text = ""
+                    stream_filter = StreamTextFilter()
                     continue
 
                 break
 
-        # Parse visualization from full text
-        visualization = None
-        suggestions   = []
-        clean_text    = full_text
-
-        if "<visualization>" in full_text and "</visualization>" in full_text:
-            try:
-                viz_start  = full_text.index("<visualization>") + len("<visualization>")
-                viz_end    = full_text.index("</visualization>")
-                viz_json   = full_text[viz_start:viz_end].strip()
-                viz_data   = json.loads(viz_json)
-                suggestions   = viz_data.pop("suggestions", [])
-                visualization = viz_data
-                clean_text    = full_text[:full_text.index("<visualization>")].strip()
-            except Exception:
-                pass
+        parsed_text, visualization, suggestions = _parse_assistant_payload(full_text)
+        clean_text, visualization, suggestions = _finalize_agent_response(
+            parsed_text,
+            visualization,
+            suggestions,
+            tools_used,
+            tool_payloads,
+            language,
+            request.message,
+        )
+        _log_agent_response(
+            user_message=request.message,
+            raw_text=full_text,
+            clean_text=clean_text,
+            visualization=visualization,
+            suggestions=suggestions,
+            tool_names=tools_used,
+        )
 
         ConversationStore.append(session_id, "assistant", clean_text)
 
-        # Send final metadata
-        yield f"data: {json.dumps({'type': 'done', 'visualization': visualization, 'suggestions': suggestions, 'session_id': session_id})}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'text': clean_text, 'visualization': visualization, 'suggestions': suggestions, 'session_id': session_id})}\n\n"
 
     return SR(
         generate(),
@@ -1005,7 +2107,10 @@ async def clear_session(session_id: str):
 
 
 @app.post("/voice")
-async def voice(audio: UploadFile = File(...)):
+async def voice(
+    audio: UploadFile = File(...),
+    session_id: str | None = Form(None),
+):
     """
     Voice conversation endpoint.
 
@@ -1015,25 +2120,25 @@ async def voice(audio: UploadFile = File(...)):
     Pipeline:
         Audio upload → Whisper STT → Claude Agent → ElevenLabs TTS → Audio
     """
-    session_id = str(uuid4())
-
-    # Validate file type
-    allowed_types = {
-        "audio/wav", "audio/wave", "audio/mpeg",
-        "audio/mp3", "audio/mp4", "audio/m4a",
-        "audio/webm", "audio/ogg", "audio/x-m4a",
-    }
-    content_type = audio.content_type or ""
-    filename     = audio.filename or "audio.wav"
-    extension    = filename.split(".")[-1].lower()
+    session_id = session_id or str(uuid4())
+    filename     = audio.filename or "audio.webm"
+    extension    = filename.rsplit(".", 1)[-1].lower() if "." in filename else "webm"
 
     # Save uploaded audio to temp file
     try:
-        suffix = f".{extension}" if extension else ".wav"
+        content = await audio.read()
+        if len(content) < 1024:
+            raise HTTPException(
+                status_code=422,
+                detail="Audio recording is too short. Hold the microphone a little longer and try again.",
+            )
+
+        suffix = f".{extension}" if extension else ".webm"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            content  = await audio.read()
             tmp.write(content)
             tmp_path = tmp.name
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=400,
@@ -1047,6 +2152,7 @@ async def voice(audio: UploadFile = File(...)):
             transcript = stt.transcribe(tmp_path)
             logger.info("[/voice] Transcript: '%s'", transcript)
         except Exception as exc:
+            logger.exception("[/voice] Transcription failed")
             raise HTTPException(
                 status_code=422,
                 detail=f"Speech transcription failed: {exc}"
@@ -1060,7 +2166,7 @@ async def voice(audio: UploadFile = File(...)):
 
         # Step 2: Run Claude agent
         try:
-            response = run_agent(transcript, session_id)
+            response = await run_agent(transcript, session_id)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
@@ -1082,8 +2188,12 @@ async def voice(audio: UploadFile = File(...)):
             iter([audio_bytes]),
             media_type = "audio/mpeg",
             headers    = {
-                "X-Session-Id" : session_id,
-                "X-Language"   : language,
+                "X-Session-Id"     : session_id,
+                "X-Language"       : language,
+                "X-Transcript"     : _ascii_header(transcript),
+                "X-Response"       : _ascii_header(text),
+                "X-Transcript-B64" : _utf8_header(transcript),
+                "X-Response-B64"   : _utf8_header(text),
             },
         )
 

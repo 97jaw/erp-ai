@@ -1,0 +1,47 @@
+import { motion } from "framer-motion";
+
+export default function DataTable({ data }) {
+  if (!data?.data?.rows?.length) return null;
+
+  const { headers, rows } = data.data;
+  const visibleRows = rows.slice(0, 20);
+
+  return (
+    <motion.div
+      className="ooa-table-wrap"
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+    >
+      <div className="ooa-table-wrap__label">{data.label}</div>
+      <div className="ooa-table-scroll">
+        <table className="ooa-table">
+          <thead>
+            <tr>
+              {(headers || Object.keys(rows[0] || {})).map((header) => (
+                <th key={header}>{header}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {visibleRows.map((row, index) => (
+              <motion.tr
+                key={`${index}-${String(row[0] || index)}`}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.04 }}
+              >
+                {(Array.isArray(row) ? row : Object.values(row)).map((cell, cellIndex) => (
+                  <td key={`${index}-${cellIndex}`}>{cell}</td>
+                ))}
+              </motion.tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > visibleRows.length ? (
+        <div className="ooa-table-wrap__meta">Showing {visibleRows.length} of {rows.length}</div>
+      ) : null}
+    </motion.div>
+  );
+}

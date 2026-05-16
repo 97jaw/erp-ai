@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+from io import BytesIO
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -66,17 +67,23 @@ class WhisperSTT:
         """
         logger.info("[WhisperSTT] Transcribing: %s", audio_path)
 
-        with open(audio_path, "rb") as audio_file:
-            kwargs = {
-                "model"          : "whisper-1",
-                "file"           : audio_file,
-                "response_format": "text",
-            }
-            # Language hint improves accuracy for Arabic/Urdu
-            if language_hint and language_hint in ("en", "ar", "ur"):
-                kwargs["language"] = language_hint
+        audio_bytes = Path(audio_path).read_bytes()
+        if len(audio_bytes) < 1024:
+            raise ValueError("Audio recording is too short to transcribe.")
 
-            transcript = self.client.audio.transcriptions.create(**kwargs)
+        audio_file = BytesIO(audio_bytes)
+        audio_file.name = Path(audio_path).name or "audio.webm"
+
+        kwargs = {
+            "model"          : "whisper-1",
+            "file"           : audio_file,
+            "response_format": "text",
+        }
+        # Language hint improves accuracy for Arabic/Urdu
+        if language_hint and language_hint in ("en", "ar", "ur"):
+            kwargs["language"] = language_hint
+
+        transcript = self.client.audio.transcriptions.create(**kwargs)
 
         result = transcript.strip() if isinstance(transcript, str) else str(transcript).strip()
         logger.info("[WhisperSTT] Transcript: '%s'", result[:80])

@@ -261,3 +261,228 @@ class TestFieldDiscovery:
         }
         result = adapter.field_exists("project.project", "nonexistent_field")
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Purchase Order Tests
+# ---------------------------------------------------------------------------
+
+class TestGetPurchaseOrders:
+
+    def _domain_has_field(self, domain, field_name: str) -> bool:
+        return any(
+            isinstance(clause, (list, tuple))
+            and len(clause) >= 3
+            and clause[0] == field_name
+            for clause in domain
+        )
+
+    def test_queries_client_field_not_supplier(self):
+        adapter = make_adapter()
+        adapter._model_fields_cache = {
+            "purchase.order": {
+                "client"     : {"type": "many2one"},
+                "project_id" : {"type": "many2one"},
+                "partner_id" : {"type": "many2one"},
+            },
+        }
+
+        def fake_search_read(
+            model,
+            domain,
+            fields,
+            limit=80,
+            offset=0,
+            order=None,
+        ):
+            if model == "res.partner":
+                return [{"id": 11, "name": "COLORS", "is_company": True}]
+            if model == "project.project":
+                return [{
+                    "id"        : 21,
+                    "name"      : "Warehouse project",
+                    "partner_id": [11, "COLORS"],
+                    "wo_ref_no" : "WO-1",
+                    "active"    : True,
+                }]
+            if model == "purchase.order":
+                if self._domain_has_field(domain, "client"):
+                    return [{
+                        "id"          : 101,
+                        "name"        : "PO001",
+                        "partner_id"  : [99, "Vendor"],
+                        "client"      : [11, "COLORS"],
+                        "date_order"  : "2026-01-01",
+                        "amount_total": 100.0,
+                        "state"       : "purchase",
+                        "project_id"  : False,
+                        "create_date" : "2026-01-01",
+                    }]
+                if self._domain_has_field(domain, "project_id"):
+                    return []
+            return []
+
+        adapter.search_read = MagicMock(side_effect=fake_search_read)
+
+        result = adapter.get_purchase_orders(client_name="COLORS", limit=20)
+
+        assert result["count"] == 1
+        assert result["orders"][0]["po_number"] == "PO001"
+        assert result["orders"][0]["supplier_name"] == "Vendor"
+        assert result["orders"][0]["client_name"] == "COLORS"
+        assert "purchase.order.client" in result["strategies"]
+
+    def test_merges_project_and_client_matches(self):
+        adapter = make_adapter()
+        adapter._model_fields_cache = {
+            "purchase.order": {
+                "client"     : {"type": "many2one"},
+                "project_id" : {"type": "many2one"},
+                "partner_id" : {"type": "many2one"},
+            },
+        }
+
+        def fake_search_read(
+            model,
+            domain,
+            fields,
+            limit=80,
+            offset=0,
+            order=None,
+        ):
+            if model == "res.partner":
+                return [{"id": 11, "name": "COLORS", "is_company": True}]
+            if model == "project.project":
+                return [{
+                    "id"        : 21,
+                    "name"      : "Warehouse project",
+                    "partner_id": [11, "COLORS"],
+                    "wo_ref_no" : "WO-1",
+                    "active"    : True,
+                }]
+            if model == "purchase.order":
+                orders = []
+                if self._domain_has_field(domain, "client"):
+                    orders.append({
+                        "id"          : 101,
+                        "name"        : "PO001",
+                        "partner_id"  : [99, "Vendor"],
+                        "client"      : [11, "COLORS"],
+                        "date_order"  : "2026-01-01",
+                        "amount_total": 100.0,
+                        "state"       : "purchase",
+                        "project_id"  : False,
+                        "create_date" : "2026-01-01",
+                    })
+                if self._domain_has_field(domain, "project_id"):
+                    orders.append({
+                        "id"          : 102,
+                        "name"        : "PO002",
+                        "partner_id"  : [98, "Other Vendor"],
+                        "client"      : [11, "COLORS"],
+                        "date_order"  : "2026-02-01",
+                        "amount_total": 200.0,
+                        "state"       : "done",
+                        "project_id"  : [21, "Warehouse project"],
+                        "create_date" : "2026-02-01",
+                    })
+                return orders
+
+        adapter.search_read = MagicMock(side_effect=fake_search_read)
+
+        result = adapter.get_purchase_orders(client_name="COLORS", limit=20)
+
+        assert result["count"] == 2
+        assert [order["po_number"] for order in result["orders"]] == ["PO002", "PO001"]
+
+    def test_uses_explicit_partner_ids(self):
+        adapter = make_adapter()
+        adapter._model_fields_cache = {
+            "purchase.order": {
+                "client"     : {"type": "many2one"},
+                "project_id" : {"type": "many2one"},
+                "partner_id" : {"type": "many2one"},
+            },
+        }
+
+        def fake_search_read(
+            model,
+            domain,
+            fields,
+            limit=80,
+            offset=0,
+            order=None,
+        ):
+            if model == "res.partner":
+                return [{"id": 18, "name": "COLORS FOR CONTRACTING", "is_company": True}]
+            if model == "project.project":
+                return []
+            if model == "purchase.order":
+                return [{
+                    "id"          : 201,
+                    "name"        : "PO201",
+                    "partner_id"  : [99, "Vendor"],
+                    "client"      : [18, "COLORS FOR CONTRACTING"],
+                    "date_order"  : "2026-03-01",
+                    "amount_total": 300.0,
+                    "state"       : "purchase",
+                    "project_id"  : False,
+                    "create_date" : "2026-03-01",
+                }]
+            return []
+
+        adapter.search_read = MagicMock(side_effect=fake_search_read)
+
+        result = adapter.get_purchase_orders(partner_ids=[18, 15481], limit=20)
+
+        assert result["count"] == 1
+        assert result["orders"][0]["po_number"] == "PO201"
+        assert set(result["partner_ids"]) == {18, 15481}
+
+    def test_matches_client_name_on_purchase_order_field(self):
+        adapter = make_adapter()
+        adapter._model_fields_cache = {
+            "purchase.order": {
+                "client"     : {"type": "many2one"},
+                "project_id" : {"type": "many2one"},
+                "partner_id" : {"type": "many2one"},
+            },
+        }
+
+        def fake_search_read(
+            model,
+            domain,
+            fields,
+            limit=80,
+            offset=0,
+            order=None,
+        ):
+            if model == "res.partner":
+                return []
+            if model == "project.project":
+                return []
+            if model == "purchase.order":
+                if self._domain_has_field(domain, "client"):
+                    return [{
+                        "id"          : 301,
+                        "name"        : "CCT-PO-133",
+                        "partner_id"  : [99, "Vendor"],
+                        "client"      : [18, "COLORS FOR CONTRACTING"],
+                        "date_order"  : "2025-10-30",
+                        "amount_total": 1000.0,
+                        "state"       : "locked",
+                        "project_id"  : [21, "Private Villa"],
+                        "create_date" : "2025-10-30",
+                    }]
+            return []
+
+        adapter.search_read = MagicMock(side_effect=fake_search_read)
+
+        result = adapter.get_purchase_orders(
+            client_name="COLORS FOR CONTRACTING TRADE AND TRANSPORTATION ESTABLISHMENT",
+            limit=20,
+        )
+
+        assert result["count"] == 1
+        assert result["orders"][0]["po_number"] == "CCT-PO-133"
+        assert result["orders"][0]["state"] == "locked"

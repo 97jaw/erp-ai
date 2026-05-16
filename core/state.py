@@ -48,6 +48,7 @@ class VisualType(str, Enum):
     BAR_CHART   = "BAR_CHART"
     LINE_CHART  = "LINE_CHART"
     DATA_TABLE  = "DATA_TABLE"
+    GROUPED_TABLE = "GROUPED_TABLE"
     PIVOT_TABLE = "PIVOT_TABLE"   # Added: covers region × month comparisons
     FINANCIAL_REPORT = "FINANCIAL_REPORT"   # ← P&L / Balance Sheet hierarchy
     LEDGER_TABLE     = "LEDGER_TABLE"       # ← General Ledger / Trial Balance

@@ -223,8 +223,8 @@ class AccountingVisualizationBuilder:
         period_list = data.get("period_list", [])
         rows        = []
 
-        for partner_name, pdata in partners.items():
-            row = {"partner": partner_name}
+        for partner_key, pdata in partners.items():
+            row = {"partner": pdata.get("partner_name") or partner_key}
             for period in period_list:
                 row[period] = pdata.get(period, 0) or 0
             row["total"] = pdata.get("total", 0) or 0
