@@ -8,6 +8,7 @@ from gateway.accounting_sql.schema import (
     account_type_filter_sql,
     balance_sheet_group_expr,
     balance_sheet_type_filter_sql,
+    expense_type_filter_sql,
     load_schema,
     pandl_type_filter_sql,
     sql_internal_group_expr,
@@ -136,7 +137,73 @@ def execute_recipe_sql(
             account_ids=params.get("account_ids"),
             limit=int(params.get("limit", 10000)),
         )
+    if report_type == "cost_analysis":
+        return execute_cost_analysis_sql(
+            cursor,
+            schema,
+            company_id=int(params.get("company_id", 1)),
+            date_from=params["date_from"],
+            date_to=params["date_to"],
+            analytic_ids=params.get("analytic_ids"),
+            operating_unit_ids=params.get("operating_unit_ids"),
+            limit=int(params.get("limit", 5000)),
+        )
     raise NotImplementedError(f"SQL recipe not implemented yet: {report_type}")
+
+
+def execute_cost_analysis_sql(
+    cursor: Any,
+    schema: AccountingSchema,
+    *,
+    company_id: int,
+    date_from: str,
+    date_to: str,
+    analytic_ids: list[int] | None = None,
+    operating_unit_ids: list[int] | None = None,
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    account_filter = account_type_filter_sql(schema)
+    expense_filter = expense_type_filter_sql(schema)
+    extra_clauses = ""
+    params: list[Any] = [company_id, date_from, date_to]
+    if analytic_ids:
+        extra_clauses += " AND aml.analytic_account_id = ANY(%s)"
+        params.append(analytic_ids)
+    if operating_unit_ids:
+        extra_clauses += " AND aml.operating_unit_id = ANY(%s)"
+        params.append(operating_unit_ids)
+    params.append(limit)
+
+    sql = f"""
+        SELECT
+            aml.analytic_account_id AS analytic_account_id,
+            COALESCE(aaa.name, 'Unallocated') AS analytic_account_name,
+            aa.id AS account_id,
+            aa.code AS account_code,
+            aa.name AS account_name,
+            COALESCE(SUM(aml.debit), 0) AS debit_sum,
+            COALESCE(SUM(aml.credit), 0) AS credit_sum,
+            COALESCE(SUM(aml.debit), 0) - COALESCE(SUM(aml.credit), 0) AS cost_amount
+        FROM account_move_line aml
+        INNER JOIN account_move am ON aml.move_id = am.id
+        INNER JOIN account_account aa ON aml.account_id = aa.id
+        LEFT JOIN account_account_type aat ON aa.user_type_id = aat.id
+        LEFT JOIN account_analytic_account aaa ON aml.analytic_account_id = aaa.id
+        WHERE am.state = 'posted'
+          AND aml.company_id = %s
+          AND aml.date >= %s
+          AND aml.date <= %s
+          AND {account_filter}
+          AND {expense_filter}
+          {extra_clauses}
+        GROUP BY aml.analytic_account_id, aaa.name, aa.id, aa.code, aa.name
+        HAVING COALESCE(SUM(aml.debit), 0) <> 0
+            OR COALESCE(SUM(aml.credit), 0) <> 0
+        ORDER BY cost_amount DESC
+        LIMIT %s
+    """
+    cursor.execute(sql, tuple(params))
+    return [dict(row) for row in cursor.fetchall()]
 
 
 def execute_balance_sheet_sql(

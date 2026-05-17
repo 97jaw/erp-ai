@@ -67,6 +67,16 @@ def execute_report_via_odoo(adapter: Any, params: dict[str, Any]) -> dict[str, A
             include_details=bool(params.get("include_details", False)),
         )
 
+    if report_type == "cost_analysis":
+        return accounting.get_cost_analysis(
+            date_from=date_from,
+            date_to=date_to,
+            company_id=company_id,
+            analytic_ids=params.get("analytic_ids"),
+            operating_unit_ids=operating_unit_ids,
+            limit=int(params.get("limit", 5000)),
+        )
+
     return {
         "error": "report_not_implemented_yet",
         "message": f"Odoo fallback not implemented for report_type '{report_type}'.",

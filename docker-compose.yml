@@ -3,6 +3,8 @@
 #   gateway      : FastAPI (STT/TTS)
 #   orchestrator : LangGraph + Claude
 #   odoo_bridge  : Version Adapters
+#
+# Observability (Prometheus/Grafana): docker-compose.monitoring.yml
 
 version: "3.9"
 

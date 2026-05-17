@@ -30,9 +30,10 @@ from pathlib import Path
 
 import anthropic
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -41,7 +42,10 @@ from integrations.voice_engine import WhisperSTT, ElevenLabsTTS
 from core.suggestion_engine import FALLBACK_SUGGESTIONS, FIXED_SUGGESTIONS
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
+
+from gateway.logging_config import LoggingContextMiddleware, setup_logging
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
 AGENT_MODEL = "claude-sonnet-4-20250514"
@@ -174,11 +178,28 @@ from gateway.project_client_grouping import (
     prefetch_projects_by_client,
     prefetch_system_block as prefetch_project_client_block,
 )
+from admin.api import admin_router
+from admin.auth.dependencies import extract_bearer_token, require_chat_user
+from admin.auth.principal import CurrentUser
+from admin.rbac.context import build_user_context_prompt as build_rbac_user_prompt
+from admin.rbac.context import get_request_user, set_request_user
+from admin.rbac.data_scope import apply_data_scope
+from admin.rbac.tool_permissions import check_tool_allowed, permission_for_tool
+from admin.observability.tracking import (
+    extract_token_usage,
+    schedule_usage,
+    track_agent_turn,
+    track_pdf_generated,
+    track_permission_denied,
+    track_voice_minutes,
+)
 from gateway.auth import (
     get_profile,
     login_with_file_id,
     logout,
+    refresh_tokens,
 )
+from gateway.conversation_store import ConversationStore
 from gateway.visualization_builder import choose_response_visualization
 from gateway.analytics_tools import (
     get_period_comparison,
@@ -229,6 +250,21 @@ app = FastAPI(
     docs_url= "/docs",
 )
 
+from admin.security.middleware import SecurityRateLimitMiddleware
+from gateway.metrics import (
+    PrometheusMetricsMiddleware,
+    ai_streaming_connections,
+    chat_stream_duration,
+    metrics_content_type,
+    metrics_payload,
+    record_ai_query,
+    record_claude_response,
+    record_tool_execution,
+)
+from starlette.responses import Response as StarletteResponse
+
+app.add_middleware(PrometheusMetricsMiddleware)
+app.add_middleware(SecurityRateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins     = ["*"],
@@ -236,6 +272,7 @@ app.add_middleware(
     allow_methods     = ["*"],
     allow_headers     = ["*"],
     expose_headers    = [
+        "X-Request-ID",
         "X-Session-Id",
         "X-Language",
         "X-Transcript",
@@ -244,8 +281,12 @@ app.add_middleware(
         "X-Response-B64",
     ],
 )
+app.add_middleware(LoggingContextMiddleware)
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
+app.include_router(admin_router)
+
+_http_bearer = HTTPBearer(auto_error=False)
 # ← ADD HERE — Voice engines (lazy loaded)
 _stt: WhisperSTT | None = None
 _tts: ElevenLabsTTS | None = None
@@ -377,128 +418,6 @@ def _strip_visualization_markup(text: str) -> str:
     )
     cleaned = re.sub(r"\n\*\*Suggestions:\*\*[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
-
-
-# ---------------------------------------------------------------------------
-# In-memory conversation store
-# ---------------------------------------------------------------------------
-
-class ConversationStore:
-    """
-    Stores conversation history per session.
-    Uses PostgreSQL if POSTGRES_DSN is set, otherwise in-memory.
-    """
-    _memory: dict[str, list] = {}
-    _use_postgres = bool(os.environ.get("POSTGRES_DSN"))
-    _pg_table_ready = False
-
-    @classmethod
-    def _ensure_table(cls, conn) -> None:
-        if cls._pg_table_ready:
-            return
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS ooa_conversations (
-                    session_id  TEXT PRIMARY KEY,
-                    messages    JSONB NOT NULL DEFAULT '[]',
-                    updated_at  TIMESTAMPTZ DEFAULT now()
-                )
-            """)
-        conn.commit()
-        cls._pg_table_ready = True
-
-    @classmethod
-    def _get_pg_connection(cls):
-        import psycopg2
-        conn = psycopg2.connect(os.environ["POSTGRES_DSN"])
-        cls._ensure_table(conn)
-        return conn
-
-    @classmethod
-    def get(cls, session_id: str) -> list:
-        if session_id in cls._memory:
-            return list(cls._memory[session_id])
-
-        if cls._use_postgres:
-            try:
-                conn = cls._get_pg_connection()
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT messages FROM ooa_conversations WHERE session_id = %s",
-                        (session_id,),
-                    )
-                    row = cur.fetchone()
-                conn.close()
-                messages = row[0] if row else []
-                cls._memory[session_id] = list(messages)
-                return list(messages)
-            except Exception as exc:
-                logger.error("[ConversationStore] PG get failed: %s", exc)
-
-        return []
-
-    @classmethod
-    def save(cls, session_id: str, messages: list) -> None:
-        cls._memory[session_id] = list(messages)
-        if cls._use_postgres:
-            try:
-                conn = cls._get_pg_connection()
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        INSERT INTO ooa_conversations (session_id, messages, updated_at)
-                        VALUES (%s, %s::jsonb, now())
-                        ON CONFLICT (session_id) DO UPDATE
-                        SET messages = EXCLUDED.messages, updated_at = now()
-                    """, (session_id, json.dumps(messages, default=str)))
-                conn.commit()
-                conn.close()
-            except Exception as exc:
-                logger.error("[ConversationStore] PG save failed: %s", exc)
-
-    @classmethod
-    def append(cls, session_id: str, role: str, content: Any) -> list:
-        messages = cls.get(session_id)
-        messages.append({"role": role, "content": content})
-        if len(messages) > 20:
-            messages = messages[-20:]
-        cls.save(session_id, messages)
-        return messages
-
-    @classmethod
-    def clear(cls, session_id: str) -> None:
-        if cls._use_postgres:
-            try:
-                conn = cls._get_pg_connection()
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "DELETE FROM ooa_conversations WHERE session_id = %s",
-                        (session_id,)
-                    )
-                conn.commit()
-                conn.close()
-            except Exception as exc:
-                logger.error("[ConversationStore] PG clear failed: %s", exc)
-        cls._memory.pop(session_id, None)
-
-    # @classmethod
-    # def get(cls, session_id: str) -> list:
-    #     return cls._store.get(session_id, [])
-
-    # @classmethod
-    # def append(cls, session_id: str, role: str, content: Any) -> None:
-    #     if session_id not in cls._store:
-    #         cls._store[session_id] = []
-    #     cls._store[session_id].append({
-    #         "role"   : role,
-    #         "content": content,
-    #     })
-    #     # Keep last 20 turns
-    #     if len(cls._store[session_id]) > 20:
-    #         cls._store[session_id] = cls._store[session_id][-20:]
-
-    # @classmethod
-    # def clear(cls, session_id: str) -> None:
-    #     cls._store.pop(session_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -1132,33 +1051,47 @@ def execute_tool(
     user_message: str = "",
 ) -> Any:
     """Executes a tool call and returns the result."""
-    started = time.time()
-    tool_input = enrich_tool_input(tool_name, tool_input or {}, session_id)
-    tool_input = normalize_tool_input(tool_name, tool_input)
+    started = time.perf_counter()
+    tool_input = dict(tool_input or {})
+    status = "success"
     cached = False
-
-    if should_bust_cache(user_message):
-        ToolResultCache.delete(tool_name, tool_input)
-    else:
-        cached_result = ToolResultCache.get(tool_name, tool_input)
-        if cached_result is not None:
-            cached = True
-            result = validate_tool_result(tool_name, cached_result)
-            update_scope_from_tool_result(session_id, tool_name, tool_input, result)
-            logger.info(
-                "[TOOL] %s",
-                json.dumps({
-                    "tool": tool_name,
-                    "cached": True,
-                    "duration_ms": int((time.time() - started) * 1000),
-                    "result_has_error": bool(isinstance(result, dict) and result.get("error")),
-                }),
-            )
-            return result
-
-    logger.info("[Tool] %s(%s)", tool_name, tool_input)
+    result: Any = None
 
     try:
+        user = get_request_user()
+        if user is not None:
+            denied = check_tool_allowed(user, tool_name, tool_input)
+            if denied:
+                status = "denied"
+                result = {"error": denied, "permission_denied": True}
+                return result
+            tool_input = apply_data_scope(tool_input, user)
+        tool_input = enrich_tool_input(tool_name, tool_input, session_id)
+        tool_input = normalize_tool_input(tool_name, tool_input)
+
+        if should_bust_cache(user_message):
+            ToolResultCache.delete(tool_name, tool_input)
+        else:
+            cached_result = ToolResultCache.get(tool_name, tool_input)
+            if cached_result is not None:
+                cached = True
+                result = validate_tool_result(tool_name, cached_result)
+                update_scope_from_tool_result(session_id, tool_name, tool_input, result)
+                if isinstance(result, dict) and result.get("error"):
+                    status = "error"
+                logger.info(
+                    "[TOOL] %s",
+                    json.dumps({
+                        "tool": tool_name,
+                        "cached": True,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                        "result_has_error": bool(isinstance(result, dict) and result.get("error")),
+                    }),
+                )
+                return result
+
+        logger.info("[Tool] %s(%s)", tool_name, tool_input)
+
         if tool_name == "get_financial_report":
             result = adapter.accounting.get_financial_report(
                 report_type = tool_input.get("report_type", "pandl"),
@@ -1330,25 +1263,39 @@ def execute_tool(
         else:
             result = {"error": f"Unknown tool: {tool_name}"}
 
+        if isinstance(result, dict) and result.get("error"):
+            status = "error"
+
+        if isinstance(result, dict) and not result.get("error"):
+            ToolResultCache.set(tool_name, tool_input, result)
+
+        result = validate_tool_result(tool_name, result)
+        update_scope_from_tool_result(session_id, tool_name, tool_input, result)
+        logger.info(
+            "[TOOL] %s",
+            json.dumps({
+                "tool": tool_name,
+                "cached": cached,
+                "duration_ms": int((time.perf_counter() - started) * 1000),
+                "result_has_error": bool(isinstance(result, dict) and result.get("error")),
+            }),
+        )
+        return result
+
     except Exception as exc:
+        status = "error"
         logger.error("[Tool] %s failed: %s", tool_name, exc)
         result = format_tool_exception(exc)
-
-    if isinstance(result, dict) and not result.get("error"):
-        ToolResultCache.set(tool_name, tool_input, result)
-
-    result = validate_tool_result(tool_name, result)
-    update_scope_from_tool_result(session_id, tool_name, tool_input, result)
-    logger.info(
-        "[TOOL] %s",
-        json.dumps({
-            "tool": tool_name,
-            "cached": cached,
-            "duration_ms": int((time.time() - started) * 1000),
-            "result_has_error": bool(isinstance(result, dict) and result.get("error")),
-        }),
-    )
-    return result
+        result = validate_tool_result(tool_name, result)
+        update_scope_from_tool_result(session_id, tool_name, tool_input, result)
+        return result
+    finally:
+        record_tool_execution(
+            tool_name,
+            time.perf_counter() - started,
+            status=status,
+            cached=cached,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1466,13 +1413,16 @@ Do not repeat clarification questions that the user already answered.
 If no data was fetched (greetings, general questions), omit the visualization block."""
 
 
-def _build_agent_system_prompt(
+async def _build_agent_system_prompt(
     today        : str,
     user_message : str = "",
     adapter      : OdooV14Adapter | None = None,
     session_id   : str | None = None,
+    user         : CurrentUser | None = None,
 ) -> str:
     system = SYSTEM_PROMPT.replace("{today}", today)
+    if user is not None:
+        system += build_rbac_user_prompt(user)
     if adapter is None:
         return system
 
@@ -1487,7 +1437,11 @@ def _build_agent_system_prompt(
     if project_counts:
         system += prefetch_project_client_block(project_counts)
     if session_id:
-        inferred = infer_scope_from_messages(ConversationStore.get(session_id))
+        history = await ConversationStore.get(
+            session_id,
+            user_id=user.id if user else None,
+        )
+        inferred = infer_scope_from_messages(history)
         if inferred:
             SessionScopeStore.update(session_id, **inferred)
         system += build_session_context_prompt(session_id)
@@ -1686,6 +1640,29 @@ def _log_agent_response(
         )
 
 
+async def _observe_tool_usage(block: Any, result: Any) -> None:
+    user = get_request_user()
+    if user is None:
+        return
+    if isinstance(result, dict) and result.get("permission_denied"):
+        code = permission_for_tool(block.name, dict(block.input or {}))
+        if code:
+            schedule_usage(
+                track_permission_denied(
+                    user.id,
+                    permission=code,
+                    tool_name=block.name,
+                )
+            )
+        return
+    if block.name in {"generate_pdf_report", "synthesize_pdf"}:
+        if isinstance(result, dict) and not result.get("error"):
+            report_type = (block.input or {}).get("report_type")
+            schedule_usage(
+                track_pdf_generated(user.id, report_type=report_type)
+            )
+
+
 async def _execute_tool_blocks(
     blocks: list[Any],
     adapter: OdooV14Adapter,
@@ -1715,6 +1692,7 @@ async def _execute_tool_blocks(
             "tool_use_id": block.id,
             "content"    : _prepare_tool_result(result),
         })
+        await _observe_tool_usage(block, result)
 
     return tool_results, tool_names, raw_results
 
@@ -1736,6 +1714,8 @@ def _progress_steps_for_blocks(blocks: list[Any]) -> list[dict[str, str]]:
 async def run_agent(
     user_message: str,
     session_id  : str,
+    *,
+    user_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Runs the Claude agent with tool use.
@@ -1748,26 +1728,37 @@ async def run_agent(
     tools_used: list[str] = []
     tool_payloads: list[Any] = []
 
-    messages = ConversationStore.append(session_id, "user", user_message)
+    messages = await ConversationStore.append(
+        session_id, "user", user_message, user_id=user_id
+    )
 
     logger.info(
         "[Agent] session=%s | turn=%d | input='%s'",
         session_id, len(messages), user_message[:60],
     )
 
+    chat_user = get_request_user()
+
     # Agentic loop — Claude may call multiple tools
     while True:
+        claude_started = time.perf_counter()
         response = client.messages.create(
             model      = AGENT_MODEL,
             max_tokens = MAX_AGENT_TOKENS,
-            system     = _build_agent_system_prompt(
+            system     = await _build_agent_system_prompt(
                 today,
                 user_message,
                 adapter,
                 session_id,
+                user=chat_user,
             ),
             tools      = TOOLS,
             messages   = messages,
+        )
+        record_claude_response(
+            response,
+            time.perf_counter() - claude_started,
+            model=AGENT_MODEL,
         )
 
         logger.info(
@@ -1802,14 +1793,36 @@ async def run_agent(
                 tool_names=tools_used,
             )
 
-            ConversationStore.append(session_id, "assistant", clean_text)
+            await ConversationStore.append(
+                session_id,
+                "assistant",
+                clean_text,
+                user_id=user_id,
+                language=language,
+                visualization=visualization,
+                suggestions=suggestions,
+            )
+            history = await ConversationStore.get(session_id, user_id=user_id)
+
+            track_uid = chat_user.id if chat_user else user_id
+            if track_uid:
+                inp_tok, out_tok = extract_token_usage(response)
+                schedule_usage(
+                    track_agent_turn(
+                        track_uid,
+                        input_tokens=inp_tok,
+                        output_tokens=out_tok,
+                        tools=tools_used,
+                    )
+                )
 
             return {
                 "text"         : clean_text,
                 "language"     : language,
                 "visualization": visualization,
                 "suggestions"  : suggestions,
-                "turn_number"  : len(ConversationStore.get(session_id)),
+                "turn_number"  : len(history),
+                "conversation_id": ConversationStore.conversation_id_for_session(session_id),
             }
 
         # Claude wants to use tools
@@ -1842,7 +1855,10 @@ async def run_agent(
         "language"    : language,
         "visualization": None,
         "suggestions" : _fallback_suggestions(tools_used, language) if tools_used else [],
-        "turn_number" : len(ConversationStore.get(session_id)),
+        "turn_number" : len(
+            await ConversationStore.get(session_id, user_id=user_id)
+        ),
+        "conversation_id": ConversationStore.conversation_id_for_session(session_id),
     }
 
 
@@ -1870,6 +1886,7 @@ class ChatResponse(BaseModel):
     visualization : dict | None = None
     suggestions   : list[str] = []
     turn_number   : int
+    conversation_id: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -1878,13 +1895,25 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     status          : str
-    session_id      : str
+    session_id      : str | None = None
     user_name       : str
     language        : str
     file_id         : str | None = None
     welcome_title   : str | None = None
     welcome_message : str | None = None
     audio_response  : str | None = None
+    access_token    : str | None = None
+    refresh_token   : str | None = None
+    token_type      : str | None = None
+    expires_in      : int | None = None
+    roles           : list[str] | None = None
+    permissions     : list[str] | None = None
+    mfa_required    : bool | None = None
+    mfa_token       : str | None = None
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 class ProfileResponse(BaseModel):
@@ -1912,6 +1941,15 @@ async def health():
     }
 
 
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus scrape endpoint."""
+    return StarletteResponse(
+        content=metrics_payload(),
+        media_type=metrics_content_type(),
+    )
+
+
 @app.get("/quality/metrics")
 async def quality_metrics():
     total = QUALITY_METRICS["responses"] or 1
@@ -1922,9 +1960,9 @@ async def quality_metrics():
 
 
 @app.post("/auth/login", response_model=LoginResponse)
-async def auth_login(request: LoginRequest):
+async def auth_login(request: LoginRequest, http_request: Request):
     try:
-        return login_with_file_id(request.file_id)
+        return await login_with_file_id(request.file_id, request=http_request)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1932,17 +1970,33 @@ async def auth_login(request: LoginRequest):
         raise HTTPException(status_code=500, detail="Authentication failed") from exc
 
 
+@app.post("/auth/refresh")
+async def auth_refresh(request: RefreshRequest):
+    return await refresh_tokens(request.refresh_token)
+
+
 @app.post("/auth/logout")
 async def auth_logout(request: SessionRequest):
-    return logout(request.session_id)
+    return await logout(request.session_id)
 
 
 @app.get("/user/profile", response_model=ProfileResponse)
-async def user_profile(session_id: str | None = None):
-    return get_profile(session_id)
+async def user_profile(
+    http_request: Request,
+    session_id: str | None = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+):
+    token = extract_bearer_token(http_request, credentials)
+    if token:
+        return await get_profile(token)
+    return await get_profile(session_id)
 
 @app.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(
+    request: ChatRequest,
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+):
     """
     Streaming chat endpoint.
     Returns text chunks as they are generated.
@@ -1950,125 +2004,163 @@ async def chat_stream(request: ChatRequest):
     """
     from fastapi.responses import StreamingResponse as SR
 
+    chat_user = await require_chat_user(
+        http_request, credentials, session_id=request.session_id
+    )
     session_id = request.session_id or str(uuid4())
 
     async def generate():
-        client   = get_agent_client()
-        adapter  = get_adapter()
-        today    = datetime.now().strftime("%A, %d %B %Y")
+        set_request_user(chat_user)
+        stream_started = time.perf_counter()
+        stream_status = "success"
         language = _detect_language(request.message)
-        tools_used: list[str] = []
-        tool_payloads: list[Any] = []
+        ai_streaming_connections.inc()
+        try:
+            client   = get_agent_client()
+            adapter  = get_adapter()
+            today    = datetime.now().strftime("%A, %d %B %Y")
+            tools_used: list[str] = []
+            tool_payloads: list[Any] = []
 
-        messages = ConversationStore.append(session_id, "user", request.message)
+            user_id = chat_user.id if chat_user else None
+            messages = await ConversationStore.append(
+                session_id, "user", request.message, user_id=user_id
+            )
+            full_text = ""
+            stream_filter = StreamTextFilter()
 
-        full_text = ""
-        stream_filter = StreamTextFilter()
+            while True:
+                claude_started = time.perf_counter()
+                with client.messages.stream(
+                    model      = AGENT_MODEL,
+                    max_tokens = MAX_AGENT_TOKENS,
+                    system     = await _build_agent_system_prompt(
+                        today,
+                        request.message,
+                        adapter,
+                        session_id,
+                        user=chat_user,
+                    ),
+                    tools      = TOOLS,
+                    messages   = messages,
+                ) as stream:
+                    for event in stream:
+                        if hasattr(event, "type"):
+                            if event.type == "content_block_delta":
+                                if hasattr(event.delta, "text"):
+                                    chunk = event.delta.text
+                                    full_text += chunk
+                                    visible = stream_filter.push(chunk)
+                                    if stream_filter.viz_hint:
+                                        yield f"data: {json.dumps({'type': 'viz_hint', 'visual_type': stream_filter.viz_hint})}\n\n"
+                                    if visible:
+                                        yield f"data: {json.dumps({'type': 'text', 'chunk': visible})}\n\n"
 
-        # Agentic loop
-        while True:
-            with client.messages.stream(
-                model      = AGENT_MODEL,
-                max_tokens = MAX_AGENT_TOKENS,
-                system     = _build_agent_system_prompt(
-                    today,
-                    request.message,
-                    adapter,
-                    session_id,
-                ),
-                tools      = TOOLS,
-                messages   = messages,
-            ) as stream:
-                for event in stream:
-                    if hasattr(event, "type"):
-                        if event.type == "content_block_delta":
-                            if hasattr(event.delta, "text"):
-                                chunk = event.delta.text
-                                full_text += chunk
-                                visible = stream_filter.push(chunk)
-                                if stream_filter.viz_hint:
-                                    yield f"data: {json.dumps({'type': 'viz_hint', 'visual_type': stream_filter.viz_hint})}\n\n"
-                                if visible:
-                                    yield f"data: {json.dumps({'type': 'text', 'chunk': visible})}\n\n"
+                    final_message = stream.get_final_message()
+                    record_claude_response(
+                        final_message,
+                        time.perf_counter() - claude_started,
+                        model=AGENT_MODEL,
+                    )
 
-                final_message = stream.get_final_message()
-
-                if final_message.stop_reason == "tool_use":
-                    messages.append({
-                        "role"   : "assistant",
-                        "content": final_message.content,
-                    })
-
-                    tool_blocks = [block for block in final_message.content if block.type == "tool_use"]
-                    progress_steps = _progress_steps_for_blocks(final_message.content)
-                    if progress_steps:
-                        yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
-
-                    tool_messages: list[dict[str, Any]] = []
-                    tool_names: list[str] = []
-                    raw_results: list[Any] = []
-                    for index, block in enumerate(tool_blocks):
-                        progress_steps[index]["status"] = "running"
-                        status = _tool_status_label(block.name, block.input)
-                        yield f"data: {json.dumps({'type': 'status', 'message': status})}\n\n"
-                        yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
-
-                        result = await asyncio.to_thread(
-                            execute_tool,
-                            block.name,
-                            block.input,
-                            adapter,
-                            session_id,
-                            request.message,
-                        )
-                        tool_names.append(block.name)
-                        raw_results.append(result)
-                        tool_messages.append({
-                            "type"       : "tool_result",
-                            "tool_use_id": block.id,
-                            "content"    : _prepare_tool_result(result),
+                    if final_message.stop_reason == "tool_use":
+                        messages.append({
+                            "role"   : "assistant",
+                            "content": final_message.content,
                         })
-                        progress_steps[index]["status"] = (
-                            "failed"
-                            if isinstance(result, dict) and result.get("error")
-                            else "done"
-                        )
-                        yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
-                    tools_used.extend(tool_names)
-                    tool_payloads.extend(raw_results)
 
-                    messages.append({
-                        "role"   : "user",
-                        "content": tool_messages,
-                    })
-                    full_text = ""
-                    stream_filter = StreamTextFilter()
-                    continue
+                        tool_blocks = [block for block in final_message.content if block.type == "tool_use"]
+                        progress_steps = _progress_steps_for_blocks(final_message.content)
+                        if progress_steps:
+                            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
 
-                break
+                        tool_messages: list[dict[str, Any]] = []
+                        tool_names: list[str] = []
+                        raw_results: list[Any] = []
+                        for index, block in enumerate(tool_blocks):
+                            progress_steps[index]["status"] = "running"
+                            status = _tool_status_label(block.name, block.input)
+                            yield f"data: {json.dumps({'type': 'status', 'message': status})}\n\n"
+                            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
 
-        parsed_text, visualization, suggestions = _parse_assistant_payload(full_text)
-        clean_text, visualization, suggestions = _finalize_agent_response(
-            parsed_text,
-            visualization,
-            suggestions,
-            tools_used,
-            tool_payloads,
-            language,
-            request.message,
-        )
-        _log_agent_response(
-            user_message=request.message,
-            raw_text=full_text,
-            clean_text=clean_text,
-            visualization=visualization,
-            suggestions=suggestions,
-            tool_names=tools_used,
-        )
+                            result = await asyncio.to_thread(
+                                execute_tool,
+                                block.name,
+                                block.input,
+                                adapter,
+                                session_id,
+                                request.message,
+                            )
+                            tool_names.append(block.name)
+                            raw_results.append(result)
+                            tool_messages.append({
+                                "type"       : "tool_result",
+                                "tool_use_id": block.id,
+                                "content"    : _prepare_tool_result(result),
+                            })
+                            progress_steps[index]["status"] = (
+                                "failed"
+                                if isinstance(result, dict) and result.get("error")
+                                else "done"
+                            )
+                            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
+                        tools_used.extend(tool_names)
+                        tool_payloads.extend(raw_results)
 
-        ConversationStore.append(session_id, "assistant", clean_text)
+                        messages.append({
+                            "role"   : "user",
+                            "content": tool_messages,
+                        })
+                        full_text = ""
+                        stream_filter = StreamTextFilter()
+                        continue
 
-        yield f"data: {json.dumps({'type': 'done', 'text': clean_text, 'visualization': visualization, 'suggestions': suggestions, 'session_id': session_id})}\n\n"
+                    break
+
+            parsed_text, visualization, suggestions = _parse_assistant_payload(full_text)
+            clean_text, visualization, suggestions = _finalize_agent_response(
+                parsed_text,
+                visualization,
+                suggestions,
+                tools_used,
+                tool_payloads,
+                language,
+                request.message,
+            )
+            _log_agent_response(
+                user_message=request.message,
+                raw_text=full_text,
+                clean_text=clean_text,
+                visualization=visualization,
+                suggestions=suggestions,
+                tool_names=tools_used,
+            )
+
+            await ConversationStore.append(
+                session_id,
+                "assistant",
+                clean_text,
+                user_id=user_id,
+                language=language,
+                visualization=visualization,
+                suggestions=suggestions,
+            )
+            conv_id = ConversationStore.conversation_id_for_session(session_id)
+            yield f"data: {json.dumps({'type': 'done', 'text': clean_text, 'visualization': visualization, 'suggestions': suggestions, 'session_id': session_id, 'conversation_id': conv_id})}\n\n"
+        except Exception:
+            stream_status = "error"
+            raise
+        finally:
+            ai_streaming_connections.dec()
+            chat_stream_duration.labels(status=stream_status).observe(
+                time.perf_counter() - stream_started
+            )
+            record_ai_query(
+                endpoint="/chat/stream",
+                language=language,
+                status=stream_status,
+            )
+            set_request_user(None)
 
     return SR(
         generate(),
@@ -2081,13 +2173,27 @@ async def chat_stream(request: ChatRequest):
     )
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+):
+    chat_user = await require_chat_user(
+        http_request, credentials, session_id=request.session_id
+    )
     session_id = request.session_id or str(uuid4())
+    set_request_user(chat_user)
     try:
-        response = await run_agent(request.message, session_id)
+        response = await run_agent(
+            request.message,
+            session_id,
+            user_id=chat_user.id if chat_user else None,
+        )
     except Exception as exc:
         logger.error("[/chat] Agent error: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        set_request_user(None)
 
     return ChatResponse(
         session_id    = session_id,
@@ -2096,20 +2202,38 @@ async def chat(request: ChatRequest):
         visualization = response.get("visualization"),
         suggestions   = response.get("suggestions", []),
         turn_number   = response.get("turn_number", 1),
+        conversation_id=response.get("conversation_id"),
     )
 
 
 @app.delete("/session/{session_id}")
-async def clear_session(session_id: str):
+async def clear_session(
+    session_id: str,
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+):
     """Clear conversation history for a session."""
-    ConversationStore.clear(session_id)
-    return {"status": "cleared", "session_id": session_id}
+    chat_user = await require_chat_user(
+        http_request, credentials, session_id=session_id
+    )
+    await ConversationStore.clear(
+        session_id,
+        user_id=chat_user.id if chat_user else None,
+    )
+    conv_id = ConversationStore.conversation_id_for_session(session_id)
+    return {
+        "status": "cleared",
+        "session_id": session_id,
+        "conversation_id": conv_id,
+    }
 
 
 @app.post("/voice")
 async def voice(
+    http_request: Request,
     audio: UploadFile = File(...),
     session_id: str | None = Form(None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
 ):
     """
     Voice conversation endpoint.
@@ -2120,9 +2244,31 @@ async def voice(
     Pipeline:
         Audio upload → Whisper STT → Claude Agent → ElevenLabs TTS → Audio
     """
+    chat_user = await require_chat_user(
+        http_request, credentials, session_id=session_id
+    )
     session_id = session_id or str(uuid4())
-    filename     = audio.filename or "audio.webm"
-    extension    = filename.rsplit(".", 1)[-1].lower() if "." in filename else "webm"
+    set_request_user(chat_user)
+    try:
+        return await _voice_pipeline(
+            audio=audio,
+            session_id=session_id,
+            user_id=chat_user.id if chat_user else None,
+            extension_from_filename=audio.filename or "audio.webm",
+        )
+    finally:
+        set_request_user(None)
+
+
+async def _voice_pipeline(
+    *,
+    audio: UploadFile,
+    session_id: str,
+    user_id: int | None = None,
+    extension_from_filename: str,
+) -> StreamingResponse:
+    filename  = extension_from_filename
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "webm"
 
     # Save uploaded audio to temp file
     try:
@@ -2164,9 +2310,17 @@ async def voice(
                 detail="Could not transcribe audio. Please speak clearly and try again."
             )
 
+        if user_id:
+            minutes = max(0.1, len(content) / 48000.0)
+            schedule_usage(track_voice_minutes(user_id, minutes))
+
         # Step 2: Run Claude agent
         try:
-            response = await run_agent(transcript, session_id)
+            response = await run_agent(
+                transcript,
+                session_id,
+                user_id=user_id,
+            )
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
@@ -2204,3 +2358,62 @@ async def voice(
             _os.unlink(tmp_path)
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Static UI (ooa-ui/build) — register last so API routes take precedence
+# ---------------------------------------------------------------------------
+
+_UI_BUILD_DIR = Path(__file__).resolve().parent.parent / "ooa-ui" / "build"
+
+
+def _register_frontend() -> None:
+    index = _UI_BUILD_DIR / "index.html"
+    if not index.is_file():
+        logger.warning(
+            "UI build not found at %s — run: cd ooa-ui && npm run build",
+            _UI_BUILD_DIR,
+        )
+
+        @app.get("/", include_in_schema=False)
+        async def root_info() -> dict[str, str]:
+            return {
+                "service": "OOA Gateway",
+                "version": "3.0.0",
+                "health": "/health",
+                "metrics": "/metrics",
+                "hint": "cd ooa-ui && npm run build, then restart the gateway",
+            }
+
+        return
+
+    static_dir = _UI_BUILD_DIR / "static"
+    if static_dir.is_dir():
+        app.mount(
+            "/static",
+            StaticFiles(directory=str(static_dir)),
+            name="ooa-ui-static",
+        )
+
+    @app.get("/", include_in_schema=False)
+    async def serve_ui_root() -> FileResponse:
+        return FileResponse(index)
+
+    @app.get("/{ui_path:path}", include_in_schema=False)
+    async def serve_ui_asset(ui_path: str) -> FileResponse:
+        """Serve built assets; SPA paths fall back to index.html."""
+        if ui_path.startswith(
+            ("auth/", "chat/", "admin/", "user/", "voice/", "reports/", "quality/")
+        ):
+            raise HTTPException(status_code=404, detail="Not found")
+        if ui_path in ("health", "metrics"):
+            raise HTTPException(status_code=404, detail="Not found")
+        asset = (_UI_BUILD_DIR / ui_path).resolve()
+        if not str(asset).startswith(str(_UI_BUILD_DIR.resolve())):
+            raise HTTPException(status_code=404, detail="Not found")
+        if asset.is_file():
+            return FileResponse(asset)
+        return FileResponse(index)
+
+
+_register_frontend()

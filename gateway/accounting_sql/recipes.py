@@ -32,7 +32,7 @@ REPORT_RECIPES: dict[str, dict[str, Any]] = {
         "order_by": "rp.name ASC",
     },
     "cost_analysis": {
-        "implemented": False,
+        "implemented": True,
         "requires_date_range": True,
         "internal_groups": ["expense"],
         "order_by": "debit_sum DESC",

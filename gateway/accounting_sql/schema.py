@@ -45,6 +45,12 @@ def pandl_type_filter_sql(schema: AccountingSchema, alias: str = "aat") -> str:
     return f"{alias}.type IN ('income', 'expense', 'depreciation', 'direct_cost')"
 
 
+def expense_type_filter_sql(schema: AccountingSchema, alias: str = "aat") -> str:
+    if schema.has_internal_group:
+        return f"{alias}.internal_group = 'expense'"
+    return f"{alias}.type IN ('expense', 'depreciation', 'direct_cost')"
+
+
 def balance_sheet_type_filter_sql(schema: AccountingSchema, alias: str = "aat") -> str:
     if schema.has_internal_group:
         return f"{alias}.internal_group IN ('asset', 'liability', 'equity')"

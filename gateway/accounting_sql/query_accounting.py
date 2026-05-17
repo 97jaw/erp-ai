@@ -55,6 +55,10 @@ def _validate_request(params: dict[str, Any]) -> dict[str, Any] | None:
     params["company_id"] = company_id
     if params.get("account_ids") and isinstance(params["account_ids"], list):
         params["account_ids"] = [int(value) for value in params["account_ids"]]
+    if params.get("analytic_ids") and isinstance(params["analytic_ids"], list):
+        params["analytic_ids"] = [int(value) for value in params["analytic_ids"]]
+    if params.get("operating_unit_ids") and isinstance(params["operating_unit_ids"], list):
+        params["operating_unit_ids"] = [int(value) for value in params["operating_unit_ids"]]
 
     if recipe.get("requires_date_range"):
         date_from, date_to = resolve_date_range(params.get("date_from"), params.get("date_to"))

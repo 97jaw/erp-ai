@@ -1,0 +1,26 @@
+# OOA Admin Panel — dedicated PostgreSQL (Phase 1)
+# Usage:
+#   docker compose -f docker-compose.admin-db.yml up -d
+#   OOA_DB_URL=postgresql://postgres:devpassword@localhost:5433/ooa
+
+services:
+  ooa-postgres:
+    image: postgres:15-alpine
+    container_name: ooa-postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: ooa
+    volumes:
+      - ooa-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ooa"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ooa-pg-data:

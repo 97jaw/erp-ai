@@ -1,0 +1,73 @@
+groups:
+  - name: ooa_critical
+    interval: 30s
+    rules:
+      - alert: OoaGatewayDown
+        expr: up{job="ooa-gateway"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OOA gateway metrics endpoint is down"
+          description: "Prometheus cannot scrape /metrics on the gateway target."
+
+      - alert: OoaHighErrorRate
+        expr: |
+          (
+            sum(rate(ooa_api_requests_total{status_code=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(ooa_api_requests_total[5m])), 0.001)
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: high
+        annotations:
+          summary: "OOA HTTP 5xx rate above 5%"
+
+      - alert: OoaSlowAIResponse
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(ooa_ai_response_time_seconds_bucket[5m])) by (le)
+          ) > 10
+        for: 5m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Claude API p95 latency above 10s"
+
+      - alert: OoaSlowToolExecution
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(ooa_tool_duration_seconds_bucket[5m])) by (le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Tool execution p95 above 5s"
+
+      - alert: OoaHighLoginFailureRate
+        expr: sum(rate(ooa_login_attempts_total{status="failure"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Elevated failed login rate"
+
+      - alert: OoaPostgresExporterDown
+        expr: up{job="postgres"} == 0
+        for: 2m
+        labels:
+          severity: high
+        annotations:
+          summary: "Postgres exporter is down"
+
+      - alert: OoaRedisExporterDown
+        expr: up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis exporter is down"

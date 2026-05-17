@@ -406,6 +406,12 @@ class AccountingNode:
                 result_selection = params.get("result_selection", "customer"),
             )
 
+        if report_type == "cost_analysis":
+            return ac.get_cost_analysis(
+                date_from = date_from,
+                date_to   = date_to,
+            )
+
         raise ValueError(f"Unknown accounting report type: {report_type}")
 
     def _error_result(self, message: str) -> dict[str, Any]:

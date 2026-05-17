@@ -54,12 +54,11 @@ def test_execute_query_accounting_requires_dsn() -> None:
     assert result["error"] == "accounting_sql_unavailable"
 
 
-def test_execute_query_accounting_rejects_unimplemented_recipe() -> None:
-    with patch.dict(os.environ, {"ODOO_POSTGRES_DSN": "postgresql://test"}, clear=False):
-        result = execute_query_accounting(
-            {"report_type": "cost_analysis", "date_from": "2026-05-01", "date_to": "2026-05-13"}
-        )
-    assert result["error"] == "report_not_implemented_yet"
+def test_execute_query_accounting_rejects_unknown_report_type() -> None:
+    result = execute_query_accounting(
+        {"report_type": "unknown_report", "date_from": "2026-05-01", "date_to": "2026-05-13"}
+    )
+    assert result["error"] == "unsupported_report_type"
 
 
 @patch("gateway.accounting_sql.query_accounting.accounting_cursor")

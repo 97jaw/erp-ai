@@ -5,7 +5,7 @@ import ThemeToggle from "../common/ThemeToggle";
 import FeatureShowcase from "../layout/FeatureShowcase";
 import { sound } from "../common/SoundManager";
 
-const API_BASE = "http://localhost:8000";
+import { API_BASE } from "../../config/api";
 
 const LOADING_MESSAGES = [
   "Connecting to Odoo...",
@@ -33,9 +33,56 @@ export default function LoginScreen({ onAuthenticated }) {
     message: "",
     language: "en",
   });
+  const [mfaToken, setMfaToken] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
 
   const normalizedFileId = useMemo(() => fileId.trim(), [fileId]);
   const canSubmit = normalizedFileId.length > 0;
+  const canSubmitMfa = mfaCode.trim().length >= 6;
+
+  const finishLogin = async (body) => {
+    setWelcome({
+      title: body.welcome_title || "Welcome",
+      name: body.user_name || "",
+      message: body.welcome_message || "Your workspace is ready.",
+      language: body.language || "en",
+    });
+    setStatus("success");
+    await sound.play(body.language === "ar" ? "login-success-ar" : "login-success-en");
+    window.setTimeout(() => {
+      onAuthenticated({
+        sessionId: body.session_id,
+        userName: body.user_name,
+        language: body.language,
+        fileId: body.file_id || normalizedFileId,
+        welcomeTitle: body.welcome_title,
+        welcomeMessage: body.welcome_message,
+        roles: body.roles || [],
+        permissions: body.permissions || [],
+      });
+    }, 2200);
+  };
+
+  const submitMfa = async () => {
+    if (status === "loading" || !canSubmitMfa) return;
+    setError("");
+    setStatus("loading");
+    try {
+      const res = await fetch(`${API_BASE}/auth/mfa/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mfa_token: mfaToken, code: mfaCode.trim() }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(parseLoginError(body, "Invalid MFA code"));
+      }
+      await finishLogin(body);
+    } catch (err) {
+      setStatus("mfa");
+      setError(err.message || "Invalid MFA code");
+    }
+  };
 
   const submit = async () => {
     if (status === "loading") return;
@@ -65,24 +112,19 @@ export default function LoginScreen({ onAuthenticated }) {
         throw new Error(parseLoginError(body, "File ID not recognized"));
       }
 
-      setWelcome({
-        title: body.welcome_title || "Welcome",
-        name: body.user_name || "",
-        message: body.welcome_message || "Your workspace is ready.",
-        language: body.language || "en",
-      });
-      setStatus("success");
-      await sound.play(body.language === "ar" ? "login-success-ar" : "login-success-en");
-      window.setTimeout(() => {
-        onAuthenticated({
-          sessionId: body.session_id,
-          userName: body.user_name,
-          language: body.language,
-          fileId: body.file_id || normalizedFileId,
-          welcomeTitle: body.welcome_title,
-          welcomeMessage: body.welcome_message,
+      if (body.mfa_required && body.mfa_token) {
+        setMfaToken(body.mfa_token);
+        setWelcome({
+          title: body.welcome_title || "Welcome",
+          name: body.user_name || "",
+          message: "Enter the 6-digit code from your authenticator app.",
+          language: body.language || "en",
         });
-      }, 2200);
+        setStatus("mfa");
+        return;
+      }
+
+      await finishLogin(body);
     } catch (err) {
       setStatus("error");
       setError(err.message || "Sorry, that File ID was not recognized");
@@ -159,6 +201,36 @@ export default function LoginScreen({ onAuthenticated }) {
                   >
                     {LOADING_MESSAGES[loadingIndex]}
                   </motion.div>
+                </motion.div>
+              ) : status === "mfa" ? (
+                <motion.div
+                  key="mfa"
+                  className="ooa-login-spotlight__panel"
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                >
+                  <label className="ooa-login-spotlight__label">Two-factor code</label>
+                  <div className="ooa-login-spotlight__hint" style={{ marginBottom: "0.75rem" }}>
+                    {welcome.message}
+                  </div>
+                  <div className="ooa-login-spotlight__row">
+                    <input
+                      className="ooa-login-spotlight__input"
+                      value={mfaCode}
+                      onChange={(e) => setMfaCode(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") submitMfa();
+                      }}
+                      placeholder="000000"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      autoFocus
+                    />
+                    <button type="button" className="ooa-send-btn" disabled={!canSubmitMfa} onClick={submitMfa}>
+                      →
+                    </button>
+                  </div>
+                  {error ? <div className="ooa-login-spotlight__error">{error}</div> : null}
                 </motion.div>
               ) : status === "success" ? (
                 <motion.div

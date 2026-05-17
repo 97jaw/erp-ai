@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from gateway.balance_sheet_normalize import extract_balance_sheet_kpis, normalize_balance_sheet_report
+from gateway.cost_analysis_normalize import normalize_cost_analysis
 from gateway.general_ledger_normalize import normalize_general_ledger
 from gateway.pandl_normalize import extract_pandl_kpis, normalize_pandl_report
 from gateway.quality_formatting import format_currency
@@ -266,4 +267,18 @@ def post_process_report(
             date_to=params["date_to"],
             company_id=int(params.get("company_id", 1)),
         )
+    if report_type == "cost_analysis":
+        result = normalize_cost_analysis(
+            rows,
+            date_from=params["date_from"],
+            date_to=params["date_to"],
+            source="direct_sql",
+            applied_filters={
+                "company_id": int(params.get("company_id", 1)),
+                "analytic_ids": params.get("analytic_ids"),
+                "operating_unit_ids": params.get("operating_unit_ids"),
+            },
+        )
+        result["company_id"] = int(params.get("company_id", 1))
+        return result
     raise NotImplementedError(f"Post-processing not implemented yet: {report_type}")

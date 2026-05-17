@@ -1128,6 +1128,87 @@ class AccountingConnector:
             source="project.financial.service",
             applied_filters=applied_filters,
         )
+
+    def get_cost_analysis(
+        self,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        *,
+        company_id: int = 1,
+        analytic_ids: list[int] | None = None,
+        operating_unit_ids: list[int] | None = None,
+        limit: int = 5000,
+    ) -> dict[str, Any]:
+        """Expense cost by analytic account (project) and GL account."""
+        from gateway.cost_analysis_normalize import normalize_cost_analysis
+
+        date_from, date_to = self._resolve_dates(date_from, date_to)
+        logger.info(
+            "[AccountingConnector] Cost Analysis: %s → %s | analytics=%s",
+            date_from,
+            date_to,
+            analytic_ids or "all",
+        )
+
+        if analytic_ids:
+            analytic_ids = self._validate_ids(
+                "account.analytic.account",
+                analytic_ids,
+                label="analytic_ids",
+            )
+        if operating_unit_ids:
+            operating_unit_ids = self._validate_ids(
+                "operating.unit",
+                operating_unit_ids,
+                label="operating_unit_ids",
+            )
+
+        applied_filters = {
+            "company_id": company_id,
+            "analytic_ids": analytic_ids,
+            "operating_unit_ids": operating_unit_ids,
+            "limit": limit,
+        }
+        call_kwargs: dict[str, Any] = {
+            "date_from": date_from,
+            "date_to": date_to,
+            "company_id": company_id,
+            "limit": limit,
+        }
+        if analytic_ids:
+            call_kwargs["analytic_ids"] = analytic_ids
+        if operating_unit_ids:
+            call_kwargs["operating_unit_ids"] = operating_unit_ids
+
+        try:
+            raw = self.adapter.call_method(
+                "project.financial.service",
+                "get_ai_cost_analysis",
+                [],
+                call_kwargs,
+            )
+        except Exception as exc:
+            logger.warning("[AccountingConnector] get_ai_cost_analysis failed: %s", exc)
+            return {
+                "error": True,
+                "message": (
+                    "Cost analysis requires project.financial.service.get_ai_cost_analysis "
+                    f"on Odoo (deploy elrace_dashboard). {exc}"
+                ),
+            }
+
+        if not isinstance(raw, dict):
+            return {"error": True, "message": f"Unexpected cost analysis response: {raw!r}"}
+
+        rows = raw.get("rows") or []
+        return normalize_cost_analysis(
+            rows,
+            date_from=date_from,
+            date_to=date_to,
+            source="project.financial.service",
+            applied_filters=applied_filters,
+        )
+
     # -----------------------------------------------------------------------
     # Helper Methods
     # -----------------------------------------------------------------------
