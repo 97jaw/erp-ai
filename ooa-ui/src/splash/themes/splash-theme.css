@@ -1,0 +1,108 @@
+/* Splash v2 — theme tokens & typography. See SPLASH_SCREEN_PLAN_V2.md */
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&display=swap");
+
+.splash-screen {
+  --splash-font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --splash-gold: #c9a84c;
+  --splash-cyan: #4ecdc4;
+  --splash-display-size: clamp(2.25rem, 6vw, 4rem);
+  --splash-display-weight: 200;
+  --splash-display-tracking: -0.04em;
+  --splash-body-size: 1rem;
+  --splash-label-size: 0.75rem;
+  --splash-meta-size: 0.8125rem;
+  font-family: var(--splash-font);
+}
+
+/* Sky Blue (light) — default per v2 */
+.splash-screen--sky {
+  --splash-bg: linear-gradient(180deg, #e0eaf5 0%, #c5d9ee 50%, #a8c5e0 100%);
+  --splash-text: #1a2744;
+  --splash-text-secondary: #4a5778;
+  --splash-text-muted: rgba(26, 39, 68, 0.5);
+  --splash-glass-bg: rgba(255, 255, 255, 0.55);
+  --splash-glass-border: rgba(255, 255, 255, 0.7);
+  --splash-pill-bg: rgba(255, 255, 255, 0.45);
+  --splash-pill-border: rgba(26, 39, 68, 0.1);
+  --splash-pill-hover: rgba(255, 255, 255, 0.65);
+  --splash-widget-bg: rgba(255, 255, 255, 0.55);
+  --splash-widget-border: rgba(255, 255, 255, 0.7);
+  --splash-widget-shadow: 0 8px 32px rgba(26, 39, 68, 0.08);
+  --splash-icon-bg: rgba(255, 255, 255, 0.5);
+  --splash-icon-hover: rgba(255, 255, 255, 0.72);
+  --splash-overlay: linear-gradient(
+    to bottom,
+    rgba(224, 234, 245, 0.2) 0%,
+    rgba(26, 39, 68, 0.12) 100%
+  );
+}
+
+/* Dark */
+.splash-screen--dark {
+  --splash-bg: #0a0f1e;
+  --splash-text: #ffffff;
+  --splash-text-secondary: rgba(255, 255, 255, 0.78);
+  --splash-text-muted: rgba(255, 255, 255, 0.5);
+  --splash-glass-bg: rgba(255, 255, 255, 0.06);
+  --splash-glass-border: rgba(255, 255, 255, 0.1);
+  --splash-pill-bg: rgba(255, 255, 255, 0.08);
+  --splash-pill-border: rgba(255, 255, 255, 0.12);
+  --splash-pill-hover: rgba(255, 255, 255, 0.12);
+  --splash-widget-bg: rgba(255, 255, 255, 0.06);
+  --splash-widget-border: rgba(255, 255, 255, 0.1);
+  --splash-widget-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  --splash-icon-bg: rgba(255, 255, 255, 0.06);
+  --splash-icon-hover: rgba(255, 255, 255, 0.1);
+  --splash-overlay: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.2) 0%,
+    rgba(0, 0, 0, 0.55) 100%
+  );
+}
+
+/* Abstract */
+.splash-screen--abstract {
+  --splash-bg: linear-gradient(145deg, #e8e0f5 0%, #f5e8e0 40%, #e0d5a8 100%);
+  --splash-text: #1a2744;
+  --splash-text-secondary: #4a5778;
+  --splash-text-muted: rgba(26, 39, 68, 0.5);
+  --splash-glass-bg: rgba(255, 255, 255, 0.5);
+  --splash-glass-border: rgba(255, 255, 255, 0.65);
+  --splash-pill-bg: rgba(255, 255, 255, 0.4);
+  --splash-pill-border: rgba(26, 39, 68, 0.1);
+  --splash-pill-hover: rgba(255, 255, 255, 0.6);
+  --splash-widget-bg: rgba(255, 255, 255, 0.5);
+  --splash-widget-border: rgba(255, 255, 255, 0.65);
+  --splash-widget-shadow: 0 8px 32px rgba(26, 39, 68, 0.1);
+  --splash-icon-bg: rgba(255, 255, 255, 0.45);
+  --splash-icon-hover: rgba(255, 255, 255, 0.65);
+  --splash-overlay: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.15) 0%,
+    rgba(26, 39, 68, 0.15) 100%
+  );
+}
+
+/* Legacy alias: cream v1 → sky v2 */
+.splash-screen--light {
+  --splash-bg: linear-gradient(180deg, #e0eaf5 0%, #c5d9ee 50%, #a8c5e0 100%);
+  --splash-text: #1a2744;
+  --splash-text-secondary: #4a5778;
+  --splash-text-muted: rgba(26, 39, 68, 0.5);
+  --splash-glass-bg: rgba(255, 255, 255, 0.55);
+  --splash-glass-border: rgba(255, 255, 255, 0.7);
+  --splash-pill-bg: rgba(255, 255, 255, 0.45);
+  --splash-pill-border: rgba(26, 39, 68, 0.1);
+  --splash-pill-hover: rgba(255, 255, 255, 0.65);
+  --splash-widget-bg: rgba(255, 255, 255, 0.55);
+  --splash-widget-border: rgba(255, 255, 255, 0.7);
+  --splash-widget-shadow: 0 8px 32px rgba(26, 39, 68, 0.08);
+  --splash-icon-bg: rgba(255, 255, 255, 0.5);
+  --splash-icon-hover: rgba(255, 255, 255, 0.72);
+  --splash-overlay: linear-gradient(
+    to bottom,
+    rgba(224, 234, 245, 0.2) 0%,
+    rgba(26, 39, 68, 0.12) 100%
+  );
+}

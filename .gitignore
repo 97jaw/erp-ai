@@ -20,9 +20,17 @@ __pycache__/
 *.log
 logs/*.jsonl
 
+# Generated Alertmanager (Phase 6)
+monitoring/alertmanager/alertmanager.generated.yml
+
 # Test artifacts
 .pytest_cache/
 .coverage
+
+# Phase 10 benchmark outputs (scripts write these at runtime)
+reports/*.json
+reports/*.log
+!reports/.gitkeep
 
 # Node
 ooa-ui/node_modules/

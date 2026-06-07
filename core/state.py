@@ -18,7 +18,7 @@ from enum import Enum
 from typing import Any, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import datetime, UTC
 
 # ---------------------------------------------------------------------------
@@ -355,9 +355,7 @@ class AgentState(BaseModel):
     Nodes WRITE to session only through approved mutator methods
     (append_turn, patch_filters, inherit_intent) to prevent accidental corruption.
     """
+    model_config = ConfigDict(frozen=False)
+
     session : SessionState
     turn    : TurnState = Field(default_factory=TurnState)
-
-    class Config:
-        # Allow mutation for LangGraph node updates
-        model_config = {"frozen": False}

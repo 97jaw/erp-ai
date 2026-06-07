@@ -9,17 +9,23 @@ export default function RoleDetail() {
   const [roleName, setRoleName] = useState("");
   const [assigned, setAssigned] = useState(new Set());
   const [allPerms, setAllPerms] = useState([]);
+  const [canManage, setCanManage] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const [rp, catalog] = await Promise.all([
+      const [rp, catalog, me] = await Promise.all([
         adminApi.rolePermissions(id),
         adminApi.permissions(),
+        adminApi.me().catch(() => null),
       ]);
       setRoleName(rp.role_name);
       setAssigned(new Set((rp.permissions || []).map((p) => p.id)));
       setAllPerms(catalog.permissions || []);
+      const perms = me?.permissions || [];
+      setCanManage(
+        Boolean(me?.is_super_admin) || perms.includes("admin.roles.manage"),
+      );
     } catch (err) {
       setError(err.message);
     }
@@ -50,6 +56,11 @@ export default function RoleDetail() {
     <>
       <PageHeader title={`Role: ${roleName}`} backTo="/admin/roles" />
       {error ? <div className="ooa-admin-error">{error}</div> : null}
+      {!canManage ? (
+        <p className="ooa-admin-warn" style={{ marginBottom: "0.75rem" }}>
+          View only — you need <code>admin.roles.manage</code> to change checkboxes.
+        </p>
+      ) : null}
       <GlassCard style={{ padding: "1rem" }}>
         {Object.entries(byCategory).map(([cat, perms]) => (
           <section key={cat} style={{ marginBottom: "1.25rem" }}>
@@ -58,7 +69,13 @@ export default function RoleDetail() {
               const has = assigned.has(p.id);
               return (
                 <label key={p.id} style={{ display: "block", marginBottom: "0.35rem", fontSize: "0.88rem" }}>
-                  <input type="checkbox" checked={has} onChange={() => toggle(p.id, has)} /> {p.code} — {p.display_name}
+                  <input
+                    type="checkbox"
+                    checked={has}
+                    disabled={!canManage}
+                    onChange={() => toggle(p.id, has)}
+                  />{" "}
+                  {p.code} — {p.display_name}
                 </label>
               );
             })}

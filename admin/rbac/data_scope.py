@@ -10,7 +10,11 @@ def apply_data_scope(tool_input: dict[str, Any], user: CurrentUser) -> dict[str,
     Restrict accounting tool inputs when user lacks data.all_projects.
     Injects department_ids for downstream SQL/Odoo filters when applicable.
     """
-    if user.is_super_admin or user.has_permission("data.all_projects"):
+    if (
+        user.is_super_admin
+        or user.has_permission("data.all_projects")
+        or user.has_permission("odoo.full_access")
+    ):
         return tool_input
 
     scoped = dict(tool_input)

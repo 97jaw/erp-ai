@@ -19,6 +19,7 @@ import logging
 import re
 import time
 import xmlrpc.client
+from difflib import SequenceMatcher
 from typing import Any, Optional
 
 from core.base_adapter import (
@@ -31,6 +32,8 @@ from core.base_adapter import (
 from core.entity_normalization import normalize_client_query
 from core.state import OdooVersion
 from adapters.v14.accounting_connector import AccountingConnector
+from adapters.v14.auth_errors import OdooAuthError, format_xmlrpc_auth_fault
+
 logger = logging.getLogger(__name__)
 
 
@@ -180,8 +183,9 @@ class OdooV14Adapter(BaseOdooAdapter):
                 "that the server is running."
             ) from exc
         except xmlrpc.client.Fault as exc:
+            message = format_xmlrpc_auth_fault(exc)
             logger.error("[V14Adapter] XML-RPC auth fault: %s", exc)
-            raise
+            raise OdooAuthError(message) from exc
 
     def _ensure_authenticated(self) -> None:
         """Auto-authenticates if uid is not set."""
@@ -204,15 +208,41 @@ class OdooV14Adapter(BaseOdooAdapter):
         All adapter methods route through here.
         """
         self._ensure_authenticated()
-        return self._object.execute_kw(
-            self.config.database,
-            self._uid,
-            self.config.api_key,
-            model,
-            method,
-            args,
-            kwargs or {},
-        )
+        method_label = f"{model}.{method}"
+        start = time.perf_counter()
+        try:
+            result = self._object.execute_kw(
+                self.config.database,
+                self._uid,
+                self.config.api_key,
+                model,
+                method,
+                args,
+                kwargs or {},
+            )
+        except Exception:
+            try:
+                from gateway.metrics import record_odoo_call
+
+                record_odoo_call(
+                    method_label,
+                    time.perf_counter() - start,
+                    status="error",
+                )
+            except Exception:
+                pass
+            raise
+        try:
+            from gateway.metrics import record_odoo_call
+
+            record_odoo_call(
+                method_label,
+                time.perf_counter() - start,
+                status="success",
+            )
+        except Exception:
+            pass
+        return result
 
     # -----------------------------------------------------------------------
     # 3. Retrieval
@@ -242,6 +272,39 @@ class OdooV14Adapter(BaseOdooAdapter):
         )
 
         return self._execute(model, "search_read", [domain], kwargs)
+
+    def safe_search_read(
+        self,
+        model: str,
+        domain: list[Any],
+        fields: list[str],
+        limit: int = 100,
+        offset: int = 0,
+        order: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Use search() + read() instead of search_read().
+
+        Bypasses broken search_read overrides in Odoo custom modules.
+        """
+        search_kwargs: dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+        }
+        if order:
+            search_kwargs["order"] = order
+
+        logger.debug(
+            "[V14Adapter] safe_search_read — model: %s | domain: %s | fields: %s",
+            model,
+            domain,
+            fields,
+        )
+
+        ids = self._execute(model, "search", [domain], search_kwargs)
+        if not ids:
+            return []
+        return self._execute(model, "read", [ids], {"fields": fields})
 
     def read_group(
         self,
@@ -905,6 +968,19 @@ class OdooV14Adapter(BaseOdooAdapter):
         if len(candidates) == 1:
             return remember((candidates[0]["id"], None))
         if len(candidates) > 1:
+            best = self._pick_best_project_match(project_name, candidates)
+            if best is not None:
+                return remember((best["id"], None))
+            return remember((None, candidates))
+
+        # --- Attempt 1b: all meaningful words must match ---
+        candidates = self._search_projects_by_all_words(project_name)
+        if len(candidates) == 1:
+            return remember((candidates[0]["id"], None))
+        if len(candidates) > 1:
+            best = self._pick_best_project_match(project_name, candidates)
+            if best is not None:
+                return remember((best["id"], None))
             return remember((None, candidates))
 
         # --- Attempt 2: Arabic name field ilike ---
@@ -914,6 +990,9 @@ class OdooV14Adapter(BaseOdooAdapter):
         if len(candidates) == 1:
             return remember((candidates[0]["id"], None))
         if len(candidates) > 1:
+            best = self._pick_best_project_match(project_name, candidates)
+            if best is not None:
+                return remember((best["id"], None))
             return remember((None, candidates))
 
         # --- Attempt 3: Claude translation → English ilike ---
@@ -978,6 +1057,76 @@ class OdooV14Adapter(BaseOdooAdapter):
                 "[V14Adapter] Search failed on field '%s': %s", field, exc
             )
             return []
+
+
+    def _search_projects_by_all_words(
+        self,
+        phrase: str,
+        *,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Search project.project requiring every meaningful word to match."""
+        from gateway.core.project_query_utils import meaningful_project_words
+
+        words = meaningful_project_words(phrase)
+        if not words:
+            return []
+        domain: list[Any] = [["name", "ilike", word] for word in words]
+        if len(words) > 1:
+            domain = ["&"] * (len(words) - 1) + domain
+        try:
+            return self.search_read(
+                model="project.project",
+                domain=domain,
+                fields=[
+                    "id",
+                    "name",
+                    "project_name_arabic",
+                    "wo_ref_no",
+                    "agreement_id",
+                    "partner_id",
+                ],
+                limit=limit,
+            )
+        except Exception as exc:
+            logger.error("[V14Adapter] All-words search failed: %s", exc)
+            return []
+
+    @staticmethod
+    def _pick_best_project_match(query: str, candidates: list[dict]) -> dict | None:
+        """Pick a single project when several ilike matches share the query phrase."""
+        if not candidates:
+            return None
+
+        query_lower = query.strip().lower()
+        if not query_lower:
+            return None
+
+        substring_matches = [
+            project
+            for project in candidates
+            if query_lower in str(project.get("name") or "").lower()
+        ]
+        if len(substring_matches) == 1:
+            return substring_matches[0]
+
+        scored: list[tuple[dict, float]] = []
+        for project in candidates:
+            name = str(project.get("name") or "")
+            ratio = SequenceMatcher(None, query_lower, name.lower()).ratio()
+            if query_lower in name.lower():
+                ratio = max(ratio, 0.85)
+            scored.append((project, ratio))
+
+        scored.sort(key=lambda item: item[1], reverse=True)
+        best_project, best_ratio = scored[0]
+        second_ratio = scored[1][1] if len(scored) > 1 else 0.0
+
+        if best_ratio >= 0.7 and (best_ratio - second_ratio) >= 0.12:
+            return best_project
+        if len(scored) == 1 and best_ratio >= 0.55:
+            return best_project
+        return None
 
 
     def _translate_to_english(self, text: str) -> str:

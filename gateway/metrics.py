@@ -203,6 +203,18 @@ def record_claude_response(
     )
 
 
+def record_odoo_call(
+    method: str,
+    duration_seconds: float,
+    *,
+    status: str = "success",
+) -> None:
+    """Record Odoo XML-RPC call (adapter _execute)."""
+    label = method[:80] if len(method) > 80 else method
+    odoo_calls.labels(method=label, status=status).inc()
+    odoo_call_duration.labels(method=label).observe(max(duration_seconds, 0.0))
+
+
 def record_tool_execution(
     tool_name: str,
     duration_seconds: float,

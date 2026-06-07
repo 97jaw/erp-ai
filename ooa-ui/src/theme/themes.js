@@ -1,4 +1,31 @@
 export const THEMES = {
+  abstract: {
+    name: "abstract",
+    label: "ABSTRACT",
+    colors: {
+      bgBase: "#f0ebe3",
+      textPrimary: "#1a2744",
+      textSecondary: "#4a5778",
+      textMuted: "rgba(26, 39, 68, 0.5)",
+      gold: "#c9a84c",
+      cyan: "#4ecdc4",
+      coral: "#ff6b6b",
+      royal: "#8b5cf6",
+    },
+    glass: {
+      bg: "rgba(255, 255, 255, 0.5)",
+      border: "rgba(255, 255, 255, 0.65)",
+      shadow: "0 8px 32px rgba(26, 39, 68, 0.1)",
+      innerGlow: "inset 0 1px 0 rgba(255, 255, 255, 0.75)",
+    },
+    gradients: {
+      app: "linear-gradient(145deg, #e8e0f5 0%, #f5e8e0 40%, #e0d5a8 100%)",
+      userBubble: "linear-gradient(135deg, #c9a84c, #a8873d)",
+      orbA: "rgba(201, 168, 76, 0.16)",
+      orbB: "rgba(78, 205, 196, 0.12)",
+      orbC: "rgba(139, 92, 246, 0.1)",
+    },
+  },
   starlight: {
     name: "starlight",
     label: "STARLIGHT",
@@ -56,12 +83,10 @@ export const THEMES = {
 };
 
 export const DEFAULT_THEME = (() => {
-  if (typeof window === "undefined") return "blackbat";
+  if (typeof window === "undefined") return "abstract";
   const stored = localStorage.getItem("ooa_theme");
   if (stored && THEMES[stored]) return stored;
-  return window.matchMedia?.("(prefers-color-scheme: light)").matches
-    ? "starlight"
-    : "blackbat";
+  return "abstract";
 })();
 
 export function applyThemeVariables(theme) {

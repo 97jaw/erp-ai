@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import GlassButton from "../glass/GlassButton";
+import { IconProfile } from "../common/MainIcons";
 
 export default function ProfileMenu({
   user,
@@ -7,6 +7,7 @@ export default function ProfileMenu({
   volume,
   onToggleSound,
   onVolumeChange,
+  onClearConversation,
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
@@ -30,14 +31,17 @@ export default function ProfileMenu({
 
   return (
     <div className="ooa-profile-menu" ref={menuRef}>
-      <GlassButton
-        className="ooa-profile-menu__trigger"
+      <button
+        type="button"
+        className="ooa-profile-menu__trigger ooa-main-topbar__icon-btn"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         aria-haspopup="menu"
+        aria-label="Profile and settings"
+        title="Profile"
       >
-        Profile
-      </GlassButton>
+        <IconProfile />
+      </button>
 
       {open ? (
         <div className="ooa-profile-menu__panel" role="menu">
@@ -67,6 +71,19 @@ export default function ProfileMenu({
               disabled={!soundEnabled}
             />
           </label>
+
+          {onClearConversation ? (
+            <button
+              type="button"
+              className="ooa-profile-menu__clear"
+              onClick={() => {
+                setOpen(false);
+                onClearConversation();
+              }}
+            >
+              Clear conversation
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>

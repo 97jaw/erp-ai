@@ -1,0 +1,430 @@
+"""Strategy planning models and Claude-backed planner for the reasoning engine."""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+from gateway.core.context_stack import ContextStack
+from gateway.core.project_query_utils import looks_like_project_cost_query
+from gateway.core.intent_analyzer import (
+    AnthropicJsonClient,
+    Intent,
+    JsonCompletionClient,
+)
+
+logger = logging.getLogger(__name__)
+
+STRATEGY_PLANNER_MODEL = "claude-sonnet-4-20250514"
+STRATEGY_PLANNER_MAX_TOKENS = 2048
+
+
+class StrategyException(Exception):
+    """Raised when strategy planning cannot proceed."""
+
+
+@dataclass
+class ExecutionStep:
+    """One executable step in a multi-step strategy."""
+
+    step_number: int
+    description: str
+    tool: str
+    tool_input: dict[str, Any]
+    depends_on: list[int] = field(default_factory=list)
+    parallel_with: list[int] = field(default_factory=list)
+    expected_output: str = "summary"
+    fallback_if_fails: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ExecutionStep:
+        """Build an ExecutionStep from Claude JSON output."""
+        return cls(
+            step_number=int(data["step_number"]),
+            description=str(data["description"]),
+            tool=str(data["tool"]),
+            tool_input=dict(data.get("tool_input") or {}),
+            depends_on=[int(value) for value in data.get("depends_on") or []],
+            parallel_with=[int(value) for value in data.get("parallel_with") or []],
+            expected_output=str(data.get("expected_output", "summary")),
+            fallback_if_fails=str(data.get("fallback_if_fails") or ""),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable representation for logging."""
+        return asdict(self)
+
+
+@dataclass
+class Strategy:
+    """Execution plan for fulfilling an analyzed intent."""
+
+    steps: list[ExecutionStep]
+    synthesis_approach: str
+    quality_checks: list[str]
+    estimated_duration_ms: int
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Strategy:
+        """Build a Strategy from Claude JSON output."""
+        steps = [
+            ExecutionStep.from_dict(step)
+            for step in data.get("steps") or []
+            if isinstance(step, dict)
+        ]
+        if not steps:
+            raise StrategyException("Strategy must contain at least one execution step")
+        for step in steps:
+            if not step.fallback_if_fails:
+                raise StrategyException(
+                    f"Step {step.step_number} is missing fallback_if_fails",
+                )
+        quality_checks = [str(item) for item in data.get("quality_checks") or []]
+        if not quality_checks:
+            raise StrategyException("Strategy quality_checks must be non-empty")
+        return cls(
+            steps=steps,
+            synthesis_approach=str(data.get("synthesis_approach") or ""),
+            quality_checks=quality_checks,
+            estimated_duration_ms=int(data.get("estimated_duration_ms") or 0),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable representation for logging."""
+        return {
+            "steps": [step.to_dict() for step in self.steps],
+            "synthesis_approach": self.synthesis_approach,
+            "quality_checks": list(self.quality_checks),
+            "estimated_duration_ms": self.estimated_duration_ms,
+        }
+
+
+class StrategyPlanner:
+    """Plan single-step or multi-step execution strategies for an intent."""
+
+    def __init__(
+        self,
+        client: JsonCompletionClient | None = None,
+        model: str = STRATEGY_PLANNER_MODEL,
+    ) -> None:
+        self._client = client or AnthropicJsonClient()
+        self._model = model
+
+    async def plan(self, intent: Intent, context: ContextStack) -> Strategy:
+        """Return an execution strategy for the analyzed intent."""
+        self._validate_intent(intent)
+        if intent.out_of_scope:
+            raise StrategyException(
+                "Cannot plan strategy for out-of-scope intent: "
+                f"{intent.out_of_scope_reason or 'capability unavailable'}",
+            )
+
+        if self._is_revenue_by_client_comparison(intent):
+            strategy = self.plan_revenue_comparison(intent, context)
+        elif self._is_revenue_by_client_period(intent):
+            strategy = self.plan_revenue_by_client(intent, context)
+        elif self._is_project_cost_query(intent, context):
+            strategy = self.plan_simple(intent, context)
+        elif intent.estimated_complexity == "simple" and self._single_tool_needed(intent):
+            strategy = self.plan_simple(intent, context)
+        else:
+            strategy = await self.plan_complex(intent, context)
+
+        logger.info(
+            "[StrategyPlanner] intent=%r steps=%d duration_ms=%d",
+            intent.specific_intent,
+            len(strategy.steps),
+            strategy.estimated_duration_ms,
+        )
+        return strategy
+
+    def plan_revenue_comparison(self, intent: Intent, context: ContextStack) -> Strategy:
+        """Build a deterministic two-period revenue-by-client comparison."""
+        from gateway.core.strategy_fixtures import build_revenue_comparison_strategy
+
+        periods = self._parse_quarter_periods(intent.specific_intent)
+        if len(periods) >= 2:
+            period_1, period_2 = periods[0], periods[1]
+        elif len(periods) == 1:
+            period_1 = periods[0]
+            year = int(period_1[0][:4]) - 1
+            period_2 = (f"{year}-01-01", f"{year}-03-31")
+        else:
+            period_1 = ("2026-01-01", "2026-03-31")
+            period_2 = ("2025-01-01", "2025-03-31")
+
+        limit = self._parse_top_n_limit(intent.specific_intent, default=5)
+        return build_revenue_comparison_strategy(
+            period_1=period_1,
+            period_2=period_2,
+            limit=limit,
+        )
+
+    def plan_revenue_by_client(self, intent: Intent, context: ContextStack) -> Strategy:
+        """Build a deterministic single-period revenue-by-client strategy."""
+        from gateway.core.strategy_fixtures import build_revenue_by_client_strategy
+
+        query = intent.specific_intent.lower()
+        temporal = context.temporal_context
+        if "last quarter" in query:
+            date_from, date_to = temporal.last_quarter
+        elif "last month" in query:
+            date_from, date_to = temporal.last_month
+        elif "ytd" in query or "this year" in query:
+            date_from, date_to = temporal.ytd
+        else:
+            date_from, date_to = temporal.last_3_months
+
+        limit = self._parse_top_n_limit(intent.specific_intent, default=10)
+        return build_revenue_by_client_strategy(
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+        )
+
+    @staticmethod
+    def _is_revenue_by_client_period(intent: Intent) -> bool:
+        query = intent.specific_intent.lower()
+        if intent.primary_action == "compare":
+            return False
+        has_revenue = any(token in query for token in ("revenue", "sales", "invoice", "turnover"))
+        has_client = any(token in query for token in ("client", "customer", "partner"))
+        return has_revenue and has_client
+
+    @staticmethod
+    def _is_revenue_by_client_comparison(intent: Intent) -> bool:
+        query = intent.specific_intent.lower()
+        if intent.primary_action != "compare":
+            return False
+        if intent.subject_area not in {"financial", "revenue", "sales"}:
+            if not any(token in query for token in ("revenue", "sales", "invoice")):
+                return False
+        has_revenue = any(token in query for token in ("revenue", "sales", "invoice", "turnover"))
+        has_client = any(token in query for token in ("client", "customer", "partner"))
+        has_periods = bool(re.search(r"Q1\s*\d{4}", query, re.IGNORECASE)) or " vs " in query
+        return has_revenue and has_client and has_periods
+
+    @staticmethod
+    def _parse_quarter_periods(text: str) -> list[tuple[str, str]]:
+        periods: list[tuple[str, str]] = []
+        for match in re.finditer(r"Q1\s*(\d{4})", text, re.IGNORECASE):
+            year = int(match.group(1))
+            periods.append((f"{year}-01-01", f"{year}-03-31"))
+        return periods
+
+    @staticmethod
+    def _parse_top_n_limit(text: str, default: int = 5) -> int:
+        match = re.search(r"top\s+(\d+)", text, re.IGNORECASE)
+        if match:
+            return max(1, min(int(match.group(1)), 20))
+        return default
+
+    def plan_simple(self, intent: Intent, context: ContextStack) -> Strategy:
+        """Build a single-tool strategy without calling Claude."""
+        tool, tool_input = self._resolve_simple_tool(intent, context)
+        step = ExecutionStep(
+            step_number=1,
+            description=intent.specific_intent,
+            tool=tool,
+            tool_input=tool_input,
+            depends_on=[],
+            parallel_with=[],
+            expected_output=intent.expected_output,
+            fallback_if_fails=(
+                f"Retry {tool} with default last 3 months date range from temporal context"
+            ),
+        )
+        return Strategy(
+            steps=[step],
+            synthesis_approach=(
+                "Return the single tool result directly with a concise executive summary"
+            ),
+            quality_checks=[
+                "Verify numeric values are present in the tool result",
+                "Confirm the date range used matches the user's intent",
+            ],
+            estimated_duration_ms=3000,
+        )
+
+    async def plan_complex(self, intent: Intent, context: ContextStack) -> Strategy:
+        """Build a multi-step strategy using Claude."""
+        prompt = self._build_complex_prompt(intent, context)
+        compact_suffix = (
+            "\nIMPORTANT: Return ONLY compact valid JSON. "
+            "Keep each description and fallback_if_fails under 80 characters."
+        )
+        last_error: Exception | None = None
+
+        for attempt in range(2):
+            attempt_prompt = prompt if attempt == 0 else prompt + compact_suffix
+            try:
+                raw_response = await self._client.complete_json(
+                    model=self._model,
+                    prompt=attempt_prompt,
+                    max_tokens=STRATEGY_PLANNER_MAX_TOKENS,
+                )
+            except Exception as exc:
+                raise StrategyException(f"Claude strategy planning failed: {exc}") from exc
+
+            try:
+                strategy = self._parse_strategy_response(raw_response)
+            except StrategyException as exc:
+                last_error = exc
+                if attempt == 0:
+                    logger.warning(
+                        "[StrategyPlanner] Invalid strategy JSON on attempt 1 for intent=%r: %s",
+                        intent.specific_intent,
+                        exc,
+                    )
+                    continue
+                raise
+
+            if strategy.estimated_duration_ms <= 0:
+                raise StrategyException("Strategy estimated_duration_ms must be positive")
+            if not strategy.synthesis_approach.strip():
+                raise StrategyException("Strategy synthesis_approach must be provided")
+            return strategy
+
+        raise StrategyException(
+            f"Invalid strategy JSON from Claude after retry: {last_error}",
+        ) from last_error
+
+    def _parse_strategy_response(self, raw_response: str) -> Strategy:
+        """Parse Claude JSON into Strategy."""
+        try:
+            payload = json.loads(self._extract_json(raw_response))
+            if not isinstance(payload, dict):
+                raise ValueError("Strategy JSON must be an object")
+            return Strategy.from_dict(payload)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError, StrategyException) as exc:
+            raise StrategyException(f"Invalid strategy JSON from Claude: {exc}") from exc
+
+    def _validate_intent(self, intent: Intent) -> None:
+        """Reject intents that cannot be planned."""
+        if not intent.primary_action.strip():
+            raise StrategyException("Intent primary_action is required for strategy planning")
+        if not intent.subject_area.strip():
+            raise StrategyException("Intent subject_area is required for strategy planning")
+        if not intent.specific_intent.strip():
+            raise StrategyException("Intent specific_intent is required for strategy planning")
+
+    def _single_tool_needed(self, intent: Intent) -> bool:
+        """Return True when one gateway tool can fulfill the intent."""
+        if intent.estimated_complexity != "simple":
+            return False
+        if intent.primary_action in {"compare"}:
+            return False
+        if intent.primary_action == "analyze" and len(intent.entities) > 1:
+            return False
+        return True
+
+    @staticmethod
+    def _is_project_cost_query(intent: Intent, context: ContextStack) -> bool:
+        """Return True when a confirmed project should use get_project_expenses directly."""
+        from gateway.core.entity_gate import EntityGate
+
+        if not EntityGate.project_confirmed(context):
+            return False
+        has_project_entity = any(entity.type == "project" for entity in intent.entities)
+        resolved_id = context.working_memory.session_facts.get("resolved_project_id")
+        if not has_project_entity and not resolved_id:
+            return False
+        query = f"{intent.specific_intent} {intent.subject_area}".lower()
+        return looks_like_project_cost_query(query) or any(
+            token in query for token in ("cost", "costs", "expense", "expenses", "spending")
+        )
+
+    def _resolve_simple_tool(
+        self,
+        intent: Intent,
+        context: ContextStack,
+    ) -> tuple[str, dict[str, Any]]:
+        """Map a simple intent to one gateway tool and input payload."""
+        query = intent.specific_intent.lower()
+        if intent.primary_action == "fetch_data" and intent.subject_area == "financial":
+            if any(token in query for token in ("p&l", "profit", "loss", "pandl")):
+                tool_input: dict[str, Any] = {"report_type": "pandl"}
+                date_range = context.temporal_context.last_3_months
+                tool_input["date_from"] = date_range[0]
+                tool_input["date_to"] = date_range[1]
+                return "get_financial_report", tool_input
+            if "balance sheet" in query:
+                return "get_financial_report", {"report_type": "balance_sheet"}
+            if "cash flow" in query:
+                return "get_financial_report", {"report_type": "cash_flow"}
+            if "trial balance" in query:
+                return "get_trial_balance", {
+                    "date_from": context.temporal_context.last_3_months[0],
+                    "date_to": context.temporal_context.last_3_months[1],
+                }
+
+        if intent.primary_action in {"search_entity", "fetch_data"} and intent.subject_area == "project":
+            from gateway.core.entity_gate import EntityGate
+
+            if not EntityGate.project_confirmed(context):
+                raise StrategyException(
+                    "Project must be confirmed before fetching project financial data",
+                )
+            return "get_project_expenses", self._build_project_expenses_input(intent, context)
+
+        if intent.primary_action == "search_entity":
+            return "search_odoo", {"model": "project.project", "query": intent.specific_intent}
+
+        raise StrategyException(
+            f"No simple tool mapping found for intent action={intent.primary_action} "
+            f"subject={intent.subject_area}",
+        )
+
+    @staticmethod
+    def _build_project_expenses_input(intent: Intent, context: ContextStack) -> dict[str, Any]:
+        """Build get_project_expenses input using user-confirmed project IDs only."""
+        confirmed = (context.working_memory.session_facts.get("confirmed_entities") or {}).get("project")
+        if not confirmed or not confirmed.get("id"):
+            raise StrategyException(
+                "Project cost query requires a user-confirmed project ID",
+            )
+        payload: dict[str, Any] = {
+            "project_id": int(confirmed["id"]),
+        }
+        if confirmed.get("name"):
+            payload["project_name"] = str(confirmed["name"])
+        return payload
+
+    def _build_complex_prompt(self, intent: Intent, context: ContextStack) -> str:
+        """Build a focused Claude prompt for multi-step strategy planning."""
+        entities = [entity.to_dict() for entity in intent.entities]
+        return (
+            "You are a strategy planner for an ERP assistant.\n"
+            f"Intent: {intent.specific_intent}\n"
+            f"Primary action: {intent.primary_action}\n"
+            f"Subject area: {intent.subject_area}\n"
+            f"Entities: {json.dumps(entities, ensure_ascii=True)}\n"
+            f"Available tools: {context.capability_manifest.tools_summary()}\n"
+            "Return ONLY valid JSON:\n"
+            "{"
+            '"steps":[{"step_number":1,"description":"...","tool":"tool_name",'
+            '"tool_input":{},"depends_on":[],"parallel_with":[],"expected_output":"...",'
+            '"fallback_if_fails":"..."}],'
+            '"synthesis_approach":"...",'
+            '"quality_checks":["..."],'
+            '"estimated_duration_ms":3000'
+            "}\n"
+            "Rules: decompose into atomic steps; set depends_on for sequential steps; "
+            "set parallel_with for parallel steps; every step needs fallback_if_fails; "
+            "keep total steps under 10; keep descriptions and fallbacks concise.\n"
+            "For revenue-by-client period comparisons, use two parallel group_and_aggregate "
+            "steps on account.move with group_by=['partner_id'], aggregates=['amount_total:sum'], "
+            "date_from/date_to per period — do not chain get_financial_report before group_and_aggregate."
+        )
+
+    @staticmethod
+    def _extract_json(raw_response: str) -> str:
+        """Strip optional markdown fences from Claude output."""
+        cleaned = raw_response.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+        return cleaned.strip()

@@ -1,0 +1,69 @@
+{
+  "title": "OOA AI Operations",
+  "uid": "ooa-ai-operations",
+  "tags": ["ooa"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "AI queries / s",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(ooa_ai_queries_total[5m]))", "legendFormat": "queries/s", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "title": "Claude latency p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum(rate(ooa_ai_response_time_seconds_bucket[5m])) by (le))",
+        "legendFormat": "p95",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "Tokens / s",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(ooa_ai_tokens_consumed_total[5m])) by (type)", "legendFormat": "{{type}}", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "title": "Est. AI cost rate (cents/h)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(ooa_ai_cost_cents_total[5m])) * 3600", "legendFormat": "cents/h", "refId": "A" }]
+    },
+    {
+      "id": 5,
+      "title": "Active SSE streams",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "ooa_ai_streaming_connections", "refId": "A" }]
+    },
+    {
+      "id": 6,
+      "title": "Chat stream p95",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum(rate(ooa_chat_stream_duration_seconds_bucket[1h])) by (le))",
+        "refId": "A"
+      }]
+    }
+  ]
+}

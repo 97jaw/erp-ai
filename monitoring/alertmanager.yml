@@ -1,21 +1,4 @@
-global:
-  resolve_timeout: 5m
-
-route:
-  group_by: ["alertname", "severity"]
-  group_wait: 30s
-  group_interval: 5m
-  repeat_interval: 4h
-  receiver: default
-
-receivers:
-  - name: default
-    # Configure email/Slack in production (see MONITORING_PLAN.md Part VIII)
-    webhook_configs: []
-
-inhibit_rules:
-  - source_matchers:
-      - severity="critical"
-    target_matchers:
-      - severity=~"warning|medium|high"
-    equal: ["alertname"]
+# Legacy reference — Alertmanager uses the generated file:
+#   python scripts/render_alertmanager_config.py
+#   → monitoring/alertmanager/alertmanager.generated.yml
+# See docs/MONITORING_ACCESS.md and .env ALERT_* variables.

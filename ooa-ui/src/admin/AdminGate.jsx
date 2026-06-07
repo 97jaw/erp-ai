@@ -21,17 +21,27 @@ export default function AdminGate({ children }) {
   }, []);
 
   if (state === "loading") {
-    return <p style={{ padding: "2rem" }}>Checking admin access…</p>;
+    return (
+      <div className="ooa-admin-gate">
+        <p>Checking admin access…</p>
+      </div>
+    );
   }
   if (state === "denied") {
     return (
-      <div className="ooa-admin-error" style={{ margin: "2rem" }}>
-        You do not have permission to access the admin panel. Required: an admin.* permission or super admin role.
+      <div className="ooa-admin-gate">
+        <div className="ooa-admin-error">
+          You do not have permission to access the admin panel. Required: an admin.* permission or super admin role.
+        </div>
       </div>
     );
   }
   if (state === "error") {
-    return <div className="ooa-admin-error" style={{ margin: "2rem" }}>{message}</div>;
+    return (
+      <div className="ooa-admin-gate">
+        <div className="ooa-admin-error">{message}</div>
+      </div>
+    );
   }
   return children;
 }

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import AdminLayout from "./components/AdminLayout";
 import AdminGate from "./AdminGate";
@@ -13,10 +14,17 @@ import FeatureFlagsPage from "./pages/FeatureFlagsPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
 import UsagePage from "./pages/UsagePage";
 import SecurityPage from "./pages/SecurityPage";
+import MonitoringPage from "./pages/MonitoringPage";
 
 export default function AdminApp({ user, onLogout }) {
+  useEffect(() => {
+    document.body.classList.add("ooa-admin-route");
+    return () => document.body.classList.remove("ooa-admin-route");
+  }, []);
+
   return (
-    <AdminGate>
+    <div className="ooa-admin-app">
+      <AdminGate>
       <Routes>
         <Route element={<AdminLayout user={user} onLogout={onLogout} />}>
           <Route index element={<Dashboard />} />
@@ -30,10 +38,12 @@ export default function AdminApp({ user, onLogout }) {
           <Route path="feature-flags" element={<FeatureFlagsPage />} />
           <Route path="audit-logs" element={<AuditLogsPage />} />
           <Route path="usage" element={<UsagePage />} />
+          <Route path="monitoring" element={<MonitoringPage />} />
           <Route path="security" element={<SecurityPage />} />
           <Route path="*" element={<Navigate to="/admin" replace />} />
         </Route>
       </Routes>
-    </AdminGate>
+      </AdminGate>
+    </div>
   );
 }

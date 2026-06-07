@@ -1,10 +1,14 @@
 import { motion } from "framer-motion";
+import { humanizeLabel, humanizeOutput } from "../../utils/chat";
 
-export default function DataTable({ data }) {
+export default function DataTable({ data, meta }) {
   if (!data?.data?.rows?.length) return null;
 
   const { headers, rows } = data.data;
-  const visibleRows = rows.slice(0, 20);
+  const pageSize = meta?.page_size || 20;
+  const visibleRows = rows.slice(0, pageSize);
+  const totalRecords = meta?.total_records ?? rows.length;
+  const shownRecords = meta?.shown_records ?? visibleRows.length;
 
   return (
     <motion.div
@@ -19,7 +23,7 @@ export default function DataTable({ data }) {
           <thead>
             <tr>
               {(headers || Object.keys(rows[0] || {})).map((header) => (
-                <th key={header}>{header}</th>
+                <th key={header}>{humanizeLabel(header)}</th>
               ))}
             </tr>
           </thead>
@@ -32,15 +36,19 @@ export default function DataTable({ data }) {
                 transition={{ delay: index * 0.04 }}
               >
                 {(Array.isArray(row) ? row : Object.values(row)).map((cell, cellIndex) => (
-                  <td key={`${index}-${cellIndex}`}>{cell}</td>
+                  <td key={`${index}-${cellIndex}`}>
+                    {typeof cell === "string" ? humanizeOutput(cell) : cell}
+                  </td>
                 ))}
               </motion.tr>
             ))}
           </tbody>
         </table>
       </div>
-      {rows.length > visibleRows.length ? (
-        <div className="ooa-table-wrap__meta">Showing {visibleRows.length} of {rows.length}</div>
+      {totalRecords > shownRecords ? (
+        <div className="ooa-table-wrap__meta">
+          Showing {shownRecords} of {totalRecords} records
+        </div>
       ) : null}
     </motion.div>
   );

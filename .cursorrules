@@ -1,31 +1,292 @@
-# Cursor AI Rules for Odoo Omni-Agent
+# Cursor Rules — Odoo Omni-Agent (OOA)
 
-## CRITICAL — READ FIRST
-1. PRODUCT_QUALITY_FRAMEWORK.md is the law
-2. Every response must pass the "CFO test"
-3. No raw API syntax visible to users
-4. All money formatted as "AED X,XXX,XXX"
-5. Comparison queries MUST use BAR_CHART, not nested lists
-6. Zero-data results MUST trigger retry or explanation
+You are working on the **Odoo Omni-Agent (OOA)** project — a production AI assistant for **Elrace Cos. & Gen. Cont. CO.** (UAE construction & facilities management).
 
-## Before Implementing
-- Read PROJECT_CONTEXT.md
-- Check task files (TASKS_FEATURES.md, TASKS_ARCHITECTURE.md)
-- Reference appropriate plan (BACKEND_HARDENING_PLAN.md, etc.)
+You are talking with **M Jawad** (Product Architect). He is acting as Product Architect, you are Lead Backend Developer. Treat his architectural decisions as final.
 
-## Code Quality
-- Apply 7-layer quality pipeline
-- Run validate_response_quality before returning
-- Add test case to quality suite
-- Match visualization to user intent
+---
 
-## Output Standards
-- Numbers: format_currency, format_percentage helpers
-- Fields: humanize via FIELD_LABELS dict
-- Narratives: 2-3 sentences with key insight
-- Errors: user-friendly, never raw stack traces
+## 🛑 MANDATORY FIRST STEPS — EVERY SESSION
 
-## Production Mindset
-This is Claude — the most advanced AI.
-Output must reflect that capability.
-When in doubt: would a CFO accept this?
+Before writing ANY code, complete this checklist:
+
+1. **Read `CURRENT_PHASE.md`** — Know exactly what we are working on right now
+2. **Read `PROJECT_CONTEXT.md`** — Architecture, patterns, gotchas
+3. **Read the active plan file** named in `CURRENT_PHASE.md`
+4. **Read only the relevant phase/section** of that plan (do NOT try to absorb the whole thing)
+5. **Read `PRODUCT_QUALITY_FRAMEWORK.md`** — Output quality bar
+6. **Tell M Jawad:**
+   - Which phase we are on
+   - Which step you understand to be next
+   - What you plan to build
+   - Any questions
+7. **WAIT for confirmation** before writing code
+
+Do not assume. Do not start coding from memory. Do not build ahead.
+
+---
+
+## 🎯 QUALITY BAR (NON-NEGOTIABLE)
+
+Every output must meet this standard:
+
+> **"Senior management consultant working alongside a CFO's chief of staff"**
+
+This means:
+- Precise, accurate, verified numbers
+- Honest about limitations (never fabricate errors)
+- Proactive (anticipates next questions)
+- Concise (every sentence earns its place)
+- Professional UAE business tone
+
+---
+
+## 🚫 NEVER DO THESE
+
+1. **Never fabricate error messages** like "database issue, try again" when the actual problem is missing capability
+2. **Never assume the user is unsophisticated** — many users are super admins / top management
+3. **Never single-shot complex queries** — use multiple tools in orchestration
+4. **Never skip the quality gate** — every response must be self-checked before user sees it
+5. **Never build ahead of the current phase**
+6. **Never change architecture without M Jawad's approval**
+7. **Never skip tests** because "the feature works on the happy path"
+8. **Never use motion animations** except: Visualize panel Siri border + smooth chat scroll
+9. **Never use cream colors** in light theme — use sky blue
+10. **Never display raw API syntax** like `amount_total:sum` to users
+11. **Never use Odoo `search_read()` for entity resolution** — live Elrace server override returns wrong IDs; use `adapter.safe_search_read()` (search + read)
+
+---
+
+## ✅ ALWAYS DO THESE
+
+1. **Always inject user context** into Claude prompts (role, permissions, language)
+2. **Always default to last 3 months** when no date range specified
+3. **Always paginate** when results exceed 20 rows
+4. **Always show summary first**, then offer detail (progressive disclosure)
+5. **Always use parameterized SQL** — never concatenate user input
+6. **Always test with real Elrace data** — not mock data
+7. **Always update `CURRENT_PHASE.md`** as you progress
+8. **Always run tests before claiming a step is done**
+9. **Always ask before deviating** from the active plan
+10. **Always commit with clear messages** referencing the phase/step
+
+---
+
+## 📁 CODE STANDARDS
+
+### Python (Backend)
+- Python 3.11
+- Type hints required on all function signatures
+- Async-first (use `async def` for I/O operations)
+- Use `asyncpg` for PostgreSQL (parameterized queries)
+- Use `pydantic` for data models
+- Use `dataclasses` for internal structures
+- Format: `black` with line length 100
+- Imports: standard library → third-party → local
+
+### React (Frontend)
+- Functional components only (no class components)
+- Hooks: `useState`, `useEffect`, `useCallback`, `useMemo`
+- No prop drilling — use Context where needed
+- CSS-in-JS via styled components OR CSS modules (consistent within file)
+- No motion animations except authorized ones
+
+### File Organization
+```
+gateway/         FastAPI backend
+  core/          Intelligence layer (context, intent, orchestration)
+  tools/         AI tools (financial, search, etc.)
+  generators/    Output generators (PDF, Excel, PPT)
+  visualize/     Visualize agent layer
+  adapters/      Odoo XML-RPC adapters
+ooa-ui/          React frontend
+  src/
+    splash/      Splash screen
+    chat/        Main chat interface
+    visualize/   Visualize panel
+    admin/       Admin panel
+    integrations/  Integration screens
+templates/       Jinja2 templates (PDF, etc.)
+```
+
+---
+
+## 🎨 DESIGN LANGUAGE
+
+- **Clean white contrast glassy** aesthetic
+- Three themes: **Sky Blue (light)** / **Dark** / **Abstract**
+- **NO motion animations** except:
+  - Visualize panel Siri-style rotating border (signature)
+  - Smooth chat scroll on new message
+  - Hover state background color change (0.15s)
+  - Login → Outlook widget cross-fade (200ms)
+- Typography: Inter font, weights 200/300/400/500/600 (use smartly)
+- Glass panels: `backdrop-filter: blur(24px)` with subtle transparency
+- Headers: TRANSPARENT (same as body background, no different contrast bar)
+
+---
+
+## 🔑 KEY ENVIRONMENT FACTS
+
+- **Odoo version**: 14
+- **Odoo URL**: `odoo.elrace.com`
+- **Company ID**: 1 (Elrace Cos. & Gen. Cont. CO.)
+- **Currency**: AED
+- **Fiscal Year**: January – December
+- **Languages**: English (primary) + Arabic (full RTL support)
+- **Authenticated user**: uid 4291 (for backend testing)
+- **Test projects**: Zayidia Boys School (id 14549), Zayidia Girls School Al Ain (id 14610)
+- **Local dev path**: `~/Documents/odoo-projects/ai/odoo_ai_bridge/odoo_ai_bridge/`
+- **Frontend path**: `~/Documents/odoo-projects/ai/odoo_ai_bridge/ooa-ui/`
+- **Model**: Claude Sonnet 4 (`claude-sonnet-4-20250514`)
+- **Database (planned)**: PostgreSQL local in Docker
+
+---
+
+## 📋 KEY PATTERNS
+
+### Pattern 1: Adding a New Tool
+1. Define tool in `TOOLS` array in `gateway/main.py`
+2. Add handler in `execute_tool()`
+3. Add adapter method if Odoo call needed
+4. Add to capability manifest
+5. Write tests
+6. Update system prompt if needed
+
+### Pattern 2: Working with Odoo Financial Reports
+- Use custom AI gateway methods (`get_ai_financial_report`) on the `project.financial.service` AbstractModel
+- TransientModel methods CANNOT be called directly via XML-RPC
+- Always pass full context: journals, operating_units, financial_year
+- Match Odoo UI numbers exactly
+
+### Pattern 3: Entity Resolution
+- Use multi-strategy search (8 strategies in parallel)
+- Score by confidence
+- For super admin: aggressive resolution (use top match + show alternatives)
+- For regular users: confirmation-based
+- Cache resolutions in WorkingMemory
+
+### Pattern 4: Honest Failure Handling
+- Check capability manifest first
+- If unavailable: state honestly + offer alternative + mention roadmap
+- If ambiguous: show candidates + let user pick (or auto-pick for super admin)
+- NEVER fabricate technical errors
+
+### Pattern 5: Quality Gate
+- Every response passes through quality checks before user sees it
+- Eight checks: no fabrication, data consistency, no raw syntax, etc.
+- If quality < 85%: retry with feedback
+- Maximum 2 retries
+
+---
+
+## 🐛 KNOWN GOTCHAS
+
+1. **Income accounts store NEGATIVE credit balances** → use `abs()` for display
+2. **P&L MUST include all 55 journals + operating units** in `used_context`
+3. **`project_name_arabic`** has garbage data — do not rely on it
+4. **SYSTEM_PROMPT** uses `.replace("{today}", today)` NOT `.format()` due to JSON braces
+5. **Anthropic SDK content blocks** cannot `json.dumps()` — save only text to ConversationStore
+6. **HTTP headers must be ASCII** (X-Transcript, X-Response) — use `.encode('ascii', errors='ignore')`
+7. **TransientModel methods** cannot be called directly via XML-RPC
+8. **.env values without quotes** (e.g., `ODOO_V14_DB=odoo.elrace.com`)
+9. **Tool names must be unique** in TOOLS array
+10. **Default date range** must always be enforced — never query without dates
+
+---
+
+## 🚦 PHASE COMPLETION CHECKLIST
+
+Before claiming a phase complete, verify ALL of these:
+
+- [ ] All acceptance criteria from plan satisfied
+- [ ] All tests written and passing
+- [ ] Tested with real Elrace data (not just mock)
+- [ ] No technical debt introduced (or it is documented)
+- [ ] No deviations from plan (or they are documented and approved)
+- [ ] Code documented (docstrings, comments)
+- [ ] Type hints on all signatures
+- [ ] Error handling for likely failure modes
+- [ ] Performance acceptable (< 5s typical response)
+- [ ] CURRENT_PHASE.md updated
+- [ ] Committed with clear message
+
+---
+
+## 💬 HOW TO TALK TO M JAWAD
+
+- **Be direct.** No fluff, no excessive validation.
+- **Push back when needed.** If a plan has flaws, say so before building.
+- **Ask before assuming.** If something is ambiguous, ask one specific question.
+- **Show your work.** When you make decisions, briefly state why.
+- **Admit uncertainty.** "I'm not sure if X will work — let me test" is good.
+- **No emojis** unless he uses them first.
+- **Brief casual responses** for casual questions. **Detailed responses** for technical work.
+
+---
+
+## 📚 KEY DOCUMENTS
+
+Always available in repo root. Reference them by name:
+
+- `PROJECT_CONTEXT.md` — Architecture, patterns, gotchas
+- `CURRENT_PHASE.md` — What we are working on RIGHT NOW
+- `AI_CORE_INTELLIGENCE_ARCHITECTURE.md` — The brain rebuild
+- `FINANCIAL_INTELLIGENCE_PLAN.md` — All financial reports
+- `VISUALIZE_AGENT_PLAN.md` — Visualize agent overview
+- `VISUALIZE_LAYER_1_PLAN.md` — Analysis brain for Visualize
+- `VISUALIZE_LAYER_2_PLAN.md` — Template engine for PDF/Excel/PPT
+- `ADMIN_PANEL_PLAN.md` — RBAC, departments, audit
+- `MONITORING_PLAN.md` — Dashboards, metrics, logs
+- `MAIN_SCREENS_LAYOUT_PLAN.md` — UI layout
+- `SPLASH_SCREEN_PLAN_V2.md` — Splash screen
+- `QUERY_RESPONSE_INTELLIGENCE_PLAN.md` — Smart suggestions, pagination
+- `PRODUCT_QUALITY_FRAMEWORK.md` — Quality standards
+- `BACKEND_HARDENING_PLAN.md` — Backend reliability
+
+---
+
+## 🛠️ COMMON COMMANDS
+
+```bash
+# Start backend
+cd ~/Documents/odoo-projects/ai/odoo_ai_bridge/odoo_ai_bridge
+source venv/bin/activate
+uvicorn gateway.main:app --reload --port 8000
+
+# Start frontend
+cd ~/Documents/odoo-projects/ai/odoo_ai_bridge/ooa-ui
+npm start
+
+# Kill backend
+lsof -i :8000 | grep Python | awk '{print $2}' | xargs kill -9
+
+# Kill frontend
+lsof -i :3000 | grep node | awk '{print $2}' | xargs kill -9
+
+# Run tests
+pytest tests/ -v
+
+# Format code
+black gateway/ tests/
+
+# Type check
+mypy gateway/
+```
+
+---
+
+## ⚠️ THE GOLDEN RULE
+
+> **If you find yourself making something up because you don't know — STOP and ask M Jawad.**
+
+This applies to:
+- Architecture decisions
+- Business rules
+- API contracts
+- User flows
+- Error messages
+- Data schemas
+
+When in doubt → ask. Better to wait 5 minutes than build the wrong thing for 5 hours.
+

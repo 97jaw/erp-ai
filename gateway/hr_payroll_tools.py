@@ -1,0 +1,465 @@
+"""Payslip tools — File ID = emp_id; multi-strategy Odoo search with diagnostics."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from admin.auth.config import auth_db_enabled
+from admin.auth.odoo_verify import verify_file_id_with_odoo
+from admin.auth.principal import CurrentUser
+from adapters.v14.connector import OdooV14Adapter
+from gateway.hr_identity import (
+    build_hr_identity_prompt,
+    can_access_employee_file_id,
+    can_query_other_employees,
+    discover_employee_identifier_fields,
+    employee_id_field_names,
+    normalize_employee_file_id,
+    resolve_employee_by_file_id,
+    resolve_target_employee,
+)
+
+logger = logging.getLogger(__name__)
+
+_PAYSLIP_FIELD_CANDIDATES = (
+    "name",
+    "number",
+    "employee_id",
+    "date_from",
+    "date_to",
+    "state",
+    "net_wage",
+    "gross_wage",
+    "amount",
+    "total_paid",
+    "credit_note",
+    "company_id",
+)
+
+
+async def _load_user_row(user: CurrentUser) -> dict[str, Any] | None:
+    if not auth_db_enabled():
+        return {"file_id": user.file_id, "odoo_user_id": None}
+    from admin.auth.service import get_auth_service
+
+    service = await get_auth_service()
+    if service is None:
+        return None
+    row = await service._users.get_by_id(user.id)
+    return dict(row) if row else None
+
+
+async def resolve_odoo_user_id(user: CurrentUser, adapter: OdooV14Adapter) -> int | None:
+    row = await _load_user_row(user)
+    if row and row.get("odoo_user_id"):
+        return int(row["odoo_user_id"])
+
+    file_id = normalize_employee_file_id(user.file_id)
+    if not file_id:
+        return None
+
+    employee, _ = resolve_employee_by_file_id(adapter, file_id)
+    if employee:
+        related = employee.get("user_id")
+        if isinstance(related, (list, tuple)) and related:
+            return int(related[0])
+
+    verified = await verify_file_id_with_odoo(file_id)
+    if verified and verified.get("odoo_user_id"):
+        odoo_uid = int(verified["odoo_user_id"])
+        if auth_db_enabled() and row:
+            from admin.auth.service import get_auth_service
+
+            service = await get_auth_service()
+            if service is not None:
+                await service._users.set_odoo_user_id(user.id, odoo_uid)
+        return odoo_uid
+
+    users = adapter.search_read(
+        "res.users",
+        [["login", "=", file_id], ["active", "=", True]],
+        ["id"],
+        limit=1,
+    )
+    return int(users[0]["id"]) if users else None
+
+
+def _payslip_model(adapter: OdooV14Adapter) -> str | None:
+    if adapter._get_model_fields("hr.payslip"):
+        return "hr.payslip"
+    return None
+
+
+def _payslip_read_fields(adapter: OdooV14Adapter) -> list[str]:
+    available = adapter._get_model_fields("hr.payslip") or {}
+    if not available:
+        return list(_PAYSLIP_FIELD_CANDIDATES)
+    return [f for f in _PAYSLIP_FIELD_CANDIDATES if f in available]
+
+
+def _and_domain(*parts: list[Any]) -> list[Any]:
+    """Prefix-AND Odoo domains (each part is one leaf triple or nested domain)."""
+    clauses: list[Any] = []
+    for part in parts:
+        if not part:
+            continue
+        if isinstance(part[0], str) and part[0] in ("&", "|", "!"):
+            clauses.extend(part)
+        else:
+            clauses.append(part)
+    if not clauses:
+        return []
+    if len(clauses) == 1:
+        return clauses
+    return ["&"] * (len(clauses) - 1) + clauses
+
+
+def _safe_payslip_order(adapter: OdooV14Adapter) -> str:
+    meta = adapter._get_model_fields("hr.payslip") or {}
+    for field in ("date_to", "date_from", "create_date", "write_date", "id"):
+        if field in meta or field == "id":
+            return f"{field} desc"
+    return "id desc"
+
+
+def _payslip_state_domains(adapter: OdooV14Adapter, base: list[Any]) -> list[tuple[str, list[Any]]]:
+    """Try progressively looser state filters."""
+    payslip_meta = adapter._get_model_fields("hr.payslip") or {}
+    if "state" not in payslip_meta:
+        return [("no_state_field", base)]
+
+    variants: list[tuple[str, list[Any]]] = [
+        ("exclude_cancel", _and_domain(base, ["state", "!=", "cancel"])),
+        (
+            "done_verify_draft",
+            _and_domain(
+                base,
+                ["state", "in", ["done", "paid", "verify", "close", "draft", "confirmed"]],
+            ),
+        ),
+        ("any_state", base),
+    ]
+    return variants
+
+
+def _payslip_search_plans(
+    adapter: OdooV14Adapter,
+    file_id: str,
+    *,
+    employee_id: int | None = None,
+) -> list[tuple[str, list[Any]]]:
+    """Build candidate hr.payslip domains (employee_id + related emp_id paths)."""
+    normalized = normalize_employee_file_id(file_id)
+    employee_fields = discover_employee_identifier_fields(adapter)
+    plans: list[tuple[str, list[Any]]] = []
+
+    if employee_id:
+        plans.append(("employee_id", [["employee_id", "=", employee_id]]))
+
+    if not normalized:
+        return plans
+
+    available_emp = adapter._get_model_fields("hr.employee") or {}
+    for field in employee_fields:
+        if field not in available_emp:
+            continue
+        rel = f"employee_id.{field}"
+        plans.append((rel, [[rel, "=", normalized]]))
+        plans.append((f"{rel}_ilike", [[rel, "ilike", normalized]]))
+        if normalized.isdigit():
+            plans.append((f"{rel}_int", [[rel, "=", int(normalized)]]))
+            # Some DBs store emp_id as string "2721" on integer-like custom fields
+            plans.append((f"{rel}_str", [[rel, "=", str(int(normalized))]]))
+
+    return plans
+
+
+def _present_payslip(row: dict[str, Any]) -> dict[str, Any]:
+    employee = row.get("employee_id")
+    employee_name = (
+        employee[1] if isinstance(employee, (list, tuple)) and len(employee) > 1 else employee
+    )
+    amount = (
+        row.get("net_wage")
+        or row.get("amount")
+        or row.get("total_paid")
+        or row.get("gross_wage")
+    )
+    return {
+        "id": row.get("id"),
+        "name": row.get("name"),
+        "number": row.get("number"),
+        "employee_name": employee_name,
+        "date_from": row.get("date_from"),
+        "date_to": row.get("date_to"),
+        "state": row.get("state"),
+        "net_wage": row.get("net_wage"),
+        "gross_wage": row.get("gross_wage"),
+        "amount": amount,
+    }
+
+
+def fetch_recent_payslips(
+    adapter: OdooV14Adapter,
+    *,
+    limit: int = 10,
+    employee_ids: list[int] | None = None,
+) -> dict[str, Any]:
+    """Recent payslips without File ID — for HR/admin when scoped lookup returns nothing."""
+    limit = min(max(int(limit or 5), 1), 50)
+    model = _payslip_model(adapter)
+    if not model:
+        return {
+            "payslips": [],
+            "count": 0,
+            "note": "Model hr.payslip is not installed or not visible to the API user.",
+            "scope": "recent",
+        }
+
+    fields = _payslip_read_fields(adapter)
+    order = _safe_payslip_order(adapter)
+    base: list[Any] = []
+    if employee_ids:
+        base = [["employee_id", "in", employee_ids]]
+
+    for _state_name, domain in _payslip_state_domains(adapter, base):
+        try:
+            rows = adapter.search_read(
+                model=model,
+                domain=domain,
+                fields=fields,
+                limit=limit,
+                order=order,
+            )
+        except Exception as exc:
+            logger.warning("[HR] recent payslips failed: %s", exc)
+            continue
+        if rows:
+            payslips = [_present_payslip(row) for row in rows]
+            return {
+                "payslips": payslips,
+                "count": len(payslips),
+                "scope": "recent",
+                "payslip_match": "recent_unscoped",
+                "latest_amount": payslips[0].get("amount"),
+            }
+
+    return {
+        "payslips": [],
+        "count": 0,
+        "scope": "recent",
+        "note": "No payslips visible to the Odoo API user (check payroll record rules).",
+    }
+
+
+def fetch_payslips_by_file_id(
+    adapter: OdooV14Adapter,
+    file_id: str,
+    *,
+    limit: int = 10,
+    employee: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Search payslips using every safe strategy until records are found.
+    Returns diagnostics in `searches_tried` for troubleshooting.
+    """
+    limit = min(max(int(limit or 5), 1), 50)
+    normalized = normalize_employee_file_id(file_id)
+    model = _payslip_model(adapter)
+    searches_tried: list[str] = []
+
+    if not model:
+        return {
+            "payslips": [],
+            "count": 0,
+            "file_id": normalized,
+            "note": "Model hr.payslip is not installed or not visible to the API user.",
+            "searches_tried": searches_tried,
+        }
+
+    employee_id = int(employee["id"]) if employee else None
+    if employee is None and normalized:
+        employee, match = resolve_employee_by_file_id(adapter, normalized)
+        searches_tried.append(f"employee_lookup:{match or 'not_found'}")
+        if employee:
+            employee_id = int(employee["id"])
+
+    fields = _payslip_read_fields(adapter)
+    order = _safe_payslip_order(adapter)
+    plans = _payslip_search_plans(adapter, normalized or file_id, employee_id=employee_id)
+
+    for plan_name, base_domain in plans:
+        for state_name, domain in _payslip_state_domains(adapter, base_domain):
+            label = f"{plan_name}/{state_name}"
+            searches_tried.append(label)
+            try:
+                rows = adapter.search_read(
+                    model=model,
+                    domain=domain,
+                    fields=fields,
+                    limit=limit,
+                    order=order,
+                )
+            except Exception as exc:
+                searches_tried.append(f"{label}:error={exc}")
+                logger.warning("[HR] payslip %s failed: %s", label, exc)
+                continue
+            if rows:
+                payslips = [_present_payslip(row) for row in rows]
+                return {
+                    "payslips": payslips,
+                    "count": len(payslips),
+                    "file_id": normalized,
+                    "employee_id": employee_id,
+                    "employee_name": (employee or {}).get("name"),
+                    "employee_match": searches_tried[0] if searches_tried else None,
+                    "payslip_match": label,
+                    "latest_amount": payslips[0].get("amount"),
+                    "searches_tried": searches_tried,
+                }
+
+    # Last resort: any payslips for resolved employee without date ordering issues
+    if employee_id:
+        searches_tried.append("employee_id_fallback_any")
+        try:
+            rows = adapter.search_read(
+                model=model,
+                domain=[["employee_id", "=", employee_id]],
+                fields=fields,
+                limit=limit,
+                order="id desc",
+            )
+            if rows:
+                payslips = [_present_payslip(row) for row in rows]
+                return {
+                    "payslips": payslips,
+                    "count": len(payslips),
+                    "file_id": normalized,
+                    "employee_id": employee_id,
+                    "employee_name": employee.get("name") if employee else None,
+                    "payslip_match": "employee_id_fallback_any",
+                    "latest_amount": payslips[0].get("amount"),
+                    "searches_tried": searches_tried,
+                }
+        except Exception as exc:
+            searches_tried.append(f"employee_id_fallback_any:error={exc}")
+
+    note_parts = []
+    if not employee and normalized:
+        note_parts.append(
+            f"No hr.employee found for File ID '{normalized}' "
+            f"(tried fields: {', '.join(employee_id_field_names())})."
+        )
+    elif employee_id:
+        note_parts.append(
+            f"Employee '{(employee or {}).get('name')}' (id {employee_id}) has no payslips "
+            "matching any search strategy."
+        )
+    else:
+        note_parts.append("Could not resolve employee or File ID for payslip search.")
+
+    return {
+        "payslips": [],
+        "count": 0,
+        "file_id": normalized,
+        "employee_id": employee_id,
+        "employee_name": (employee or {}).get("name"),
+        "note": " ".join(note_parts),
+        "searches_tried": searches_tried,
+    }
+
+
+async def get_my_payslips(
+    adapter: OdooV14Adapter,
+    user: CurrentUser,
+    *,
+    limit: int = 5,
+) -> dict[str, Any]:
+    file_id = normalize_employee_file_id(user.file_id)
+    if not can_access_employee_file_id(user, file_id):
+        return {
+            "payslips": [],
+            "count": 0,
+            "note": "Not allowed to view these payslips.",
+        }
+
+    odoo_uid = await resolve_odoo_user_id(user, adapter)
+    employee = None
+    if file_id or odoo_uid:
+        employee, _ = resolve_employee_by_file_id(
+            adapter,
+            file_id or user.file_id or "",
+            odoo_user_id=odoo_uid,
+        )
+
+    payload = fetch_payslips_by_file_id(
+        adapter,
+        file_id or user.file_id or "",
+        limit=limit,
+        employee=employee,
+    )
+    payload["scope"] = "self"
+
+    if payload.get("count", 0) == 0 and can_query_other_employees(user):
+        recent = fetch_recent_payslips(adapter, limit=limit)
+        if recent.get("count", 0) > 0:
+            payload = {
+                **recent,
+                "scope": "self_with_recent_fallback",
+                "file_id": file_id,
+                "note": (
+                    (payload.get("note") or "")
+                    + " Showing recent payslips from Odoo because your File ID did not match "
+                    "a payslip directly."
+                ).strip(),
+                "searches_tried": payload.get("searches_tried", []),
+            }
+
+    return payload
+
+
+async def get_employee_payslips(
+    adapter: OdooV14Adapter,
+    user: CurrentUser,
+    *,
+    employee_file_id: str,
+    limit: int = 5,
+) -> dict[str, Any]:
+    target = normalize_employee_file_id(employee_file_id)
+    if not can_access_employee_file_id(user, target):
+        return {
+            "payslips": [],
+            "count": 0,
+            "note": "You may only view your own HR records without admin Odoo access.",
+        }
+
+    payload = fetch_payslips_by_file_id(adapter, target, limit=limit)
+    payload["scope"] = "other" if target != normalize_employee_file_id(user.file_id) else "self"
+    return payload
+
+
+async def list_recent_payslips(
+    adapter: OdooV14Adapter,
+    user: CurrentUser,
+    *,
+    limit: int = 10,
+) -> dict[str, Any]:
+    if not can_query_other_employees(user):
+        return {
+            "payslips": [],
+            "count": 0,
+            "note": "Listing all payslips requires HR admin or full Odoo access.",
+        }
+    return fetch_recent_payslips(adapter, limit=limit)
+
+
+__all__ = [
+    "build_hr_identity_prompt",
+    "fetch_payslips_by_file_id",
+    "fetch_recent_payslips",
+    "get_employee_payslips",
+    "get_my_payslips",
+    "list_recent_payslips",
+    "resolve_odoo_user_id",
+]

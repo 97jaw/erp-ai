@@ -71,3 +71,42 @@ groups:
           severity: warning
         annotations:
           summary: "Redis exporter is down"
+
+      - alert: OoaAnthropicCreditsLow
+        expr: |
+          ooa_api_credits_remaining{provider="anthropic"} >= 0
+          and ooa_api_credits_remaining{provider="anthropic"} < 5000
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: "Anthropic estimated balance below $50"
+          description: "Set ANTHROPIC_CREDIT_BUDGET_CENTS or use admin Usage for spend tracking."
+
+      - alert: OoaElevenLabsCreditsLow
+        expr: |
+          ooa_api_credits_remaining{provider="elevenlabs"} >= 0
+          and ooa_api_credits_remaining{provider="elevenlabs"} < 10000
+        for: 5m
+        labels:
+          severity: medium
+        annotations:
+          summary: "ElevenLabs character quota below 10k"
+
+      - alert: OoaOpenAICreditsLow
+        expr: |
+          ooa_api_credits_remaining{provider="openai"} >= 0
+          and ooa_api_credits_remaining{provider="openai"} < 500
+        for: 5m
+        labels:
+          severity: medium
+        annotations:
+          summary: "OpenAI prepaid credits below $5"
+
+      - alert: OoaAPIProviderDown
+        expr: ooa_api_provider_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "External API provider {{ $labels.provider }} is down"

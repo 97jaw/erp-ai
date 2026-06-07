@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 32" role="img" aria-label="Elrace">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c9a84c"/>
+      <stop offset="100%" stop-color="#a8873d"/>
+    </linearGradient>
+  </defs>
+  <polygon points="16,4 28,16 16,28 4,16" fill="url(#g)"/>
+  <text x="36" y="21" font-family="Georgia, serif" font-size="14" font-weight="700" fill="#1a2744">Elrace</text>
+</svg>

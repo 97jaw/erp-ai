@@ -15,9 +15,11 @@ Architecture:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+from contextlib import asynccontextmanager
 import re
 import base64
 import asyncio
@@ -76,6 +78,9 @@ TOOL_STATUS_LABELS = {
     "generate_pdf_report"     : "Generating PDF report...",
     "synthesize_pdf"          : "Generating PDF report...",
     "search_odoo"             : "Gathering records...",
+    "get_my_payslips"         : "Loading your payslips...",
+    "get_employee_payslips"   : "Loading employee payslips...",
+    "list_recent_payslips"    : "Listing recent payslips...",
 }
 
 TOOL_SUGGESTIONS = {
@@ -184,6 +189,10 @@ from admin.auth.principal import CurrentUser
 from admin.rbac.context import build_user_context_prompt as build_rbac_user_prompt
 from admin.rbac.context import get_request_user, set_request_user
 from admin.rbac.data_scope import apply_data_scope
+from gateway.core.context_stack_builder import ContextStackBuilder
+from gateway.core.entity_gate import ConfirmedEntityRef
+from gateway.intelligent_handler import IntelligentQueryHandler, IntelligentQueryResponse
+from gateway.hr_identity import apply_personal_hr_scope
 from admin.rbac.tool_permissions import check_tool_allowed, permission_for_tool
 from admin.observability.tracking import (
     extract_token_usage,
@@ -235,6 +244,12 @@ from gateway.quality_formatting import (
 )
 from gateway.quality_response import QUALITY_METRICS, polish_agent_response
 from gateway.tool_input_normalization import normalize_tool_input
+from gateway.query_limits import (
+    apply_query_limits_to_tool_input,
+    build_query_meta,
+    execute_search_odoo,
+    search_read_pages,
+)
 from gateway.compose_tools import calculate, compose_report
 from gateway.pdf_reports import REPORTS_DIR, generate_pdf_report
 from core.base_adapter import OdooConnectionConfig
@@ -244,10 +259,42 @@ from core.state import OdooVersion
 # App Setup
 # ---------------------------------------------------------------------------
 
+
+@asynccontextmanager
+async def _app_lifespan(_app: FastAPI):
+    from admin.auth.config import auth_db_enabled
+    from admin.db.connection import close_admin_db, init_admin_db
+    from gateway.api_credits import (
+        run_all_credit_checks,
+        start_credit_check_scheduler,
+        stop_credit_check_scheduler,
+    )
+
+    if auth_db_enabled():
+        try:
+            await init_admin_db()
+        except Exception:
+            logger.exception("Admin DB init / migrations failed")
+
+    start_credit_check_scheduler()
+    try:
+        await run_all_credit_checks()
+    except Exception:
+        logger.exception("Initial API credit check failed")
+    yield
+    stop_credit_check_scheduler()
+    if auth_db_enabled():
+        try:
+            await close_admin_db()
+        except Exception:
+            logger.exception("Admin DB shutdown failed")
+
+
 app = FastAPI(
     title   = "Odoo Omni-Agent",
     version = "3.0.0",
     docs_url= "/docs",
+    lifespan= _app_lifespan,
 )
 
 from admin.security.middleware import SecurityRateLimitMiddleware
@@ -285,6 +332,10 @@ app.add_middleware(LoggingContextMiddleware)
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 app.include_router(admin_router)
+
+from visualize.router import router as visualize_router
+
+app.include_router(visualize_router)
 
 _http_bearer = HTTPBearer(auto_error=False)
 # ← ADD HERE — Voice engines (lazy loaded)
@@ -332,7 +383,7 @@ def get_agent_client() -> anthropic.Anthropic:
 
 
 class StreamTextFilter:
-    """Suppress visualization JSON and viz hints while streaming answer text."""
+    """Suppress visualization JSON, clarify blocks, and viz hints while streaming."""
 
     _ORPHAN_VIZ_RE = re.compile(
         r'(?:\n|^)\s*(?:\{\s*)?"visual_type"\s*:',
@@ -346,7 +397,10 @@ class StreamTextFilter:
     def __init__(self) -> None:
         self._pending = ""
         self._in_visualization = False
+        self._in_clarify = False
+        self._clarify_buffer = ""
         self.viz_hint: str | None = None
+        self.clarification: dict | None = None
 
     def _strip_viz_hints(self, text: str) -> str:
         def _capture(match: re.Match[str]) -> str:
@@ -364,6 +418,22 @@ class StreamTextFilter:
         visible = []
 
         while text:
+            if self._in_clarify:
+                end = text.find("</clarify>")
+                if end == -1:
+                    self._clarify_buffer += text
+                    self._pending = ""
+                    break
+                self._clarify_buffer += text[:end]
+                from gateway.clarify import parse_clarify_block
+
+                wrapped = f"<clarify>{self._clarify_buffer}</clarify>"
+                self.clarification = parse_clarify_block(wrapped)
+                self._clarify_buffer = ""
+                self._in_clarify = False
+                text = text[end + len("</clarify>"):]
+                continue
+
             if self._in_visualization:
                 end = text.find("</visualization>")
                 if end == -1:
@@ -373,7 +443,19 @@ class StreamTextFilter:
                 self._in_visualization = False
                 continue
 
-            start = text.find("<visualization>")
+            clarify_start = text.find("<clarify>")
+            viz_start = text.find("<visualization>")
+            if clarify_start != -1 and (viz_start == -1 or clarify_start < viz_start):
+                if clarify_start:
+                    visible.append(text[:clarify_start])
+                text = text[clarify_start + len("<clarify>"):]
+                self._in_clarify = True
+                self._clarify_buffer = ""
+                continue
+
+            start = viz_start
+            if start == -1:
+                start = text.find("<visualization>")
             if start == -1:
                 orphan = self._ORPHAN_VIZ_RE.search(text)
                 if orphan:
@@ -395,7 +477,9 @@ class StreamTextFilter:
 
 
 def _strip_visualization_markup(text: str) -> str:
-    cleaned = text or ""
+    from gateway.clarify import strip_clarify_markup
+
+    cleaned = strip_clarify_markup(text or "")
     cleaned = re.sub(
         r"<viz-hint>\s*[^<]+?\s*</viz-hint>",
         "",
@@ -430,6 +514,8 @@ _adapter: OdooV14Adapter | None = None
 def get_adapter() -> OdooV14Adapter:
     global _adapter
     if _adapter is None:
+        from adapters.v14.auth_errors import OdooAuthError
+
         config = OdooConnectionConfig(
             url      = os.environ["ODOO_V14_URL"],
             database = os.environ["ODOO_V14_DB"],
@@ -437,8 +523,13 @@ def get_adapter() -> OdooV14Adapter:
             api_key  = os.environ["ODOO_V14_PASSWORD"],
             version  = OdooVersion.V14,
         )
-        _adapter = OdooV14Adapter(config)
-        _adapter.authenticate()
+        adapter = OdooV14Adapter(config)
+        try:
+            adapter.authenticate()
+        except (OdooAuthError, ConnectionError) as exc:
+            logger.error("[Adapter] Odoo connection failed: %s", exc)
+            raise
+        _adapter = adapter
         logger.info("[Adapter] Connected to Odoo — uid: %d", _adapter._uid)
     return _adapter
 
@@ -1026,14 +1117,81 @@ TOOLS = [
                 },
                 "limit": {
                     "type"       : "integer",
-                    "description": "Max records to return. Default 10.",
+                    "description": (
+                        "Max records to return. If omitted, the server applies a role-based "
+                        "default (up to 2000 for super admin). Response includes _query_meta "
+                        "with total_matching and truncated flags."
+                    ),
                 },
                 "order": {
                     "type"       : "string",
                     "description": "Sort order e.g. 'date desc'",
                 },
+                "_scope_self": {
+                    "type"       : "boolean",
+                    "description": (
+                        "If true, restrict HR models to the signed-in user's employee "
+                        "(File ID = emp_id). Use for my payslip, my leave, my tasks."
+                    ),
+                },
             },
             "required": ["model", "fields"],
+        },
+    },
+    {
+        "name"       : "get_my_payslips",
+        "description": (
+            "Get payslips for the currently logged-in user (my payslip, my salary, last payslip). "
+            "Resolves hr.employee from File ID / Odoo user link. Always use this instead of search_odoo "
+            "for personal payslip questions."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "limit": {
+                    "type"       : "integer",
+                    "description": "How many recent payslips (default 5, max 20).",
+                },
+            },
+        },
+    },
+    {
+        "name"       : "get_employee_payslips",
+        "description": (
+            "Payslips for a specific employee by File ID / emp_id. "
+            "Use for HR/admin viewing another person's payroll. Requires permission; "
+            "omit employee_file_id only when asking about yourself (use get_my_payslips)."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "employee_file_id": {
+                    "type"       : "string",
+                    "description": "Employee File ID / emp_id (e.g. 2721).",
+                },
+                "limit": {
+                    "type"       : "integer",
+                    "description": "Max payslips to return (default 5).",
+                },
+            },
+            "required": ["employee_file_id"],
+        },
+    },
+    {
+        "name"       : "list_recent_payslips",
+        "description": (
+            "List recent payslips in Odoo (any employee). Use when the user asks for "
+            "'any payslip', 'show payslips', or HR payroll browse — not for a specific person "
+            "(use get_employee_payslips with employee_file_id). Requires HR/admin access."
+        ),
+        "input_schema": {
+            "type"      : "object",
+            "properties": {
+                "limit": {
+                    "type"       : "integer",
+                    "description": "Max payslips (default 10, max 50).",
+                },
+            },
         },
     },
 ]
@@ -1066,8 +1224,21 @@ def execute_tool(
                 result = {"error": denied, "permission_denied": True}
                 return result
             tool_input = apply_data_scope(tool_input, user)
+            if adapter is not None:
+                tool_input = apply_personal_hr_scope(tool_name, tool_input, user, adapter)
         tool_input = enrich_tool_input(tool_name, tool_input, session_id)
+        if tool_input.get("_hr_scope_error"):
+            return {
+                "error": tool_input["_hr_scope_error"],
+                "permission_denied": False,
+            }
         tool_input = normalize_tool_input(tool_name, tool_input)
+        if user is not None:
+            tool_input = apply_query_limits_to_tool_input(tool_name, tool_input, user)
+        from gateway.date_utils import enforce_date_range
+
+        tool_input = enforce_date_range(tool_name, tool_input)
+        date_was_defaulted = bool(tool_input.pop("_date_was_defaulted", False))
 
         if should_bust_cache(user_message):
             ToolResultCache.delete(tool_name, tool_input)
@@ -1106,19 +1277,46 @@ def execute_tool(
         elif tool_name == "query_accounting":
             result = execute_query_accounting(tool_input, adapter=adapter)
         elif tool_name == "get_projects_summary":
-            limit = tool_input.get("limit", 20)
-            projects = adapter.search_read(
-                model  = "project.project",
-                domain = [["active", "=", True]],
-                fields = ["id", "name", "partner_id", "user_id",
-                        "wo_ref_no", "date_start", "date"],
-                limit  = limit,
-                order  = "name asc",
+            domain = [["active", "=", True]]
+            limit = int(tool_input.get("limit") or 100)
+            fields = [
+                "id",
+                "name",
+                "partner_id",
+                "user_id",
+                "wo_ref_no",
+                "date_start",
+                "date",
+                "stage_id",
+            ]
+            projects = search_read_pages(
+                adapter,
+                model="project.project",
+                domain=domain,
+                fields=fields,
+                limit=limit,
+                order="name asc",
             )
+            total = None
+            try:
+                total = adapter.search_count("project.project", domain)
+            except Exception:
+                pass
             result = {
-                "projects"     : projects,
-                "total_count"  : len(projects),
-                "note"         : "For financial data per project, use get_project_expenses with project name",
+                "projects": projects,
+                "_query_meta": build_query_meta(
+                    returned_count=len(projects),
+                    limit_applied=limit,
+                    total_matching=total,
+                    limit_meta=tool_input.get("_limit_meta"),
+                    user=user,
+                    model="project.project",
+                ),
+                "note": (
+                    "For financial data per project, use get_project_expenses with project name. "
+                    "For filtered lists (e.g. in progress), use search_odoo on project.project "
+                    "with stage/state filters — not only get_projects_summary."
+                ),
             }
         elif tool_name == "get_partner_ageing":
             result = adapter.accounting.get_partner_ageing(
@@ -1253,12 +1451,55 @@ def execute_tool(
             if tool_input.get("model") == "purchase.order":
                 result = purchase_order_search_via_get_tool(adapter, tool_input)
             else:
-                result = adapter.search_read(
-                    model  = tool_input["model"],
-                    domain = tool_input.get("filters", []),
-                    fields = tool_input["fields"],
-                    limit  = tool_input.get("limit", 10),
-                    order  = tool_input.get("order"),
+                result = execute_search_odoo(adapter, tool_input, user)
+        elif tool_name == "get_my_payslips":
+            import asyncio
+
+            from gateway.hr_payroll_tools import get_my_payslips
+
+            chat_user = get_request_user()
+            if chat_user is None:
+                result = {"error": "not_authenticated", "payslips": []}
+            else:
+                result = asyncio.run(
+                    get_my_payslips(
+                        adapter,
+                        chat_user,
+                        limit=tool_input.get("limit", 5),
+                    )
+                )
+        elif tool_name == "get_employee_payslips":
+            import asyncio
+
+            from gateway.hr_payroll_tools import get_employee_payslips
+
+            chat_user = get_request_user()
+            if chat_user is None:
+                result = {"error": "not_authenticated", "payslips": []}
+            else:
+                result = asyncio.run(
+                    get_employee_payslips(
+                        adapter,
+                        chat_user,
+                        employee_file_id=tool_input.get("employee_file_id", ""),
+                        limit=tool_input.get("limit", 5),
+                    )
+                )
+        elif tool_name == "list_recent_payslips":
+            import asyncio
+
+            from gateway.hr_payroll_tools import list_recent_payslips
+
+            chat_user = get_request_user()
+            if chat_user is None:
+                result = {"error": "not_authenticated", "payslips": []}
+            else:
+                result = asyncio.run(
+                    list_recent_payslips(
+                        adapter,
+                        chat_user,
+                        limit=tool_input.get("limit", 10),
+                    )
                 )
         else:
             result = {"error": f"Unknown tool: {tool_name}"}
@@ -1267,6 +1508,12 @@ def execute_tool(
             status = "error"
 
         if isinstance(result, dict) and not result.get("error"):
+            if tool_input.get("date_from"):
+                result["date_from"] = tool_input["date_from"]
+            if tool_input.get("date_to"):
+                result["date_to"] = tool_input["date_to"]
+            if date_was_defaulted:
+                result["_date_was_defaulted"] = True
             ToolResultCache.set(tool_name, tool_input, result)
 
         result = validate_tool_result(tool_name, result)
@@ -1315,9 +1562,11 @@ Guidelines:
 - Format numbers with commas and include AED currency
 - For financial reports: summarize key figures, don't dump all lines
 - For project data: highlight total cost, budget status, key expenses
-- If data has many items: show top 5-10 and mention total count
+- If data has many items: show top 5-10 in prose but ALWAYS state total from _query_meta (returned_count / total_matching / truncated)
+- Tool results may include `_query_meta`: read `summary`, `total_matching`, and `truncated` — never imply the list is complete when truncated is true
+- For "all" / "every" / "in progress" list queries: use search_odoo with appropriate filters; omit limit only if you want the server default (100–2000 by role), or set limit explicitly for very large sets
 - You can answer general questions (date, greetings, capabilities) directly
-- For financial reports without a date: always ask which period before fetching
+- For financial reports without an explicit date: the server defaults to the last 3 months (date_from/date_to injected); state the period you used in the summary
 - For project queries without a project name: always ask which project
 - If the user already gives a count such as "last 10" or "last 20", use that limit and do not ask again
 - For purchase orders by client name, use get_purchase_orders with client_name or partner_ids. On purchase.order, partner_id is the supplier/vendor and the client is stored on a separate client field
@@ -1344,7 +1593,8 @@ GROUPING AND FILTERING:
 - Journal lines: model account.move.line with parent_state posted; group by account_id, partner_id, analytic_account_id, date:month
 - Sales and purchase orders: model sale.order or purchase.order; group by partner_id, state, or date_order:month
 - Time groupings use :day, :week, :month, :quarter, or :year on date fields
-- Use limit 10 for top-N queries and 50 for broader breakdowns; sort by the aggregate descending for top queries
+- Use limit 10 for top-N queries; for full lists the server applies role-based limits (super admin up to 2000 rows per call) — report _query_meta totals
+- Sort by the aggregate descending for top queries
 - For projects grouped by client in a year or date range, get_project_counts_by_client remains valid for that narrow case
 
 DATA INTEGRITY RULES:
@@ -1406,11 +1656,73 @@ Visual type rules:
 - P&L / Balance Sheet hierarchy → FINANCIAL_REPORT
 - Downloadable PDF report → PDF_REPORT
 
+PROGRESSIVE REPORT DISCLOSURE (MANDATORY for FINANCIAL_REPORT, DATA_TABLE, GROUPED_TABLE):
+- Default to summary first unless the user explicitly asked for details/full breakdown
+- Summary = KPIs and/or a small chart only; do not dump full account tables in summary
+- Add visualization fields when data can expand:
+  "level": "summary|standard|full",
+  "total_records": <int>,
+  "shown_records": <int>,
+  "can_expand": true|false,
+  "expand_label": "See all 247 accounts"
+- Standard detail view = first 20 rows maximum in data.rows
+- If the user asks for details, accounts, breakdown, or full report → use level "standard" or "full"
+- Never return hundreds of table rows at summary level
+
+PRE-RESPONSE CLARIFICATION (before fetching financial data):
+- If the user did not specify a date range for P&L, trial balance, ledger, or similar reports,
+  emit ONLY a <clarify> block (no tools, no visualization) then stop and wait.
+- Format:
+<clarify>
+{
+  "reason": "date_range_missing",
+  "question": "Which time period would you like?",
+  "question_ar": "أي فترة زمنية تريد؟",
+  "options": [
+    {"id": "this_month", "label": "This Month", "label_ar": "هذا الشهر", "query_suffix": " for this month"},
+    {"id": "last_3m", "label": "Last 3 Months", "label_ar": "آخر 3 أشهر", "query_suffix": " for the last 3 months", "is_default": true},
+    {"id": "ytd", "label": "This Year", "label_ar": "هذا العام", "query_suffix": " for this year"},
+    {"id": "custom", "label": "Custom Range", "label_ar": "نطاق مخصص", "action": "open_date_picker"}
+  ],
+  "skip_option": {"label": "Skip (use last 3 months)", "label_ar": "تخطي (آخر 3 أشهر)", "query_suffix": " for the last 3 months"}
+}
+</clarify>
+- Do NOT emit <clarify> when the user already gave dates, said skip/default, or is answering a prior clarification.
+
 For suggestions: when any tool was used, include exactly 3 short follow-up prompts
 (4-10 words each) in the SAME language as the response inside the visualization block.
 Do not repeat clarification questions that the user already answered.
 
 If no data was fetched (greetings, general questions), omit the visualization block."""
+
+_FINANCIAL_SECTION_MARKER = "\n\nGROUPING AND FILTERING:"
+_QUALITY_SECTION_MARKER = "\n\nPRODUCTION QUALITY RULES:"
+_context_stack_builder = ContextStackBuilder()
+
+
+class _PromptContextRequest:
+    """Minimal request shape for ContextStackBuilder inside prompt assembly."""
+
+    __slots__ = ("message", "session_id")
+
+    def __init__(self, message: str, session_id: str | None = None) -> None:
+        self.message = message
+        self.session_id = session_id
+
+
+def _compose_system_prompt_sections(today: str, *, context_section: str = "") -> str:
+    """Assemble system prompt: core instructions, context stack, financial, quality."""
+    base = SYSTEM_PROMPT.replace("{today}", today)
+    core, remainder = base.split(_FINANCIAL_SECTION_MARKER, 1)
+    financial, quality = remainder.split(_QUALITY_SECTION_MARKER, 1)
+    return (
+        core
+        + context_section
+        + _FINANCIAL_SECTION_MARKER
+        + financial
+        + _QUALITY_SECTION_MARKER
+        + quality
+    )
 
 
 async def _build_agent_system_prompt(
@@ -1420,9 +1732,35 @@ async def _build_agent_system_prompt(
     session_id   : str | None = None,
     user         : CurrentUser | None = None,
 ) -> str:
-    system = SYSTEM_PROMPT.replace("{today}", today)
+    context_section = ""
+    context_stack = None
+    if user is not None:
+        context_stack = await _context_stack_builder.build(
+            user,
+            _PromptContextRequest(
+                message=user_message or " ",
+                session_id=session_id,
+            ),
+        )
+        context_section = context_stack.to_prompt_section()
+
+    system = _compose_system_prompt_sections(today, context_section=context_section)
     if user is not None:
         system += build_rbac_user_prompt(user)
+    if context_stack is not None and user_message.strip():
+        from gateway.core.intelligence_preflight import build_intelligence_preflight_section
+
+        preflight = await build_intelligence_preflight_section(
+            user_message,
+            context_stack,
+            adapter,
+        )
+        if preflight:
+            system += "\n\n" + preflight
+    if adapter is not None and user is not None:
+        from gateway.hr_payroll_tools import build_hr_identity_prompt
+
+        system += await build_hr_identity_prompt(user, adapter)
     if adapter is None:
         return system
 
@@ -1581,14 +1919,26 @@ def _finalize_agent_response(
     tool_results  : list[Any],
     language      : str,
     user_message  : str = "",
-) -> tuple[str, dict | None, list[str]]:
+    session_id    : str | None = None,
+) -> tuple[str, dict | None, list[str], dict[str, Any] | None]:
     visualization = choose_response_visualization(
         visualization,
         tool_names,
         tool_results,
     )
 
-    suggestions = _normalize_suggestions(suggestions, tool_names, language)
+    model_suggestions = _normalize_suggestions(suggestions, tool_names, language)
+
+    from gateway.suggestion_pool import build_post_response_suggestions
+
+    suggestions, suggestion_meta = build_post_response_suggestions(
+        model_suggestions=model_suggestions,
+        tool_names=tool_names,
+        tool_results=tool_results,
+        visualization=visualization,
+        language=language,
+        session_id=session_id,
+    )
 
     clean_text, visualization = polish_agent_response(
         user_message,
@@ -1612,7 +1962,7 @@ def _finalize_agent_response(
                 )
                 break
 
-    return clean_text, visualization, suggestions
+    return clean_text, visualization, suggestions, suggestion_meta
 
 
 def _log_agent_response(
@@ -1775,7 +2125,7 @@ async def run_agent(
                     text += block.text
 
             parsed_text, visualization, suggestions = _parse_assistant_payload(text)
-            clean_text, visualization, suggestions = _finalize_agent_response(
+            clean_text, visualization, suggestions, suggestion_meta = _finalize_agent_response(
                 parsed_text,
                 visualization,
                 suggestions,
@@ -1783,6 +2133,7 @@ async def run_agent(
                 tool_payloads,
                 language,
                 user_message,
+                session_id,
             )
             _log_agent_response(
                 user_message=user_message,
@@ -1821,6 +2172,7 @@ async def run_agent(
                 "language"     : language,
                 "visualization": visualization,
                 "suggestions"  : suggestions,
+                "suggestion_meta": suggestion_meta,
                 "turn_number"  : len(history),
                 "conversation_id": ConversationStore.conversation_id_for_session(session_id),
             }
@@ -1870,13 +2222,99 @@ def _detect_language(text: str) -> str:
     return "en"
 
 
+_intelligent_query_handler: IntelligentQueryHandler | None = None
+
+
+def _get_intelligent_query_handler() -> IntelligentQueryHandler:
+    global _intelligent_query_handler
+    if _intelligent_query_handler is None:
+        _intelligent_query_handler = IntelligentQueryHandler()
+    return _intelligent_query_handler
+
+
+async def _run_intelligent_chat(
+    message: str,
+    session_id: str,
+    chat_user: CurrentUser,
+    *,
+    skip_clarification: bool = False,
+    confirmed_entities: list[ConfirmedEntityRef] | None = None,
+) -> IntelligentQueryResponse:
+    """Run the orchestrated intelligence pipeline and persist the conversation turn."""
+    user_id = chat_user.id if chat_user else None
+    await ConversationStore.append(session_id, "user", message, user_id=user_id)
+
+    adapter = get_adapter()
+    language = _detect_language(message)
+    result = await _get_intelligent_query_handler().handle(
+        message,
+        chat_user,
+        adapter,
+        session_id=session_id,
+        language=language,
+        skip_clarification=skip_clarification,
+        confirmed_entities=confirmed_entities,
+    )
+
+    await ConversationStore.append(
+        session_id,
+        "assistant",
+        result.text,
+        user_id=user_id,
+        language=result.language,
+        visualization=result.visualization,
+        suggestions=result.suggestions,
+    )
+
+    if user_id:
+        schedule_usage(
+            track_agent_turn(
+                user_id,
+                tools=result.tools_called,
+            )
+        )
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Request / Response Models
 # ---------------------------------------------------------------------------
 
+def _parse_confirmed_entities(
+    payload: list[ConfirmedEntityModel] | None,
+) -> list[ConfirmedEntityRef]:
+    confirmed: list[ConfirmedEntityRef] = []
+    for item in payload or []:
+        parsed = ConfirmedEntityRef.from_dict(item.model_dump())
+        if parsed is not None:
+            confirmed.append(parsed)
+    return confirmed
+
+
+class ConfirmedEntityModel(BaseModel):
+    type: str
+    id: int
+    name: str | None = None
+
+
 class ChatRequest(BaseModel):
-    message    : str
-    session_id : str | None = None
+    message             : str
+    session_id          : str | None = None
+    skip_clarification  : bool = False
+    confirmed_entities  : list[ConfirmedEntityModel] = []
+
+
+class QueryPageRequest(BaseModel):
+    query_id  : str
+    page      : int = 1
+    page_size : int = 20
+    sort_by   : str | None = None
+    sort_dir  : str = "desc"
+
+
+class SuggestionMoreRequest(BaseModel):
+    token: str
 
 
 class ChatResponse(BaseModel):
@@ -1887,6 +2325,28 @@ class ChatResponse(BaseModel):
     suggestions   : list[str] = []
     turn_number   : int
     conversation_id: str | None = None
+
+
+class IntelligentChatResponse(BaseModel):
+    session_id                  : str
+    text                        : str
+    language                    : str
+    visualization               : dict | None = None
+    orchestration_log           : list[dict] = []
+    execution_duration_ms       : int = 0
+    orchestration_duration_ms   : int = 0
+    strategy_step_count         : int = 0
+    tools_called                : list[str] = []
+    suggestions                 : list[str] = []
+    quality_pass_rate             : float = 1.0
+    quality_checks_passed         : int = 0
+    quality_checks_total          : int = 0
+    quality_passed                : bool = True
+    failure_mode                  : str | None = None
+    cache_hit                     : bool = False
+    proactive_cache_keys          : list[str] = []
+    interaction_id                : str | None = None
+    turn_number                   : int = 1
 
 
 class LoginRequest(BaseModel):
@@ -1991,6 +2451,42 @@ async def user_profile(
         return await get_profile(token)
     return await get_profile(session_id)
 
+
+def _iter_text_chunks(text: str, chunk_size: int = 64):
+    """Yield fixed-size text slices for SSE streaming."""
+    if not text:
+        return
+    for index in range(0, len(text), chunk_size):
+        yield text[index : index + chunk_size]
+
+
+def _tool_payloads_from_intelligent_result(
+    result: IntelligentQueryResponse,
+) -> tuple[list[str], list[Any]]:
+    """Extract tool names and raw payloads from an orchestrated response."""
+    tools_called = list(result.tools_called or [])
+    tool_payloads: list[Any] = []
+    execution = result.execution_result
+    if execution is not None:
+        for step_number in sorted(execution.results):
+            tool_payloads.append(execution.results[step_number])
+    return tools_called, tool_payloads
+
+
+def _intelligent_progress_steps(language: str) -> list[dict[str, str]]:
+    if language == "ar":
+        return [
+            {"label": "فهم السؤال", "status": "running"},
+            {"label": "البحث في Odoo", "status": "pending"},
+            {"label": "إعداد الإجابة", "status": "pending"},
+        ]
+    return [
+        {"label": "Understanding your question", "status": "running"},
+        {"label": "Querying Odoo", "status": "pending"},
+        {"label": "Preparing response", "status": "pending"},
+    ]
+
+
 @app.post("/chat/stream")
 async def chat_stream(
     request: ChatRequest,
@@ -2016,140 +2512,93 @@ async def chat_stream(
         language = _detect_language(request.message)
         ai_streaming_connections.inc()
         try:
-            client   = get_agent_client()
-            adapter  = get_adapter()
-            today    = datetime.now().strftime("%A, %d %B %Y")
-            tools_used: list[str] = []
-            tool_payloads: list[Any] = []
+            try:
+                get_adapter()
+            except ConnectionError as exc:
+                stream_status = "error"
+                message = str(exc)
+                yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'text': message, 'session_id': session_id})}\n\n"
+                return
 
-            user_id = chat_user.id if chat_user else None
-            messages = await ConversationStore.append(
-                session_id, "user", request.message, user_id=user_id
+            progress_steps = _intelligent_progress_steps(language)
+            status_message = (
+                "جاري تحليل السؤال..."
+                if language == "ar"
+                else "Analyzing your question..."
             )
-            full_text = ""
-            stream_filter = StreamTextFilter()
+            yield f"data: {json.dumps({'type': 'status', 'message': status_message})}\n\n"
+            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
 
-            while True:
-                claude_started = time.perf_counter()
-                with client.messages.stream(
-                    model      = AGENT_MODEL,
-                    max_tokens = MAX_AGENT_TOKENS,
-                    system     = await _build_agent_system_prompt(
-                        today,
-                        request.message,
-                        adapter,
-                        session_id,
-                        user=chat_user,
-                    ),
-                    tools      = TOOLS,
-                    messages   = messages,
-                ) as stream:
-                    for event in stream:
-                        if hasattr(event, "type"):
-                            if event.type == "content_block_delta":
-                                if hasattr(event.delta, "text"):
-                                    chunk = event.delta.text
-                                    full_text += chunk
-                                    visible = stream_filter.push(chunk)
-                                    if stream_filter.viz_hint:
-                                        yield f"data: {json.dumps({'type': 'viz_hint', 'visual_type': stream_filter.viz_hint})}\n\n"
-                                    if visible:
-                                        yield f"data: {json.dumps({'type': 'text', 'chunk': visible})}\n\n"
+            progress_steps[0]["status"] = "done"
+            progress_steps[1]["status"] = "running"
+            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
 
-                    final_message = stream.get_final_message()
-                    record_claude_response(
-                        final_message,
-                        time.perf_counter() - claude_started,
-                        model=AGENT_MODEL,
-                    )
+            result = await _run_intelligent_chat(
+                request.message,
+                session_id,
+                chat_user,
+                skip_clarification=request.skip_clarification,
+                confirmed_entities=_parse_confirmed_entities(request.confirmed_entities),
+            )
 
-                    if final_message.stop_reason == "tool_use":
-                        messages.append({
-                            "role"   : "assistant",
-                            "content": final_message.content,
-                        })
+            progress_steps[1]["status"] = "done"
+            progress_steps[2]["status"] = "running"
+            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
 
-                        tool_blocks = [block for block in final_message.content if block.type == "tool_use"]
-                        progress_steps = _progress_steps_for_blocks(final_message.content)
-                        if progress_steps:
-                            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
+            conv_id = ConversationStore.conversation_id_for_session(session_id)
 
-                        tool_messages: list[dict[str, Any]] = []
-                        tool_names: list[str] = []
-                        raw_results: list[Any] = []
-                        for index, block in enumerate(tool_blocks):
-                            progress_steps[index]["status"] = "running"
-                            status = _tool_status_label(block.name, block.input)
-                            yield f"data: {json.dumps({'type': 'status', 'message': status})}\n\n"
-                            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
+            if result.awaiting_clarification and result.clarification:
+                prompt = result.text or (
+                    result.clarification.get("question_ar")
+                    if language == "ar"
+                    else result.clarification.get("question")
+                ) or result.clarification.get("question", "")
+                yield f"data: {json.dumps({'type': 'clarify', 'clarification': result.clarification})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'text': prompt, 'clarification': result.clarification, 'awaiting_clarification': True, 'session_id': session_id, 'conversation_id': conv_id, 'interaction_id': result.interaction_id})}\n\n"
+                return
 
-                            result = await asyncio.to_thread(
-                                execute_tool,
-                                block.name,
-                                block.input,
-                                adapter,
-                                session_id,
-                                request.message,
-                            )
-                            tool_names.append(block.name)
-                            raw_results.append(result)
-                            tool_messages.append({
-                                "type"       : "tool_result",
-                                "tool_use_id": block.id,
-                                "content"    : _prepare_tool_result(result),
-                            })
-                            progress_steps[index]["status"] = (
-                                "failed"
-                                if isinstance(result, dict) and result.get("error")
-                                else "done"
-                            )
-                            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
-                        tools_used.extend(tool_names)
-                        tool_payloads.extend(raw_results)
-
-                        messages.append({
-                            "role"   : "user",
-                            "content": tool_messages,
-                        })
-                        full_text = ""
-                        stream_filter = StreamTextFilter()
-                        continue
-
-                    break
-
-            parsed_text, visualization, suggestions = _parse_assistant_payload(full_text)
-            clean_text, visualization, suggestions = _finalize_agent_response(
-                parsed_text,
-                visualization,
-                suggestions,
-                tools_used,
+            tools_called, tool_payloads = _tool_payloads_from_intelligent_result(result)
+            clean_text, visualization, suggestions, suggestion_meta = _finalize_agent_response(
+                result.text,
+                result.visualization,
+                result.suggestions,
+                tools_called,
                 tool_payloads,
                 language,
                 request.message,
+                session_id,
             )
             _log_agent_response(
                 user_message=request.message,
-                raw_text=full_text,
+                raw_text=result.text,
                 clean_text=clean_text,
                 visualization=visualization,
                 suggestions=suggestions,
-                tool_names=tools_used,
+                tool_names=tools_called,
             )
 
-            await ConversationStore.append(
-                session_id,
-                "assistant",
-                clean_text,
-                user_id=user_id,
-                language=language,
-                visualization=visualization,
-                suggestions=suggestions,
-            )
-            conv_id = ConversationStore.conversation_id_for_session(session_id)
-            yield f"data: {json.dumps({'type': 'done', 'text': clean_text, 'visualization': visualization, 'suggestions': suggestions, 'session_id': session_id, 'conversation_id': conv_id})}\n\n"
-        except Exception:
+            visual_type = (visualization or {}).get("visual_type")
+            if visual_type:
+                yield f"data: {json.dumps({'type': 'viz_hint', 'visual_type': visual_type})}\n\n"
+
+            for chunk in _iter_text_chunks(clean_text):
+                yield f"data: {json.dumps({'type': 'text', 'chunk': chunk})}\n\n"
+
+            progress_steps[2]["status"] = "done"
+            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'done', 'text': clean_text, 'visualization': visualization, 'suggestions': suggestions, 'suggestion_meta': suggestion_meta, 'session_id': session_id, 'conversation_id': conv_id, 'interaction_id': result.interaction_id})}\n\n"
+        except Exception as exc:
             stream_status = "error"
-            raise
+            logger.error("[/chat/stream] Intelligent handler error: %s", exc)
+            message = (
+                "عذراً، حدث خطأ. يرجى المحاولة مرة أخرى."
+                if language == "ar"
+                else "Sorry, I encountered an error. Please try again."
+            )
+            yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'text': message, 'session_id': session_id})}\n\n"
         finally:
             ai_streaming_connections.dec()
             chat_stream_duration.labels(status=stream_status).observe(
@@ -2184,26 +2633,133 @@ async def chat(
     session_id = request.session_id or str(uuid4())
     set_request_user(chat_user)
     try:
-        response = await run_agent(
+        result = await _run_intelligent_chat(
             request.message,
             session_id,
-            user_id=chat_user.id if chat_user else None,
+            chat_user,
+            skip_clarification=request.skip_clarification,
+            confirmed_entities=_parse_confirmed_entities(request.confirmed_entities),
         )
     except Exception as exc:
-        logger.error("[/chat] Agent error: %s", exc)
+        logger.error("[/chat] Intelligent handler error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     finally:
         set_request_user(None)
 
+    user_id = chat_user.id if chat_user else None
+    history = await ConversationStore.get(session_id, user_id=user_id)
+
     return ChatResponse(
-        session_id    = session_id,
-        text          = response.get("text", ""),
-        language      = response.get("language", "en"),
-        visualization = response.get("visualization"),
-        suggestions   = response.get("suggestions", []),
-        turn_number   = response.get("turn_number", 1),
-        conversation_id=response.get("conversation_id"),
+        session_id=session_id,
+        text=result.text,
+        language=result.language,
+        visualization=result.visualization,
+        suggestions=result.suggestions,
+        turn_number=len(history),
+        conversation_id=ConversationStore.conversation_id_for_session(session_id),
     )
+
+
+# Debug/canary path — returns full orchestration metadata for acceptance tests.
+@app.post("/chat/intelligent", response_model=IntelligentChatResponse)
+async def chat_intelligent(
+    request: ChatRequest,
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+):
+    chat_user = await require_chat_user(
+        http_request, credentials, session_id=request.session_id
+    )
+    session_id = request.session_id or str(uuid4())
+    set_request_user(chat_user)
+    try:
+        result = await _run_intelligent_chat(
+            request.message,
+            session_id,
+            chat_user,
+            skip_clarification=request.skip_clarification,
+            confirmed_entities=_parse_confirmed_entities(request.confirmed_entities),
+        )
+    except Exception as exc:
+        logger.error("[/chat/intelligent] Orchestration error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        set_request_user(None)
+
+    user_id = chat_user.id if chat_user else None
+    history = await ConversationStore.get(session_id, user_id=user_id)
+
+    return IntelligentChatResponse(
+        session_id=session_id,
+        text=result.text,
+        language=result.language,
+        visualization=result.visualization,
+        orchestration_log=result.orchestration_log,
+        execution_duration_ms=result.execution_duration_ms,
+        orchestration_duration_ms=result.orchestration_duration_ms,
+        strategy_step_count=result.strategy_step_count,
+        tools_called=result.tools_called,
+        suggestions=result.suggestions,
+        quality_pass_rate=result.quality_pass_rate,
+        quality_checks_passed=result.quality_checks_passed,
+        quality_checks_total=result.quality_checks_total,
+        quality_passed=result.quality_passed,
+        failure_mode=result.failure_mode,
+        cache_hit=result.cache_hit,
+        proactive_cache_keys=result.proactive_cache_keys,
+        interaction_id=result.interaction_id,
+        turn_number=len(history),
+    )
+
+
+@app.post("/suggestions/more")
+async def suggestions_more(
+    request: SuggestionMoreRequest,
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+):
+    """Return the next batch of post-response suggestions (Phase 6)."""
+    await require_chat_user(http_request, credentials)
+    from gateway.suggestion_pool import rotate_post_response_suggestions
+
+    suggestions, has_more = rotate_post_response_suggestions(request.token)
+    if not suggestions:
+        raise HTTPException(
+            status_code=400,
+            detail="Suggestion session expired. Please run the report again.",
+        )
+    return {
+        "suggestions": suggestions,
+        "suggestion_meta": {
+            "token": request.token,
+            "has_more": has_more,
+        },
+    }
+
+
+@app.post("/query/page")
+async def query_page(
+    request: QueryPageRequest,
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+):
+    """Return a paginated slice of a cached tabular query (Phase 4)."""
+    await require_chat_user(http_request, credentials)
+    from gateway.query_pagination import QueryPageStore
+
+    try:
+        return QueryPageStore.get_page(
+            request.query_id,
+            page=request.page,
+            page_size=request.page_size,
+            sort_by=request.sort_by,
+            sort_dir=request.sort_dir,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Query expired or not found. Please run the report again.",
+        ) from exc
 
 
 @app.delete("/session/{session_id}")
@@ -2253,6 +2809,7 @@ async def voice(
         return await _voice_pipeline(
             audio=audio,
             session_id=session_id,
+            chat_user=chat_user,
             user_id=chat_user.id if chat_user else None,
             extension_from_filename=audio.filename or "audio.webm",
         )
@@ -2264,6 +2821,7 @@ async def _voice_pipeline(
     *,
     audio: UploadFile,
     session_id: str,
+    chat_user: CurrentUser,
     user_id: int | None = None,
     extension_from_filename: str,
 ) -> StreamingResponse:
@@ -2314,15 +2872,19 @@ async def _voice_pipeline(
             minutes = max(0.1, len(content) / 48000.0)
             schedule_usage(track_voice_minutes(user_id, minutes))
 
-        # Step 2: Run Claude agent
+        # Step 2: Run intelligent handler (same entity gate as text chat)
         try:
-            response = await run_agent(
+            result = await _run_intelligent_chat(
                 transcript,
                 session_id,
-                user_id=user_id,
+                chat_user,
             )
+            response = {
+                "text": result.text,
+                "language": result.language,
+            }
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         text     = response.get("text", "I could not process your request.")
         language = response.get("language", "en")

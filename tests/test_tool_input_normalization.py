@@ -22,6 +22,20 @@ def test_search_odoo_input_parses_stringified_lists() -> None:
     ]
 
 
+def test_group_aggregate_input_aliases_groupby() -> None:
+    from gateway.tool_input_normalization import normalize_group_aggregate_input
+
+    normalized = normalize_group_aggregate_input(
+        {
+            "model": "account.move",
+            "groupby": "partner_id",
+            "aggregates": "amount_total:sum",
+        }
+    )
+    assert normalized["group_by"] == ["partner_id"]
+    assert "groupby" not in normalized
+
+
 def test_sql_aggregate_input_parses_stringified_lists() -> None:
     normalized = normalize_sql_aggregate_input(
         {

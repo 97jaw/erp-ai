@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 
 from admin.auth.principal import CurrentUser
+from admin.rbac.capabilities import build_odoo_capabilities_prompt
 
 _request_user: ContextVar[CurrentUser | None] = ContextVar("ooa_request_user", default=None)
 
@@ -29,5 +30,6 @@ def build_user_context_prompt(user: CurrentUser) -> str:
         f"- Language: {user.language}\n"
         f"- Permissions (sample): {perms or 'default'}\n"
         f"Respect data scope: do not expose data outside the user's department "
-        f"unless they have full project access.\n"
+        f"unless they have full project or Odoo access (odoo.full_access / data.all_projects).\n"
+        f"{build_odoo_capabilities_prompt(user)}"
     )

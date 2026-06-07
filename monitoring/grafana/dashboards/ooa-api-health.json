@@ -1,0 +1,50 @@
+{
+  "title": "OOA API Health",
+  "uid": "ooa-api-health",
+  "tags": ["ooa"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Provider up",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }] } },
+      "targets": [{ "expr": "ooa_api_provider_up", "legendFormat": "{{provider}}", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "title": "Credits / quota remaining",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "ooa_api_credits_remaining", "legendFormat": "{{provider}}", "refId": "A" }]
+    },
+    {
+      "id": 3,
+      "title": "HTTP 5xx rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [{
+        "expr": "sum(rate(ooa_api_requests_total{status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(ooa_api_requests_total[5m])), 0.001)",
+        "legendFormat": "5xx %",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 4,
+      "title": "Login failures / s",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(ooa_login_attempts_total{status=\"failure\"}[5m]))", "refId": "A" }]
+    }
+  ]
+}

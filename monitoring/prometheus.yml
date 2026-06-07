@@ -26,9 +26,11 @@ scrape_configs:
     metrics_path: /metrics
     scrape_interval: 15s
     scrape_timeout: 15s
-    static_configs:
-      # Gateway on host (uvicorn). Linux + gateway in Compose: use ooa-gateway:8000
-      - targets: ["host.docker.internal:8000"]
+    # Target file updated by scripts/set_prometheus_gateway_target.sh when needed
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/gateway.json
+        refresh_interval: 30s
 
   - job_name: postgres
     static_configs:

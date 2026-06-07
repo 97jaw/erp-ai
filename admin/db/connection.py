@@ -119,10 +119,14 @@ def _split_sql_statements(sql: str) -> list[str]:
     return statements
 
 
-async def init_admin_db(dsn: str | None = None) -> AdminDatabase:
+async def init_admin_db(dsn: str | None = None, *, run_migrations: bool = True) -> AdminDatabase:
     global _pool
     db = await AdminDatabase.create(dsn)
     _pool = db._pool
+    if run_migrations:
+        applied = await db.run_migrations()
+        if applied:
+            logger.info("[AdminDB] Applied migrations: %s", ", ".join(applied))
     return db
 
 

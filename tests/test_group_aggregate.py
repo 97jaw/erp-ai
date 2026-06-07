@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from gateway.group_aggregate_tools import group_and_aggregate
+from gateway.group_aggregate_tools import _apply_date_range_to_domain, group_and_aggregate
 from gateway.tool_input_normalization import normalize_group_aggregate_input
 from gateway.visualization_builder import build_visualization_from_tool_results
 
@@ -20,6 +20,19 @@ def test_normalize_group_aggregate_input_parses_aliases() -> None:
     assert normalized["group_by"] == ["partner_id"]
     assert normalized["aggregates"] == ["id:count"]
     assert normalized["order_by"] == "id:count desc"
+
+
+def test_apply_date_range_adds_upper_and_lower_bounds() -> None:
+    domain = _apply_date_range_to_domain(
+        "account.move",
+        [],
+        "2026-01-01",
+        "2026-03-31",
+    )
+    assert domain == [
+        ["invoice_date", ">=", "2026-01-01"],
+        ["invoice_date", "<=", "2026-03-31"],
+    ]
 
 
 def test_group_and_aggregate_single_level() -> None:

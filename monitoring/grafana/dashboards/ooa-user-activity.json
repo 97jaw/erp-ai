@@ -1,0 +1,48 @@
+{
+  "title": "OOA User Activity",
+  "uid": "ooa-user-activity",
+  "tags": ["ooa"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-7d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "AI queries by language",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(ooa_ai_queries_total[5m])) by (language)", "legendFormat": "{{language}}", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "title": "Login attempts",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(ooa_login_attempts_total[5m])) by (status)", "legendFormat": "{{status}}", "refId": "A" }]
+    },
+    {
+      "id": 3,
+      "title": "API traffic by endpoint",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "topk(10, sum(rate(ooa_api_requests_total[5m])) by (endpoint))", "legendFormat": "{{endpoint}}", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "title": "Cache hit rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{
+        "expr": "sum(rate(ooa_cache_operations_total{result=\"hit\"}[5m])) / clamp_min(sum(rate(ooa_cache_operations_total[5m])), 0.001)",
+        "legendFormat": "hit %",
+        "refId": "A"
+      }]
+    }
+  ]
+}

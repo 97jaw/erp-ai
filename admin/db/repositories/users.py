@@ -31,6 +31,17 @@ class UserRepository:
             user_id,
         )
 
+    async def set_odoo_user_id(self, user_id: int, odoo_user_id: int | None) -> None:
+        await self._db.execute(
+            """
+            UPDATE users
+            SET odoo_user_id = $2, updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            """,
+            user_id,
+            odoo_user_id,
+        )
+
     async def create_super_admin(
         self,
         *,

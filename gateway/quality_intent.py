@@ -12,7 +12,11 @@ TREND_RE = re.compile(
     re.IGNORECASE,
 )
 GROUP_RE = re.compile(
-    r"\b(?:group(?:ed)? by|breakdown|per client|per project|per partner|by client|by partner)\b",
+    r"\b(?:group(?:ed)? by|breakdown|distribution|distributed|per client|per project|per partner|by client|by partner|category(?:-wise)?|categor(?:y|ies))\b",
+    re.IGNORECASE,
+)
+CHART_RE = re.compile(
+    r"\b(?:chart|graph|graphic|visuali[sz]e|plot|diagram)\b",
     re.IGNORECASE,
 )
 TOTAL_RE = re.compile(
@@ -36,6 +40,7 @@ def detect_query_intent(user_message: str) -> dict[str, Any]:
         "comparison": bool(COMPARISON_RE.search(text)),
         "trend": bool(TREND_RE.search(text)),
         "grouped": bool(GROUP_RE.search(text)),
+        "chart": bool(CHART_RE.search(text)),
         "total": bool(TOTAL_RE.search(text)),
         "list": bool(LIST_RE.search(text)),
         "revenue": bool(REVENUE_RE.search(text)),
@@ -44,10 +49,10 @@ def detect_query_intent(user_message: str) -> dict[str, Any]:
 
     if intent["trend"]:
         intent["visual_type"] = "LINE_CHART"
-    elif intent["comparison"] or "top " in lowered:
+    elif intent["comparison"] or "top " in lowered or intent["chart"]:
         intent["visual_type"] = "BAR_CHART"
     elif intent["grouped"] and not intent["comparison"]:
-        intent["visual_type"] = "GROUPED_TABLE"
+        intent["visual_type"] = "BAR_CHART" if intent["chart"] else "GROUPED_TABLE"
     elif intent["total"] and not intent["grouped"] and not intent["list"]:
         intent["visual_type"] = "KPI_CARD"
     elif intent["list"]:

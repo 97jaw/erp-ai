@@ -1,5 +1,8 @@
+import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { filterLiveSuggestions } from "../../utils/layoutContent";
+
+const MAX_TEXTAREA_HEIGHT = 120;
 
 export default function SpotlightInput({
   input,
@@ -15,7 +18,22 @@ export default function SpotlightInput({
   onStopVoicePlayback,
   onSelectSuggestion,
 }) {
+  const textareaRef = useRef(null);
   const suggestions = filterLiveSuggestions(input);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`;
+  }, [input]);
+
+  const handleChange = (event) => {
+    const el = event.target;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`;
+    onInputChange(event);
+  };
 
   return (
     <div className={`ooa-spotlight ${recording ? "ooa-spotlight--recording" : ""}`}>
@@ -46,9 +64,10 @@ export default function SpotlightInput({
           🎤
         </button>
         <textarea
+          ref={textareaRef}
           className="ooa-spotlight__input"
           value={input}
-          onChange={onInputChange}
+          onChange={handleChange}
           onKeyDown={onKeyDown}
           placeholder="Type your question or speak..."
           rows={1}
@@ -57,6 +76,10 @@ export default function SpotlightInput({
           style={{
             direction: rtlInput ? "rtl" : "ltr",
             textAlign: rtlInput ? "right" : "left",
+            minHeight: "24px",
+            maxHeight: `${MAX_TEXTAREA_HEIGHT}px`,
+            height: "auto",
+            overflowY: "auto",
           }}
         />
         <div className="ooa-spotlight__actions">

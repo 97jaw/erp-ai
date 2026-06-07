@@ -5,10 +5,13 @@
 #        docker compose -f docker-compose.admin-db.yml up -d
 #   2. Start gateway on host:
 #        uvicorn gateway.main:app --host 0.0.0.0 --port 8000
-#   3. Start monitoring:
+#   3. Render Alertmanager config (Phase 6 — reads .env):
+#        python scripts/render_alertmanager_config.py
+#   4. Start monitoring:
 #        docker compose -f docker-compose.monitoring.yml up -d
-#   4. Verify:
+#   5. Verify:
 #        ./scripts/verify_monitoring_stack.sh
+#        ./scripts/verify_alerts.sh
 #
 # URLs:
 #   Prometheus:    http://localhost:9090
@@ -120,6 +123,7 @@ services:
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - ./monitoring/prometheus/targets:/etc/prometheus/targets:ro
       - prometheus_data:/prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -140,7 +144,8 @@ services:
     ports:
       - "9093:9093"
     volumes:
-      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # Generated from .env: python scripts/render_alertmanager_config.py
+      - ./monitoring/alertmanager/alertmanager.generated.yml:/etc/alertmanager/alertmanager.yml:ro
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
       - --storage.path=/alertmanager

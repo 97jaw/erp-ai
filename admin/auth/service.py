@@ -118,6 +118,8 @@ class AuthService:
                 )
                 raise HTTPException(status_code=401, detail="File ID not recognized.")
 
+        await self._sync_odoo_user_link(user)
+
         if user["mfa_enabled"] and user["mfa_secret"]:
             language = user["language"] or "en"
             welcome = self._welcome_for_user(user)
@@ -164,6 +166,19 @@ class AuthService:
             user_agent=user_agent,
         )
         return payload
+
+    async def _sync_odoo_user_link(self, user: Any) -> None:
+        """Keep users.odoo_user_id aligned with Odoo res.users login = file_id."""
+        from admin.auth.odoo_verify import _odoo_configured, verify_file_id_with_odoo
+
+        if not _odoo_configured():
+            return
+        verified = await verify_file_id_with_odoo(user["file_id"])
+        if verified and verified.get("odoo_user_id"):
+            odoo_uid = int(verified["odoo_user_id"])
+            if user.get("odoo_user_id") != odoo_uid:
+                await self._users.set_odoo_user_id(int(user["id"]), odoo_uid)
+                user["odoo_user_id"] = odoo_uid
 
     async def _issue_login_tokens(
         self,

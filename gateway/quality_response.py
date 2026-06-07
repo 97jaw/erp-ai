@@ -11,6 +11,7 @@ from gateway.quality_formatting import (
 from gateway.quality_intent import detect_query_intent
 from gateway.quality_narrative import generate_narrative
 from gateway.quality_validation import validate_response_quality
+from gateway.progressive_disclosure import apply_progressive_disclosure
 from gateway.visualization_builder import build_visualization_from_tool_results
 
 logger = logging.getLogger(__name__)
@@ -53,12 +54,20 @@ def polish_visualization(
             for index in range(min(len(labels), len(values)))
         ]
         for row in source_rows:
-            if not isinstance(row, (list, tuple)) or not row:
+            label: Any
+            raw_value: Any
+            if isinstance(row, dict):
+                label = row.get("label") or row.get("name") or row.get("category")
+                raw_value = row.get("value", row.get("amount", row.get("total", 0)))
+            elif isinstance(row, (list, tuple)) and row:
+                label = row[0]
+                raw_value = row[1] if len(row) > 1 else 0
+            else:
                 continue
-            label = humanize_group_label(row[0])
+            label = humanize_group_label(label)
             try:
-                value = float(row[1] or 0)
-            except (TypeError, ValueError, IndexError):
+                value = float(raw_value or 0)
+            except (TypeError, ValueError):
                 value = 0.0
             if value <= 0:
                 continue
@@ -162,6 +171,28 @@ def polish_agent_response(
         if isinstance(result, dict) and result.get("quality_warning") and not clean_text.strip():
             clean_text = str(result["quality_warning"])
             break
+
+    if visualization:
+        for result in reversed(tool_results):
+            if not isinstance(result, dict):
+                continue
+            date_from = result.get("date_from")
+            date_to = result.get("date_to")
+            if date_from or date_to:
+                visualization = dict(visualization)
+                if date_from:
+                    visualization["date_from"] = date_from
+                if date_to:
+                    visualization["date_to"] = date_to
+                if result.get("_date_was_defaulted"):
+                    visualization["date_was_defaulted"] = True
+                break
+
+        visualization = apply_progressive_disclosure(
+            visualization,
+            user_message,
+            tool_results,
+        )
 
     is_quality, issues = validate_response_quality({
         "text": clean_text,

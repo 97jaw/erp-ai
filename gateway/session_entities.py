@@ -24,11 +24,18 @@ def enrich_tool_input(
         return enriched
 
     scope = SessionScopeStore.get(session_id)
+    confirmed = scope.get("confirmed_entities") or {}
     if tool_name in PROJECT_FOLLOW_UP_TOOLS:
-        if not enriched.get("project_id") and scope.get("project_id"):
-            enriched["project_id"] = scope["project_id"]
-        if not enriched.get("project_name") and scope.get("project_name"):
-            enriched["project_name"] = scope["project_name"]
+        project = confirmed.get("project")
+        if project and project.get("id"):
+            enriched["project_id"] = int(project["id"])
+            if project.get("name"):
+                enriched["project_name"] = str(project["name"])
+        else:
+            if not enriched.get("project_id") and scope.get("project_id"):
+                enriched["project_id"] = scope["project_id"]
+            if not enriched.get("project_name") and scope.get("project_name"):
+                enriched["project_name"] = scope["project_name"]
     if tool_name == "get_purchase_orders":
         if not enriched.get("client_name") and scope.get("client_name"):
             enriched["client_name"] = scope["client_name"]

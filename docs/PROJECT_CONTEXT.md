@@ -298,6 +298,12 @@ def get_ai_financial_report(self, ...):
 
 10. CORS must allow all origins for dev
     → allow_origins=["*"] in FastAPI
+
+11. Odoo search_read() is overridden on live Elrace server
+    → project.project search_read returns wrong IDs (e.g. HATTA HOSPITAL for Zayidia)
+    → Entity resolution MUST use adapter.safe_search_read() = search() + read()
+    → Do NOT fix the Odoo module (elrace_employee_transfer_request)
+    → Entity gate always requires user confirmation before financial tools run
 ```
 
 ---
@@ -405,11 +411,14 @@ lsof -i :3000 | grep node | awk '{print $2}' | xargs kill -9
 
 ```
 ✅ Claude agent with native tool use
-✅ Odoo 14 adapter with custom gateway methods
+✅ Odoo 14 adapter with custom gateway methods + safe_search_read()
+✅ Entity gate with mandatory confirmation (Phase 9)
 ✅ Voice pipeline (Whisper + ElevenLabs)
 ✅ SSE streaming
 ✅ React bilingual UI
 ✅ Docker containerization
+✅ Telemetry + learning engine (Phase 8)
+✅ Phase 10 hardening — k6 load test, baseline, edge cases, logging review
 ✅ Live testing against Elrace production data
 
 🔄 Server 2 infrastructure setup
@@ -417,5 +426,14 @@ lsof -i :3000 | grep node | awk '{print $2}' | xargs kill -9
 📋 Write operations with confirmation
 📋 Postgres session persistence
 ```
+
+### Phase 10 Hardening
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/load/phase10_chat_stream.js` | k6 — 10 VUs, 5 min, mixed queries |
+| `scripts/phase10_baseline.py` | Sequential baseline → `phase10_query_telemetry` |
+| `scripts/phase10_acceptance.py` | Edge cases + log fabrication scan |
+| `docs/PHASE_10_HARDENING_REPORT.md` | Sign-off report |
 
 See `TASKS_FEATURES.md` and `TASKS_ARCHITECTURE.md` for active work.

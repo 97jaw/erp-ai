@@ -21,6 +21,37 @@ MAX_GROUP_LIMIT = 200
 DEFAULT_GROUP_LIMIT = 50
 
 
+def _domain_has_date_bound(domain: list[Any], field: str, operator: str) -> bool:
+    for item in domain:
+        if (
+            isinstance(item, (list, tuple))
+            and len(item) >= 3
+            and item[0] == field
+            and item[1] == operator
+        ):
+            return True
+    return False
+
+
+def _apply_date_range_to_domain(
+    model: str,
+    domain: list[Any],
+    date_from: str | None,
+    date_to: str | None,
+) -> list[Any]:
+    """Merge top-level date_from/date_to into an Odoo domain when absent."""
+    if not date_from and not date_to:
+        return domain
+
+    date_field = "invoice_date" if model == "account.move" else "date"
+    merged = list(domain)
+    if date_from and not _domain_has_date_bound(merged, date_field, ">="):
+        merged.append([date_field, ">=", date_from])
+    if date_to and not _domain_has_date_bound(merged, date_field, "<="):
+        merged.append([date_field, "<=", date_to])
+    return merged
+
+
 def _serialize_value(value: Any) -> Any:
     if isinstance(value, (list, tuple)) and len(value) == 2 and isinstance(value[0], int):
         return [value[0], value[1]]
@@ -190,10 +221,17 @@ def _recursive_group_by(
     return result
 
 
+_REMOTE_GROUP_AGGREGATE_AVAILABLE: bool | None = None
+
+
 def _try_remote_group_and_aggregate(
     adapter: OdooV14Adapter,
     tool_input: dict[str, Any],
 ) -> dict[str, Any] | None:
+    global _REMOTE_GROUP_AGGREGATE_AVAILABLE
+    if _REMOTE_GROUP_AGGREGATE_AVAILABLE is False:
+        return None
+
     try:
         remote = adapter.call_method(
             "project.financial.service",
@@ -208,10 +246,13 @@ def _try_remote_group_and_aggregate(
                 tool_input.get("having"),
             ],
         )
-    except Exception:
+    except Exception as exc:
+        if "ai_group_and_aggregate" in str(exc):
+            _REMOTE_GROUP_AGGREGATE_AVAILABLE = False
         return None
 
     if isinstance(remote, dict) and remote.get("groups") is not None:
+        _REMOTE_GROUP_AGGREGATE_AVAILABLE = True
         return remote
     return None
 
@@ -231,7 +272,12 @@ def group_and_aggregate(
     domain = apply_model_domain_defaults(
         adapter,
         model,
-        normalize_account_move_domain(adapter, model, list(tool_input.get("domain") or [])),
+        _apply_date_range_to_domain(
+            model,
+            normalize_account_move_domain(adapter, model, list(tool_input.get("domain") or [])),
+            tool_input.get("date_from"),
+            tool_input.get("date_to"),
+        ),
     )
     aggregates = list(tool_input.get("aggregates") or [])
     if not aggregates:

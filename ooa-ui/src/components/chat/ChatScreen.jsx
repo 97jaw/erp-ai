@@ -1,26 +1,36 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import AnimatedBackground from "../background/AnimatedBackground";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { sound } from "../common/SoundManager";
 import { useSoundSettings } from "../../hooks/useSoundSettings";
 import {
   API_BASE,
   decodeHeader,
+  getChatThreadId,
   getRecordingMimeType,
-  getStoredSessionId,
   hasRenderableVisualization,
   isArabic,
   normalizeVisualization,
   parseApiError,
   recordingExtension,
+  rotateChatThreadId,
+  setChatThreadId,
   stripVisualization,
 } from "../../utils/chat";
-import CenterStage from "../layout/CenterStage";
-import FloatingChrome from "./FloatingChrome";
-import LeftSidebar from "../layout/LeftSidebar";
-import NewQuestionButton from "../layout/NewQuestionButton";
-import RightSidebar from "../layout/RightSidebar";
-import SpotlightInput from "../layout/SpotlightInput";
+import {
+  listPastConversations,
+  loadConversationById,
+  loadConversationHistory,
+} from "../../utils/chatHistory";
+import { authFetch } from "../../config/api";
 import WelcomeScreen from "../layout/WelcomeScreen";
+import { VisualizePanel, useVisualizePanel } from "../../visualize";
+import "../../visualize/styles/visualize.css";
+import MainTopBar from "../../main/topbar/MainTopBar";
+import QuickActionsSidebar from "../../main/sidebar/QuickActionsSidebar";
+import ChatScrollView from "../../main/chat/ChatScrollView";
+import ChatInputBar from "../../main/chat/ChatInputBar";
+import VoiceStatusBanner from "../../main/chat/VoiceStatusBanner";
+import { buildClarificationQuery, buildConfirmedEntities } from "../../utils/clarify";
+import { apiFetch } from "../../config/api";
 
 const QUERIES_STORAGE_KEY = "ooa_queries";
 
@@ -35,40 +45,44 @@ function loadStoredQueries() {
   }
 }
 
-export default function ChatScreen({ sessionId: authSessionId, user, onLogout }) {
-  const sessionId = authSessionId || getStoredSessionId();
+export default function ChatScreen({
+  user,
+  initialSpotlightQuery = "",
+  onLogout,
+}) {
+  const [chatThreadId, setChatThreadIdState] = useState(() => getChatThreadId());
   const { enabled: soundEnabled, volume, toggleEnabled: toggleSound, updateVolume } = useSoundSettings();
   const [queries, setQueries] = useState(loadStoredQueries);
   const [activeQueryId, setActiveQueryId] = useState(() => loadStoredQueries()[0]?.id || null);
-  const [previewQueryId, setPreviewQueryId] = useState(null);
-  const [spotlightOpen, setSpotlightOpen] = useState(false);
+  const [activeConversationId, setActiveConversationId] = useState(null);
+  const [pastChats, setPastChats] = useState([]);
+  const [pastChatsLoading, setPastChatsLoading] = useState(false);
+  const [pastChatsError, setPastChatsError] = useState(null);
   const [input, setInput] = useState("");
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [voicePhase, setVoicePhase] = useState("idle");
   const [error, setError] = useState(null);
   const [loadingStage, setLoadingStage] = useState(null);
   const [toolSteps, setToolSteps] = useState([]);
   const [pendingVizType, setPendingVizType] = useState(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [voicePlaying, setVoicePlaying] = useState(false);
+  const [loadingMoreSuggestions, setLoadingMoreSuggestions] = useState(false);
   const mediaRef = useRef(null);
   const audioRef = useRef(null);
   const chunksRef = useRef([]);
   const recordingMimeRef = useRef("");
-  const emptyInputTimerRef = useRef(null);
-  const previewTimerRef = useRef(null);
+  const chatInputRef = useRef(null);
 
-  const activeQuery = useMemo(
-    () => queries.find((query) => query.id === activeQueryId) || null,
-    [queries, activeQueryId],
-  );
+  const visualize = useVisualizePanel();
 
-  const layoutMode = useMemo(() => {
-    if (loading && activeQueryId) return "generating";
-    if (spotlightOpen) return "typing";
-    if (queries.length > 0) return "viewing";
-    return "welcome";
-  }, [loading, spotlightOpen, queries.length, activeQueryId]);
+  const hasChat = queries.length > 0 || loading;
+  const vizBorderState = visualize.isDraggingFromChat || visualize.isDraggingOver
+    ? "active"
+    : visualize.droppedItems.length > 0
+      ? "active"
+      : "inactive";
 
   const isPrintableKey = useCallback((event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return false;
@@ -84,44 +98,107 @@ export default function ChatScreen({ sessionId: authSessionId, user, onLogout })
     } catch (error) {}
   }, [queries]);
 
-  useEffect(() => {
-    if ((layoutMode === "viewing" || layoutMode === "generating") && queries.length > 0) {
-      setHistoryOpen(true);
+  const fetchPastChats = useCallback(async () => {
+    if (!user) return;
+    setPastChatsLoading(true);
+    setPastChatsError(null);
+    try {
+      const list = await listPastConversations(30);
+      setPastChats(list);
+    } catch (err) {
+      setPastChatsError(err.message || "Could not load past chats");
+    } finally {
+      setPastChatsLoading(false);
     }
-    if (layoutMode === "welcome") {
-      setHistoryOpen(false);
-    }
-  }, [layoutMode, queries.length]);
+  }, [user]);
 
   useEffect(() => {
-    if (!queries.length) return undefined;
-
-    const onMove = (event) => {
-      if (event.clientX >= window.innerWidth - 72) {
-        setHistoryOpen(true);
+    let cancelled = false;
+    (async () => {
+      const local = loadStoredQueries();
+      if (local.length > 0) {
+        setQueries(local);
+        setActiveQueryId(local[0]?.id || null);
+        if (user) fetchPastChats();
+        return;
       }
+      if (!user) return;
+      try {
+        const { queries: restored, conversationId } = await loadConversationHistory();
+        if (!cancelled && restored.length > 0) {
+          setQueries(restored);
+          setActiveQueryId(restored[0]?.id || null);
+          setActiveConversationId(conversationId || null);
+          setChatThreadIdState(getChatThreadId());
+        }
+        if (!cancelled) fetchPastChats();
+      } catch {
+        /* offline or auth not ready */
+      }
+    })();
+    return () => {
+      cancelled = true;
     };
+  }, [user, fetchPastChats]);
 
-    window.addEventListener("pointermove", onMove, { passive: true });
-    return () => window.removeEventListener("pointermove", onMove);
-  }, [queries.length]);
+  useEffect(() => {
+    if (sidebarExpanded && user) {
+      fetchPastChats();
+    }
+  }, [sidebarExpanded, user, fetchPastChats]);
 
-  const shellClassName = [
-    "ooa-app-shell",
-    "ooa-layout",
-    `ooa-layout--${layoutMode}`,
-    historyOpen && queries.length ? "ooa-layout--history-open" : "",
-  ].filter(Boolean).join(" ");
+  const handleLoadPastChat = useCallback(async (conversation) => {
+    if (!conversation?.id) return;
+    setError(null);
+    setPastChatsLoading(true);
+    try {
+      const loaded = await loadConversationById(conversation.id);
+      if (loaded.threadId) {
+        setChatThreadId(loaded.threadId);
+        setChatThreadIdState(loaded.threadId);
+      }
+      setQueries(loaded.queries);
+      setActiveQueryId(loaded.queries[0]?.id || null);
+      setActiveConversationId(loaded.conversationId);
+      visualize.clearItems?.();
+    } catch (err) {
+      setError(err.message || "Could not open this chat");
+    } finally {
+      setPastChatsLoading(false);
+    }
+  }, [visualize]);
 
-  const openSpotlight = useCallback((seed = "") => {
-    setSpotlightOpen(true);
-    if (seed) setInput(seed);
-  }, []);
-
-  const closeSpotlight = useCallback(() => {
-    setSpotlightOpen(false);
+  const handleNewChat = useCallback(async () => {
+    const previousThread = chatThreadId;
+    try {
+      await authFetch(`/session/${encodeURIComponent(previousThread)}`, {
+        method: "DELETE",
+      });
+    } catch {
+      /* best-effort */
+    }
+    const nextThread = rotateChatThreadId();
+    setChatThreadIdState(nextThread);
+    setQueries([]);
+    setActiveQueryId(null);
+    setActiveConversationId(null);
     setInput("");
+    setError(null);
+    visualize.clearItems?.();
+    fetchPastChats();
+  }, [chatThreadId, fetchPastChats, visualize]);
+
+  const focusInput = useCallback((seed = "") => {
+    if (seed) setInput(seed);
+    window.requestAnimationFrame(() => {
+      chatInputRef.current?.focus();
+    });
   }, []);
+
+  useEffect(() => {
+    if (!initialSpotlightQuery?.trim()) return;
+    focusInput(initialSpotlightQuery);
+  }, [initialSpotlightQuery, focusInput]);
 
   const updateQuery = useCallback((queryId, patch) => {
     setQueries((prev) => prev.map((query) => (
@@ -129,16 +206,16 @@ export default function ChatScreen({ sessionId: authSessionId, user, onLogout })
     )));
   }, []);
 
-  const sendMessage = useCallback(async (text) => {
+  const sendMessage = useCallback(async (text, options = {}) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
     setError(null);
     setInput("");
-    setSpotlightOpen(false);
     sound.play("message-send", { volume: 0.35 });
 
     const queryId = Date.now();
+    let streamDone = false;
     const createdAt = Date.now();
     const nextQuery = {
       id: queryId,
@@ -161,13 +238,24 @@ export default function ChatScreen({ sessionId: authSessionId, user, onLogout })
     setToolSteps([]);
 
     try {
-      const res = await fetch(`${API_BASE}/chat/stream`, {
+      const res = await authFetch("/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: trimmed, session_id: sessionId }),
+        body: JSON.stringify({
+          message: trimmed,
+          session_id: chatThreadId,
+          skip_clarification: Boolean(options.skipClarification),
+          confirmed_entities: options.confirmedEntities || [],
+        }),
       });
 
-      if (!res.ok) throw new Error(await parseApiError(res, `Server error: ${res.status}`));
+      if (!res.ok) {
+        const detail = await parseApiError(res, `Server error: ${res.status}`);
+        if (res.status === 401) {
+          throw new Error("Session expired. Please sign in again.");
+        }
+        throw new Error(detail);
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -205,7 +293,34 @@ export default function ChatScreen({ sessionId: authSessionId, user, onLogout })
               setToolSteps(data.steps || []);
             } else if (data.type === "status") {
               setLoadingStage(data.message);
+            } else if (data.type === "clarify") {
+              setLoading(false);
+              setLoadingStage(null);
+              updateQuery(queryId, {
+                status: "awaiting_clarification",
+                response: {
+                  text: data.clarification?.question || "",
+                  clarification: data.clarification,
+                  visualization: null,
+                  suggestions: [],
+                },
+              });
+            } else if (data.type === "error") {
+              const message = data.message || "Could not reach Odoo.";
+              setError(message);
+              updateQuery(queryId, {
+                status: "error",
+                response: {
+                  text: message,
+                  visualization: null,
+                  suggestions: [],
+                },
+              });
+              setLoading(false);
+              setLoadingStage(null);
             } else if (data.type === "done") {
+              if (streamDone) continue;
+              streamDone = true;
               sound.play("message-receive", { volume: 0.3 });
               const visualization = hasRenderableVisualization(data.visualization)
                 ? normalizeVisualization(data.visualization)
@@ -214,15 +329,32 @@ export default function ChatScreen({ sessionId: authSessionId, user, onLogout })
                 ? stripVisualization(data.text)
                 : stripVisualization(streamedText);
               const finalText = serverText || stripVisualization(streamedText);
-              updateQuery(queryId, {
-                status: "complete",
-                vizType: visualization?.visual_type || null,
-                response: {
-                  text: finalText,
-                  visualization,
-                  suggestions: data.suggestions || [],
-                },
-              });
+              if (data.awaiting_clarification && data.clarification) {
+                updateQuery(queryId, {
+                  status: "awaiting_clarification",
+                  response: {
+                    text: finalText || data.clarification?.question || "",
+                    clarification: data.clarification,
+                    visualization: null,
+                    suggestions: [],
+                  },
+                });
+              } else {
+                updateQuery(queryId, {
+                  status: "complete",
+                  vizType: visualization?.visual_type || null,
+                  response: {
+                    text: finalText,
+                    visualization,
+                    suggestions: data.suggestions || [],
+                    suggestionMeta: data.suggestion_meta || null,
+                    clarification: null,
+                  },
+                });
+                if (visualization || data.auto_show_visualize) {
+                  visualize.openPanel();
+                }
+              }
             }
           } catch (error) {}
         }
@@ -243,19 +375,82 @@ export default function ChatScreen({ sessionId: authSessionId, user, onLogout })
       setPendingVizType(null);
       setToolSteps([]);
     }
-  }, [loading, sessionId, updateQuery]);
+  }, [loading, chatThreadId, updateQuery, visualize]);
+
+  const handleClarificationSelect = useCallback((option, originalQuery) => {
+    const confirmedEntities = buildConfirmedEntities(option);
+    if (confirmedEntities.length > 0) {
+      sendMessage(originalQuery, {
+        skipClarification: true,
+        confirmedEntities,
+      });
+      return;
+    }
+    if (option?.action === "try_different_name") {
+      setInput("");
+      setLoading(false);
+      setLoadingStage(null);
+      focusInput("Try a different project name or WO number…");
+      return;
+    }
+    const enriched = buildClarificationQuery(originalQuery, option);
+    sendMessage(enriched, { skipClarification: true });
+  }, [sendMessage, focusInput]);
+
+  const handleShowMoreSuggestions = useCallback(async (queryId) => {
+    const query = queries.find((item) => item.id === queryId);
+    const token = query?.response?.suggestionMeta?.token;
+    if (!token || loadingMoreSuggestions) return;
+
+    setLoadingMoreSuggestions(true);
+    try {
+      const payload = await apiFetch("/suggestions/more", {
+        method: "POST",
+        body: JSON.stringify({ token }),
+      });
+      updateQuery(queryId, {
+        response: {
+          ...query.response,
+          suggestions: payload.suggestions || [],
+          suggestionMeta: payload.suggestion_meta || query.response.suggestionMeta,
+        },
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoadingMoreSuggestions(false);
+    }
+  }, [loadingMoreSuggestions, queries, updateQuery]);
+
+  const clearConversation = useCallback(async () => {
+    try {
+      await authFetch(`/session/${encodeURIComponent(chatThreadId)}`, {
+        method: "DELETE",
+      });
+    } catch (error) {
+      // best-effort backend reset
+    }
+
+    localStorage.removeItem(QUERIES_STORAGE_KEY);
+    localStorage.removeItem("ooa_messages");
+    localStorage.removeItem("ooa_suggestions_shown");
+    const nextThread = rotateChatThreadId();
+    setChatThreadIdState(nextThread);
+
+    setQueries([]);
+    setActiveQueryId(null);
+    setActiveConversationId(null);
+    setError(null);
+    setLoading(false);
+    setLoadingStage(null);
+    setPendingVizType(null);
+    setToolSteps([]);
+    setInput("");
+    fetchPastChats();
+  }, [chatThreadId, fetchPastChats]);
 
   const handleInputChange = (event) => {
-    const value = event.target.value;
-    setInput(value);
-    if (emptyInputTimerRef.current) {
-      window.clearTimeout(emptyInputTimerRef.current);
-    }
-    if (!value.trim() && queries.length === 0) {
-      emptyInputTimerRef.current = window.setTimeout(() => {
-        closeSpotlight();
-      }, 200);
-    }
+    setInput(event.target.value);
   };
 
   const handleInputKeyDown = (event) => {
@@ -265,78 +460,16 @@ export default function ChatScreen({ sessionId: authSessionId, user, onLogout })
     }
     if (event.key === "Escape") {
       event.preventDefault();
-      closeSpotlight();
+      setInput("");
+      chatInputRef.current?.blur();
     }
-  };
-
-  const handleCloseTab = useCallback((queryId) => {
-    setQueries((prev) => {
-      const remaining = prev.filter((query) => query.id !== queryId);
-      setActiveQueryId((active) => (active === queryId ? remaining[0]?.id || null : active));
-      return remaining;
-    });
-    setPreviewQueryId(null);
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (event) => {
-      const isMeta = event.metaKey || event.ctrlKey;
-      if ((layoutMode === "welcome" || layoutMode === "viewing") && isPrintableKey(event)) {
-        event.preventDefault();
-        openSpotlight(event.key);
-        return;
-      }
-      if (isMeta && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        openSpotlight();
-      }
-      if (isMeta && event.key.toLowerCase() === "n") {
-        event.preventDefault();
-        openSpotlight();
-      }
-      if (event.key === "Escape" && spotlightOpen) {
-        event.preventDefault();
-        closeSpotlight();
-      }
-      if (!spotlightOpen && isMeta && queries.length && event.key === "ArrowUp") {
-        event.preventDefault();
-        const index = queries.findIndex((query) => query.id === activeQueryId);
-        const next = queries[Math.max(0, index - 1)];
-        if (next) setActiveQueryId(next.id);
-      }
-      if (!spotlightOpen && isMeta && queries.length && event.key === "ArrowDown") {
-        event.preventDefault();
-        const index = queries.findIndex((query) => query.id === activeQueryId);
-        const next = queries[Math.min(queries.length - 1, index + 1)];
-        if (next) setActiveQueryId(next.id);
-      }
-      if (!spotlightOpen && isMeta && event.key.toLowerCase() === "w" && activeQueryId) {
-        event.preventDefault();
-        handleCloseTab(activeQueryId);
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeQueryId, closeSpotlight, handleCloseTab, isPrintableKey, layoutMode, openSpotlight, queries, spotlightOpen]);
-
-  const handleSelectTab = (queryId) => {
-    setActiveQueryId(queryId);
-    setPreviewQueryId(null);
-  };
-
-  const handlePreviewTab = (queryId) => {
-    if (previewTimerRef.current) window.clearTimeout(previewTimerRef.current);
-    if (!queryId) {
-      setPreviewQueryId(null);
-      return;
-    }
-    previewTimerRef.current = window.setTimeout(() => setPreviewQueryId(queryId), 500);
   };
 
   const startRecording = async () => {
-    if (loading || recording) return;
+    if (loading || recording || voicePhase === "transcribing" || voicePhase === "processing") return;
     try {
+      setVoicePhase("recording");
+      setError(null);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = getRecordingMimeType();
       recordingMimeRef.current = mimeType;
@@ -359,14 +492,18 @@ export default function ChatScreen({ sessionId: authSessionId, user, onLogout })
         mediaRef.current = null;
         chunksRef.current = [];
         if (blob.size < 1024) {
+          setVoicePhase("idle");
           setError("Recording was too short. Hold the microphone a little longer and try again.");
           return;
         }
+        setVoicePhase("transcribing");
         await sendVoice(blob);
       };
       recorder.start(250);
       setRecording(true);
     } catch (err) {
+      setVoicePhase("idle");
+      setRecording(false);
       setError("Microphone access denied");
     }
   };
@@ -391,17 +528,24 @@ export default function ChatScreen({ sessionId: authSessionId, user, onLogout })
   const sendVoice = async (blob) => {
     stopVoicePlayback();
     setLoading(true);
-    setLoadingStage("Preparing voice response...");
+    setVoicePhase("transcribing");
+    setLoadingStage("Transcribing your voice…");
     setError(null);
     const form = new FormData();
     const mimeType = blob.type || recordingMimeRef.current || "audio/webm";
     const extension = recordingExtension(mimeType);
     form.append("audio", blob, `recording.${extension}`);
-    form.append("session_id", sessionId);
+    form.append("session_id", chatThreadId);
 
     try {
-      const res = await fetch(`${API_BASE}/voice`, { method: "POST", body: form });
+      const res = await authFetch("/voice", {
+        method: "POST",
+        body: form,
+      });
       if (!res.ok) throw new Error(await parseApiError(res, `Voice error: ${res.status}`));
+
+      setVoicePhase("processing");
+      setLoadingStage("Preparing your answer…");
 
       const transcript = decodeHeader(
         res.headers.get("X-Transcript-B64"),
@@ -426,6 +570,9 @@ export default function ChatScreen({ sessionId: authSessionId, user, onLogout })
       setVoicePlaying(true);
       await audio.play();
 
+      setInput(transcript);
+      setVoicePhase("processing");
+
       const queryId = Date.now();
       setQueries((prev) => [{
         id: queryId,
@@ -442,108 +589,133 @@ export default function ChatScreen({ sessionId: authSessionId, user, onLogout })
       setActiveQueryId(queryId);
     } catch (err) {
       setError(err.message);
+      setVoicePhase("idle");
     } finally {
       setLoading(false);
       setLoadingStage(null);
+      setVoicePhase("idle");
     }
   };
 
   const handleLogout = () => {
     localStorage.removeItem(QUERIES_STORAGE_KEY);
     localStorage.removeItem("ooa_messages");
-    localStorage.removeItem("ooa_session_id");
     onLogout?.();
   };
 
+  const shellClass = [
+    "ooa-main-shell-wrap",
+    visualize.open ? "ooa-main-shell-wrap--viz-open" : "",
+    `ooa-main-shell-wrap--viz-${vizBorderState}`,
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className={shellClassName}>
-      <AnimatedBackground />
-      <FloatingChrome
-        user={user}
-        onLogout={handleLogout}
-        soundEnabled={soundEnabled}
-        volume={volume}
-        onToggleSound={toggleSound}
-        onVolumeChange={updateVolume}
+    <div className={shellClass}>
+      <VisualizePanel
+        open={visualize.open}
+        borderState={vizBorderState}
+        droppedItems={visualize.droppedItems}
+        isDraggingOver={visualize.isDraggingOver}
+        isDraggingFromChat={visualize.isDraggingFromChat}
+        lastDropAt={visualize.lastDropAt}
+        chatSessionId={chatThreadId}
+        onToggle={visualize.togglePanel}
+        onClose={visualize.closePanel}
+        onDragOver={visualize.handleDragOver}
+        onDragLeave={visualize.handleDragLeave}
+        onDrop={visualize.handleDrop}
+        onRemoveItem={visualize.removeItem}
+        onClear={visualize.clearItems}
       />
 
-      {layoutMode !== "welcome" ? (
-        <LeftSidebar onSelectQuery={(query) => openSpotlight(query)} compact />
-      ) : null}
+      <div className="ooa-main-shell">
+        <MainTopBar
+          user={user}
+          onLogout={handleLogout}
+          onClearConversation={clearConversation}
+          soundEnabled={soundEnabled}
+          volume={volume}
+          onToggleSound={toggleSound}
+          onVolumeChange={updateVolume}
+          onOpenSearch={() => focusInput()}
+        />
 
-      <div className="ooa-layout__main">
-        {layoutMode === "welcome" ? (
-          <WelcomeScreen
-            compact
-            onOpenSpotlight={() => openSpotlight()}
-            onSeedQuery={(query) => openSpotlight(query)}
-          />
-        ) : null}
+        <QuickActionsSidebar
+          queries={queries}
+          activeQueryId={activeQueryId}
+          onQuickAction={(item) => {
+            if (item?.action === "focus") {
+              focusInput();
+              return;
+            }
+            if (item?.action === "voice") {
+              startRecording();
+              return;
+            }
+            if (item?.query) sendMessage(item.query);
+          }}
+          onSelectHistory={(queryId) => setActiveQueryId(queryId)}
+          onExpandedChange={setSidebarExpanded}
+          pastChats={pastChats}
+          pastChatsLoading={pastChatsLoading}
+          pastChatsError={pastChatsError}
+          activeConversationId={activeConversationId}
+          onLoadPastChat={handleLoadPastChat}
+          onRefreshPastChats={fetchPastChats}
+          onNewChat={handleNewChat}
+        />
 
-        {layoutMode === "typing" ? (
-          <SpotlightInput
+        <main className="ooa-main-chat" id="ooa-chat-main">
+          {!hasChat ? (
+            <WelcomeScreen
+              onOpenSpotlight={() => focusInput()}
+              onSeedQuery={(query) => {
+                if (typeof query === "string" && query.trim()) {
+                  sendMessage(query);
+                } else {
+                  focusInput();
+                }
+              }}
+            />
+          ) : (
+            <ChatScrollView
+              queries={queries}
+              activeQueryId={activeQueryId}
+              loading={loading}
+              loadingStage={loadingStage}
+              pendingVizType={pendingVizType}
+              toolSteps={toolSteps}
+              language={user?.language || "en"}
+              onSuggestion={sendMessage}
+              onClarificationSelect={handleClarificationSelect}
+              onClarificationSkip={handleClarificationSelect}
+              onShowMoreSuggestions={() => handleShowMoreSuggestions(activeQueryId)}
+              loadingMoreSuggestions={loadingMoreSuggestions}
+              onVisualizeDragStart={visualize.notifyDragStart}
+              onVisualizeDragEnd={visualize.notifyDragEnd}
+            />
+          )}
+          <VoiceStatusBanner phase={voicePhase} />
+          <ChatInputBar
             input={input}
+            inputRef={chatInputRef}
             loading={loading}
             recording={recording}
-            voicePlaying={voicePlaying}
+            voicePhase={voicePhase}
             rtlInput={isArabic(input)}
             onInputChange={handleInputChange}
             onKeyDown={handleInputKeyDown}
             onSend={() => sendMessage(input)}
             onStartRecording={startRecording}
             onStopRecording={stopRecording}
-            onStopVoicePlayback={stopVoicePlayback}
             onSelectSuggestion={sendMessage}
           />
-        ) : null}
-
-        {layoutMode === "generating" || layoutMode === "viewing" ? (
-          <CenterStage
-            query={activeQuery}
-            loading={layoutMode === "generating"}
-            loadingStage={loadingStage}
-            pendingVizType={pendingVizType}
-            toolSteps={toolSteps}
-            onSuggestion={sendMessage}
-          />
-        ) : null}
-
-        {layoutMode === "viewing" ? (
-          <NewQuestionButton onClick={() => openSpotlight()} />
-        ) : null}
+        </main>
       </div>
 
-      {queries.length ? (
-        <>
-          <div className="ooa-history-rail">
-            <button
-              type="button"
-              className="ooa-history-rail__toggle"
-              aria-expanded={historyOpen}
-              aria-controls="ooa-query-history"
-              onClick={() => setHistoryOpen((open) => !open)}
-            >
-              <span aria-hidden="true">{historyOpen ? "›" : "‹"}</span>
-              <span className="ooa-history-rail__label">Queries</span>
-            </button>
-          </div>
-          <RightSidebar
-            id="ooa-query-history"
-            open={historyOpen}
-            queries={queries}
-            activeQueryId={activeQueryId}
-            previewQueryId={previewQueryId}
-            onSelect={handleSelectTab}
-            onPreview={handlePreviewTab}
-            onClose={handleCloseTab}
-            onReask={sendMessage}
-          />
-        </>
-      ) : null}
-
       {error ? (
-        <div className="ooa-error-banner ooa-error-banner--floating">
-          <span>⚠ {error}</span>
+        <div className="ooa-error-banner ooa-error-banner--floating" role="alert">
+          <span>{error}</span>
           <button type="button" onClick={() => setError(null)}>×</button>
         </div>
       ) : null}

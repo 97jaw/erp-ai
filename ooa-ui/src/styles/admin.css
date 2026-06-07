@@ -1,7 +1,38 @@
+/* Admin uses body { overflow: hidden } globally (chat UI). Shell must scroll internally. */
+
+body.ooa-admin-route,
+body.ooa-admin-route #root {
+  height: 100%;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+.ooa-admin-app {
+  height: 100%;
+  max-height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ooa-admin-gate {
+  box-sizing: border-box;
+  height: 100%;
+  max-height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2rem;
+  background: var(--ooa-gradient-app);
+  color: var(--ooa-text-primary);
+}
+
 .ooa-admin-shell {
   display: grid;
-  grid-template-columns: 240px 1fr;
-  min-height: 100vh;
+  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  max-height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   background: var(--ooa-gradient-app);
   color: var(--ooa-text-primary);
 }
@@ -14,6 +45,17 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ooa-admin-sidebar nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding-right: 0.15rem;
 }
 
 .ooa-admin-brand {
@@ -23,6 +65,7 @@
   color: var(--ooa-color-gold);
   padding: 0.5rem 0.75rem 1rem;
   font-weight: 700;
+  flex-shrink: 0;
 }
 
 .ooa-admin-nav-link {
@@ -47,8 +90,20 @@
 }
 
 .ooa-admin-main {
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ooa-admin-page {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
   padding: 1.5rem 1.75rem 2.5rem;
-  overflow: auto;
 }
 
 .ooa-admin-header {
@@ -112,7 +167,7 @@
 }
 
 .ooa-admin-table-wrap {
-  overflow: auto;
+  overflow-x: auto;
   border-radius: 14px;
 }
 
@@ -210,18 +265,82 @@
   margin-top: auto;
   padding-top: 1rem;
   border-top: 1px solid var(--ooa-glass-border);
+  flex-shrink: 0;
+}
+
+.ooa-admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+
+.ooa-admin-tab {
+  border: 1px solid var(--ooa-glass-border);
+  background: color-mix(in srgb, var(--ooa-glass-bg) 70%, transparent);
+  color: var(--ooa-text-secondary);
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.ooa-admin-tab.is-active {
+  color: var(--ooa-text-primary);
+  border-color: color-mix(in srgb, var(--ooa-color-gold) 45%, transparent);
+  background: color-mix(in srgb, var(--ooa-color-gold) 18%, transparent);
+}
+
+.ooa-admin-warn {
+  padding: 0.65rem 0.85rem;
+  margin-bottom: 1rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, #e6a700 40%, transparent);
+  background: color-mix(in srgb, #e6a700 12%, transparent);
+  font-size: 0.88rem;
+}
+
+.ooa-admin-log-viewer {
+  max-height: min(28rem, 50vh);
+  overflow: auto;
+  margin-top: 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--ooa-glass-border);
+  background: color-mix(in srgb, #000 25%, transparent);
+  padding: 0.5rem;
+}
+
+.ooa-admin-log-line {
+  margin: 0;
+  padding: 0.2rem 0;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ooa-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 @media (max-width: 900px) {
   .ooa-admin-shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
+
   .ooa-admin-sidebar {
-    flex-direction: row;
-    flex-wrap: wrap;
+    max-height: 42vh;
     border-right: none;
     border-bottom: 1px solid var(--ooa-glass-border);
   }
+
+  .ooa-admin-sidebar nav {
+    max-height: 28vh;
+  }
+
+  .ooa-admin-page {
+    padding: 1rem 1rem 2rem;
+  }
+
   .ooa-admin-perm-list {
     columns: 1;
   }

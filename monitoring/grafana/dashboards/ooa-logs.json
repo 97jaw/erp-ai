@@ -1,0 +1,37 @@
+{
+  "title": "OOA Logs Explorer",
+  "uid": "ooa-logs",
+  "tags": ["ooa"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Log volume",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [{ "expr": "sum(count_over_time({job=\"ooa-gateway\"}[1m]))", "legendFormat": "lines/min", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "title": "Gateway logs",
+      "type": "logs",
+      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 6 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [{ "expr": "{job=\"ooa-gateway\"}", "refId": "A" }],
+      "options": { "showTime": true, "showLabels": true, "wrapLogMessage": true }
+    },
+    {
+      "id": 3,
+      "title": "Errors only",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [{ "expr": "{job=\"ooa-gateway\"} |= \"ERROR\"", "refId": "A" }]
+    }
+  ]
+}

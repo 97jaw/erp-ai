@@ -112,7 +112,6 @@ class TestSearchRead:
         assert call_kwargs["limit"]  == 5
         assert call_kwargs["order"]  == "date_order desc"
         assert call_kwargs["fields"] == ["name", "amount_total"]
-        
 
     def test_search_count_returns_integer(self):
         adapter = make_adapter()
@@ -120,6 +119,45 @@ class TestSearchRead:
         adapter._object.execute_kw.return_value = 42
         count = adapter.search_count("project.project", [])
         assert count == 42
+
+
+class TestSafeSearchRead:
+
+    def test_safe_search_read_uses_search_then_read(self):
+        adapter = make_adapter()
+        adapter._object = MagicMock()
+        adapter._object.execute_kw.side_effect = [
+            [14549, 14610],
+            [
+                {"id": 14549, "name": "Zayidia Boys School", "partner_id": [1, "MOE"]},
+                {"id": 14610, "name": "Zayidia Girls School- Al Ain", "partner_id": [1, "MOE"]},
+            ],
+        ]
+        records = adapter.safe_search_read(
+            model="project.project",
+            domain=[["name", "ilike", "Zayidia"]],
+            fields=["id", "name", "partner_id"],
+            limit=20,
+        )
+        assert [record["id"] for record in records] == [14549, 14610]
+        search_call = adapter._object.execute_kw.call_args_list[0]
+        read_call = adapter._object.execute_kw.call_args_list[1]
+        assert search_call[0][4] == "search"
+        assert read_call[0][4] == "read"
+        assert read_call[0][5] == [[14549, 14610]]
+
+    def test_safe_search_read_empty_when_search_returns_no_ids(self):
+        adapter = make_adapter()
+        adapter._object = MagicMock()
+        adapter._object.execute_kw.return_value = []
+        records = adapter.safe_search_read(
+            model="project.project",
+            domain=[["name", "ilike", "Zayidia"]],
+            fields=["id", "name"],
+            limit=20,
+        )
+        assert records == []
+        assert adapter._object.execute_kw.call_count == 1
 
 
 # ---------------------------------------------------------------------------

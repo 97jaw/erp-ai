@@ -1,0 +1,49 @@
+{
+  "title": "OOA Odoo Integration",
+  "uid": "ooa-odoo",
+  "tags": ["ooa"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Odoo XML-RPC calls / s",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(ooa_odoo_calls_total[5m])) by (method)", "legendFormat": "{{method}}", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "title": "Odoo call latency p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum(rate(ooa_odoo_call_duration_seconds_bucket[5m])) by (le))",
+        "legendFormat": "p95",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "Odoo errors / s",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(ooa_odoo_calls_total{status=\"error\"}[5m]))", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "title": "Tool executions / s",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(ooa_tool_executions_total[5m])) by (tool_name)", "legendFormat": "{{tool_name}}", "refId": "A" }]
+    }
+  ]
+}

@@ -1,7 +1,14 @@
 import { motion } from "framer-motion";
 import { normalizeSuggestion } from "../../utils/chat";
 
-export default function SuggestionChips({ items, onSelect }) {
+export default function SuggestionChips({
+  items,
+  onSelect,
+  onShowMore,
+  hasMore = false,
+  loadingMore = false,
+  language = "en",
+}) {
   if (!items?.length) return null;
 
   const visible = items
@@ -9,6 +16,8 @@ export default function SuggestionChips({ items, onSelect }) {
     .filter((item) => item && item.length <= 90);
 
   if (!visible.length) return null;
+
+  const moreLabel = language === "ar" ? "المزيد ▾" : "More ▾";
 
   return (
     <motion.div
@@ -37,6 +46,16 @@ export default function SuggestionChips({ items, onSelect }) {
           {suggestion}
         </motion.button>
       ))}
+      {hasMore && onShowMore ? (
+        <button
+          type="button"
+          className="ooa-suggestion-chip ooa-suggestion-chip--more"
+          disabled={loadingMore}
+          onClick={onShowMore}
+        >
+          {loadingMore ? "…" : moreLabel}
+        </button>
+      ) : null}
     </motion.div>
   );
 }

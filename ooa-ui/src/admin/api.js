@@ -45,6 +45,7 @@ export const adminApi = {
   revokeRolePermission: (roleId, permissionId) =>
     apiFetch(`/admin/roles/${roleId}/permissions/${permissionId}`, { method: "DELETE" }),
   permissions: () => apiFetch("/admin/permissions"),
+  syncPermissions: () => apiFetch("/admin/permissions/sync", { method: "POST" }),
   departments: () => apiFetch("/admin/departments"),
   createDepartment: (body) =>
     apiFetch("/admin/departments", { method: "POST", body: JSON.stringify(body) }),
@@ -77,6 +78,39 @@ export const adminApi = {
     return apiFetch(`/admin/usage/costs?${q}`);
   },
   securitySummary: () => apiFetch("/admin/security/summary"),
+  metricsOverview: (params = {}) => {
+    const q = new URLSearchParams(params);
+    return apiFetch(`/admin/metrics/overview?${q}`);
+  },
+  metricsAi: (params = {}) => {
+    const q = new URLSearchParams(params);
+    return apiFetch(`/admin/metrics/ai?${q}`);
+  },
+  metricsApiHealth: (refresh = false) =>
+    apiFetch(`/admin/metrics/api-health?refresh=${refresh ? "true" : "false"}`),
+  metricsInfrastructure: () => apiFetch("/admin/metrics/infrastructure"),
+  metricsOdoo: (params = {}) => {
+    const q = new URLSearchParams(params);
+    return apiFetch(`/admin/metrics/odoo?${q}`);
+  },
+  metricsUsers: (params = {}) => {
+    const q = new URLSearchParams(params);
+    return apiFetch(`/admin/metrics/users?${q}`);
+  },
+  metricsCosts: (params = {}) => {
+    const q = new URLSearchParams(params);
+    return apiFetch(`/admin/metrics/costs?${q}`);
+  },
+  metricsLogs: (params = {}) => {
+    const q = new URLSearchParams(params);
+    return apiFetch(`/admin/logs?${q}`);
+  },
+  metricsAlerts: () => apiFetch("/admin/alerts"),
+  alertSilence: (body) =>
+    apiFetch("/admin/alerts/silence", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   profileSecurity: () => apiFetch("/profile/security"),
   mfaSetup: () => apiFetch("/auth/mfa/setup", { method: "POST" }),
   mfaConfirm: (code) =>

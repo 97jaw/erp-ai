@@ -1,0 +1,60 @@
+{
+  "title": "OOA Alerts",
+  "uid": "ooa-alerts",
+  "tags": ["ooa"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Firing alerts",
+      "type": "alertlist",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "viewMode": "list",
+        "maxItems": 20,
+        "sortOrder": 1,
+        "stateFilter": { "firing": true, "pending": true, "inactive": false }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Gateway up",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "up{job=\"ooa-gateway\"}", "refId": "A" }]
+    },
+    {
+      "id": 3,
+      "title": "API providers up",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(ooa_api_provider_up)", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "title": "5xx rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [{
+        "expr": "sum(rate(ooa_api_requests_total{status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(ooa_api_requests_total[5m])), 0.001)",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 5,
+      "title": "Anthropic credits",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "ooa_api_credits_remaining{provider=\"anthropic\"}", "refId": "A" }]
+    }
+  ]
+}

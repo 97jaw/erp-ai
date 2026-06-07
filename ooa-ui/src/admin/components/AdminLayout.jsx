@@ -10,6 +10,7 @@ const NAV = [
   { to: "/admin/permissions", label: "Permissions" },
   { to: "/admin/feature-flags", label: "Feature flags" },
   { to: "/admin/usage", label: "Usage" },
+  { to: "/admin/monitoring", label: "Monitoring" },
   { to: "/admin/security", label: "Security" },
   { to: "/admin/audit-logs", label: "Audit logs" },
 ];
@@ -47,7 +48,9 @@ export default function AdminLayout({ user, onLogout }) {
         </div>
       </aside>
       <main className="ooa-admin-main" id="ooa-admin-main">
-        <Outlet />
+        <div className="ooa-admin-page">
+          <Outlet />
+        </div>
       </main>
     </div>
   );

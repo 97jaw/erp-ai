@@ -19,10 +19,28 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Skip entire file if staging credentials not set
+
+def _odoo_reachable() -> bool:
+    url = os.environ.get("ODOO_V14_URL")
+    if not url:
+        return False
+    try:
+        import socket
+        from urllib.parse import urlparse
+
+        host = urlparse(url).hostname
+        if not host:
+            return False
+        socket.getaddrinfo(host, 443)
+        return True
+    except OSError:
+        return False
+
+
+# Skip entire file if staging credentials not set or host unreachable (CI/sandbox).
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("ODOO_V14_URL"),
-    reason="ODOO_V14_URL not set — skipping live tests",
+    not _odoo_reachable(),
+    reason="ODOO_V14_URL not set or Odoo host unreachable — skipping live tests",
 )
 
 from adapters.v14.connector import OdooV14Adapter

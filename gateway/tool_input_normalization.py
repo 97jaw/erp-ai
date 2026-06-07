@@ -62,6 +62,8 @@ def normalize_sql_aggregate_input(tool_input: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_group_aggregate_input(tool_input: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(tool_input)
+    if "groupby" in normalized and "group_by" not in normalized:
+        normalized["group_by"] = normalized.pop("groupby")
     domain = normalized.get("domain", normalized.get("filters"))
     if domain is not None:
         normalized["domain"] = _as_list(domain)

@@ -9,6 +9,7 @@ const CHROME_PROXIMITY_PX = 72;
 export default function FloatingChrome({
   user,
   onLogout,
+  onClearConversation,
   soundEnabled,
   volume,
   onToggleSound,
@@ -61,6 +62,7 @@ export default function FloatingChrome({
           volume={volume}
           onToggleSound={onToggleSound}
           onVolumeChange={onVolumeChange}
+          onClearConversation={onClearConversation}
         />
         <button type="button" className="ooa-glass-button" onClick={onLogout}>
           Logout

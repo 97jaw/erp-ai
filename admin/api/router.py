@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from admin.api.admin_management import management_router
 from admin.api.usage_routes import usage_router
 from admin.api.auth_security import auth_security_router
+from admin.api.metrics_routes import metrics_router
+from admin.api.telemetry_routes import telemetry_router
 from admin.api.schemas import AssignRoleBody, GrantPermissionBody
 from admin.auth.dependencies import get_current_user
 from admin.auth.principal import CurrentUser
@@ -15,17 +17,66 @@ from admin.db.repositories.conversations import ConversationRepository
 from admin.db.repositories.departments import DepartmentRepository
 from admin.db.repositories.roles import RoleRepository
 from admin.db.repositories.users import UserRepository
-from admin.rbac.checks import require_permission
+from admin.rbac.checks import require_any_permission, require_permission
 
 admin_router = APIRouter(tags=["admin"])
 admin_router.include_router(auth_security_router)
 admin_router.include_router(management_router)
 admin_router.include_router(usage_router)
+admin_router.include_router(metrics_router)
+admin_router.include_router(telemetry_router)
 
 
 @admin_router.get("/auth/me")
 async def auth_me(user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     return user.to_dict()
+
+
+@admin_router.post(
+    "/admin/permissions/sync",
+    dependencies=[Depends(require_permission("admin.settings.manage"))],
+)
+async def sync_role_permission_matrix() -> dict[str, Any]:
+    """Re-apply super_admin / admin Odoo grants after new permissions are added."""
+    service = await get_auth_service()
+    assert service is not None
+    db = service._db
+    await db.execute(
+        """
+        INSERT INTO role_permissions (role_id, permission_id)
+        SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+        WHERE r.name = 'super_admin'
+        ON CONFLICT (role_id, permission_id) DO NOTHING
+        """
+    )
+    await db.execute(
+        """
+        INSERT INTO role_permissions (role_id, permission_id)
+        SELECT r.id, p.id FROM roles r
+        JOIN permissions p ON p.category = 'odoo' OR p.code = 'admin.roles.manage'
+        WHERE r.name = 'admin'
+        ON CONFLICT (role_id, permission_id) DO NOTHING
+        """
+    )
+    total = await db.fetchval("SELECT COUNT(*) FROM permissions")
+    super_count = await db.fetchval(
+        """
+        SELECT COUNT(*) FROM role_permissions rp
+        JOIN roles r ON r.id = rp.role_id WHERE r.name = 'super_admin'
+        """
+    )
+    admin_count = await db.fetchval(
+        """
+        SELECT COUNT(*) FROM role_permissions rp
+        JOIN roles r ON r.id = rp.role_id WHERE r.name = 'admin'
+        """
+    )
+    return {
+        "status": "synced",
+        "permissions_total": int(total or 0),
+        "super_admin_grants": int(super_count or 0),
+        "admin_grants": int(admin_count or 0),
+    }
 
 
 @admin_router.get(
@@ -51,7 +102,9 @@ async def list_permissions() -> dict[str, Any]:
 
 @admin_router.get(
     "/admin/roles",
-    dependencies=[Depends(require_permission("admin.roles.manage"))],
+    dependencies=[
+        Depends(require_any_permission("admin.roles.manage", "admin.users.view")),
+    ],
 )
 async def list_roles() -> dict[str, Any]:
     service = await get_auth_service()
@@ -73,7 +126,9 @@ async def list_roles() -> dict[str, Any]:
 
 @admin_router.get(
     "/admin/roles/{role_id}/permissions",
-    dependencies=[Depends(require_permission("admin.roles.manage"))],
+    dependencies=[
+        Depends(require_any_permission("admin.roles.manage", "admin.users.view")),
+    ],
 )
 async def get_role_permissions(role_id: int) -> dict[str, Any]:
     service = await get_auth_service()
@@ -269,6 +324,7 @@ async def list_my_conversations(
                 "message_count": r["message_count"],
                 "is_pinned": r["is_pinned"],
                 "is_archived": r["is_archived"],
+                "external_session_key": r.get("external_session_key"),
             }
             for r in rows
         ],
@@ -302,6 +358,7 @@ async def get_conversation_detail(
             "message_count": conv["message_count"],
             "started_at": conv["started_at"].isoformat() if conv["started_at"] else None,
             "last_message_at": conv["last_message_at"].isoformat() if conv["last_message_at"] else None,
+            "external_session_key": conv.get("external_session_key"),
         },
         "messages": [
             {
