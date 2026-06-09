@@ -15,6 +15,11 @@ def test_should_offer_date_clarification_for_pnl_without_dates() -> None:
     assert should_offer_date_clarification("hello") is False
 
 
+def test_should_not_offer_date_clarification_for_named_project_expense() -> None:
+    assert should_offer_date_clarification("Villa Maintenance No. 34 expense") is False
+    assert should_offer_date_clarification("show me Zayidia Boys School costs") is False
+
+
 def test_parse_clarify_block() -> None:
     text = '<clarify>{"reason":"date_range_missing","question":"Which period?"}</clarify>'
     payload = parse_clarify_block(text)

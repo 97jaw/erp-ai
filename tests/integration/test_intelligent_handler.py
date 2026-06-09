@@ -222,10 +222,19 @@ async def test_zayidia_boys_school_costs_requires_confirmation_then_fetches() ->
     )
     executor = MockToolExecutor(
         responses={
-            ("get_project_expenses", 1): {
+            ("get_project_expense_summary", 1): {
+                "status": "success",
                 "project_id": 201,
                 "project_name": "Zayidia Boys School Renovation",
+                "currency": "AED",
+                "wo_amount": 200000,
                 "total_expenses": 125000,
+                "spend_percent_of_wo": 62.5,
+                "top_expenses": [{"name": "Civil", "amount": 50000, "percent": 40}],
+                "expense_lines": [],
+                "variance_amount": 75000,
+                "is_over_budget": False,
+                "_source": "project_expense_summary_mobile",
             },
         },
     )
@@ -268,10 +277,77 @@ async def test_zayidia_boys_school_costs_requires_confirmation_then_fetches() ->
     assert not second.awaiting_clarification
     assert second.resolved_entities
     assert second.resolved_entities[0]["action"] == "user_confirmed"
-    assert second.tools_called == ["get_project_expenses"]
+    assert second.tools_called == ["get_project_expense_summary"]
     assert executor.calls[0][1].get("project_id") == 201
     assert "database" not in second.text.lower()
     assert "266 projects" not in second.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_villa_maintenance_expense_uses_mobile_summary_after_confirm() -> None:
+    """Regression: financial-subject expense queries route to get_project_expense_summary."""
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="financial",
+        specific_intent="Villa Maintenance No. 34 expense",
+        entities=[
+            EntityReference(type="project", value="Villa Maintenance No. 34", confidence=0.9),
+        ],
+        estimated_complexity="simple",
+    )
+    villa_project = {
+        "id": 31034,
+        "name": "Villa Maintenance No. 34",
+        "wo_ref_no": "WO-VM-34",
+        "description": "Villa maintenance contract",
+    }
+    executor = MockToolExecutor(
+        responses={
+            ("get_project_expense_summary", 1): {
+                "status": "success",
+                "project_id": 31034,
+                "project_name": "Villa Maintenance No. 34",
+                "currency": "AED",
+                "wo_amount": 500000,
+                "total_expenses": 320000,
+                "spend_percent_of_wo": 64.0,
+                "top_expenses": [{"name": "Maintenance", "amount": 120000, "percent": 37.5}],
+                "expense_lines": [{"label": "Labor", "amount": 80000}],
+                "variance_amount": 180000,
+                "is_over_budget": False,
+                "_source": "project_expense_summary_mobile",
+            },
+        },
+    )
+    handler = _handler(
+        intent=intent,
+        stack=_stack_for_user(_super_admin()),
+        entity_catalog=[villa_project],
+    )
+    first = await handler.handle(
+        "Villa Maintenance No. 34 expense",
+        _super_admin(),
+        adapter=object(),
+        executor=executor,
+    )
+    assert first.awaiting_clarification
+    assert first.tools_called == []
+
+    confirmed = [
+        ConfirmedEntityRef(type="project", id=31034, name="Villa Maintenance No. 34"),
+    ]
+    second = await handler.handle(
+        "Villa Maintenance No. 34 expense",
+        _super_admin(),
+        adapter=object(),
+        executor=executor,
+        confirmed_entities=confirmed,
+    )
+
+    assert not second.awaiting_clarification
+    assert second.tools_called == ["get_project_expense_summary"]
+    assert executor.calls[0][1].get("project_id") == 31034
+    assert (second.visualization or {}).get("visual_type") == "PROJECT_EXPENSE_SUMMARY"
 
 
 @pytest.mark.asyncio

@@ -576,10 +576,9 @@ TOOLS = [
     {
         "name"       : "get_project_expenses",
         "description": (
-            "Get the expense dashboard for ONE specific project: total cost, budget, "
-            "status, weekly trend, and high-level category totals. "
-            "Use for total cost, budget status, or a high-level expense overview. "
-            "Do NOT use for detailed category breakdowns; use get_project_cost_categories."
+            "LEGACY expense dashboard for ONE project (weekly trend dashboard API). "
+            "Prefer get_project_expense_summary for expense overview (W.O, spend %, top trades). "
+            "Do NOT use for GL drill-down; use get_project_expense_breakdown."
         ),
         "input_schema": {
             "type"      : "object",
@@ -1322,7 +1321,7 @@ def execute_tool(
                     model="project.project",
                 ),
                 "note": (
-                    "For financial data per project, use get_project_expenses with project name. "
+                    "For project expense overview, use get_project_expense_summary with project_id. "
                     "For filtered lists (e.g. in progress), use search_odoo on project.project "
                     "with stage/state filters — not only get_projects_summary."
                 ),

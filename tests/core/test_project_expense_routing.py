@@ -218,3 +218,45 @@ async def test_strategy_planner_routes_summary_for_project_costs() -> None:
     strategy = planner.plan_simple(intent, context)
     assert strategy.steps[0].tool == "get_project_expense_summary"
     assert strategy.steps[0].tool_input == {"project_id": ZAYIDIA_BOYS}
+
+
+def test_infer_entity_hints_rewrites_financial_expense_to_project() -> None:
+    from gateway.core.entity_gate import EntityGate
+
+    intent = _intent(
+        "Villa Maintenance No. 34 expense",
+        subject_area="financial",
+        primary_action="fetch_data",
+        entities=[
+            EntityReference(type="project", value="Villa Maintenance No. 34", confidence=0.9),
+        ],
+    )
+    updated = EntityGate.infer_entity_hints("Villa Maintenance No. 34 expense", intent)
+    assert updated.subject_area == "project"
+    assert updated.primary_action == "fetch_data"
+
+
+@pytest.mark.asyncio
+async def test_strategy_planner_routes_villa_expense_with_financial_subject() -> None:
+    from gateway.core.entity_gate import EntityGate
+    from gateway.core.strategy_planner import StrategyPlanner
+
+    context = _context(project_id=31034, project_name="Villa Maintenance No. 34")
+    context.working_memory.session_facts["confirmed_entities"] = {
+        "project": {"id": 31034, "name": "Villa Maintenance No. 34"},
+    }
+    assert EntityGate.project_confirmed(context)
+
+    planner = StrategyPlanner(client=object())  # type: ignore[arg-type]
+    intent = _intent(
+        "Villa Maintenance No. 34 expense",
+        subject_area="financial",
+        primary_action="fetch_data",
+        entities=[
+            EntityReference(type="project", value="Villa Maintenance No. 34", confidence=0.9),
+        ],
+    )
+    intent = EntityGate.infer_entity_hints("Villa Maintenance No. 34 expense", intent)
+    strategy = planner.plan_simple(intent, context)
+    assert strategy.steps[0].tool == "get_project_expense_summary"
+    assert strategy.steps[0].tool_input == {"project_id": 31034}

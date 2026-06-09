@@ -70,6 +70,13 @@ def should_offer_date_clarification(message: str = "") -> bool:
         return False
     if not _FINANCIAL_QUERY_RE.search(text):
         return False
+    from gateway.core.project_query_utils import (
+        extract_project_name_hint,
+        looks_like_project_cost_query,
+    )
+
+    if looks_like_project_cost_query(text) and extract_project_name_hint(text):
+        return False
     if _DATE_IN_QUERY_RE.search(text):
         return False
     return True

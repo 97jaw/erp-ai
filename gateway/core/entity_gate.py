@@ -35,6 +35,8 @@ _PROJECT_ENTITY_SIGNALS = (
     "campus",
     "guard",
     "building",
+    "villa",
+    "maintenance",
 )
 
 
@@ -201,17 +203,23 @@ class EntityGate:
                     if fragment and len(fragment) > 2:
                         entities.append(EntityReference(type="partner", value=fragment, confidence=0.7))
 
-        if entities == intent.entities:
-            return intent
-
         from dataclasses import replace
+        from gateway.core.project_expense_routing import is_project_expense_query
 
-        updates: dict[str, Any] = {"entities": entities}
-        if looks_like_project_cost_query(message, subject_area=intent.subject_area):
-            if intent.subject_area not in {"project", "financial"}:
-                updates["subject_area"] = "project"
+        updates: dict[str, Any] = {}
+        if entities != intent.entities:
+            updates["entities"] = entities
+
+        if looks_like_project_cost_query(message, subject_area=intent.subject_area) or is_project_expense_query(
+            message,
+            intent,
+        ):
+            updates["subject_area"] = "project"
             if intent.primary_action in {"other", "search_entity"}:
                 updates["primary_action"] = "fetch_data"
+
+        if not updates:
+            return intent
         return replace(intent, **updates)
 
     @staticmethod

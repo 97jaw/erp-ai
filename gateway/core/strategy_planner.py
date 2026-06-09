@@ -350,6 +350,33 @@ class StrategyPlanner:
             token in query for token in ("cost", "costs", "expense", "expenses", "spending")
         )
 
+    @staticmethod
+    def _resolve_project_expense_tool_if_applicable(
+        intent: Intent,
+        context: ContextStack,
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Route confirmed project expense intelligence queries to E1 tools."""
+        from gateway.core.entity_gate import EntityGate
+        from gateway.core.project_expense_routing import (
+            is_project_expense_query,
+            resolve_project_expense_tool_for_strategy,
+        )
+
+        if intent.primary_action not in {"search_entity", "fetch_data", "analyze", "compare"}:
+            return None
+        if not is_project_expense_query(intent.specific_intent, intent):
+            return None
+
+        if intent.primary_action == "compare":
+            try:
+                return resolve_project_expense_tool_for_strategy(intent, context)
+            except ValueError:
+                return None
+
+        if EntityGate.project_confirmed(context) or extract_project_id_from_text(intent.specific_intent):
+            return resolve_project_expense_tool_for_strategy(intent, context)
+        return None
+
     def _resolve_simple_tool(
         self,
         intent: Intent,
@@ -357,6 +384,11 @@ class StrategyPlanner:
     ) -> tuple[str, dict[str, Any]]:
         """Map a simple intent to one gateway tool and input payload."""
         query = intent.specific_intent.lower()
+
+        expense_tool = self._resolve_project_expense_tool_if_applicable(intent, context)
+        if expense_tool is not None:
+            return expense_tool
+
         if intent.primary_action == "fetch_data" and intent.subject_area == "financial":
             if any(token in query for token in ("p&l", "profit", "loss", "pandl")):
                 tool_input: dict[str, Any] = {"report_type": "pandl"}
@@ -374,26 +406,14 @@ class StrategyPlanner:
                     "date_to": context.temporal_context.last_3_months[1],
                 }
 
-        if intent.primary_action in {"search_entity", "fetch_data", "analyze", "compare"} and intent.subject_area == "project":
-            from gateway.core.entity_gate import EntityGate
-            from gateway.core.project_expense_routing import (
-                is_project_expense_query,
-                resolve_project_expense_tool_for_strategy,
-            )
-
-            if is_project_expense_query(intent.specific_intent, intent):
-                if intent.primary_action == "compare":
-                    try:
-                        return resolve_project_expense_tool_for_strategy(intent, context)
-                    except ValueError:
-                        pass
-                elif EntityGate.project_confirmed(context):
-                    return resolve_project_expense_tool_for_strategy(intent, context)
-                elif extract_project_id_from_text(intent.specific_intent):
-                    return resolve_project_expense_tool_for_strategy(intent, context)
-
         if intent.primary_action in {"search_entity", "fetch_data"} and intent.subject_area == "project":
             from gateway.core.entity_gate import EntityGate
+            from gateway.core.project_expense_routing import is_project_expense_query
+
+            if is_project_expense_query(intent.specific_intent, intent):
+                raise StrategyException(
+                    "Project expense query requires a confirmed project before expense tools",
+                )
 
             if not EntityGate.project_confirmed(context):
                 raise StrategyException(

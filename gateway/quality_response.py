@@ -12,7 +12,11 @@ from gateway.quality_intent import detect_query_intent
 from gateway.quality_narrative import generate_narrative
 from gateway.quality_validation import validate_response_quality
 from gateway.progressive_disclosure import apply_progressive_disclosure
-from gateway.visualization_builder import build_visualization_from_tool_results
+from gateway.core.project_expense_routing import is_project_expense_tool_result
+from gateway.visualization_builder import (
+    build_visualization_from_tool_results,
+    is_renderable_visualization,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +145,18 @@ def _polish_group_nodes(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return polished
 
 
+def _prefer_project_expense_tool_visualization(
+    tool_names: list[str],
+    tool_results: list[Any],
+) -> dict[str, Any] | None:
+    if not tool_names or not any(is_project_expense_tool_result(result) for result in tool_results):
+        return None
+    tool_visual = build_visualization_from_tool_results(tool_names, tool_results)
+    if tool_visual and is_renderable_visualization(tool_visual):
+        return tool_visual
+    return None
+
+
 def polish_agent_response(
     user_message: str,
     clean_text: str,
@@ -151,7 +167,10 @@ def polish_agent_response(
 ) -> tuple[str, dict[str, Any] | None]:
     intent = detect_query_intent(user_message)
 
-    if visualization is None and tool_names:
+    expense_visual = _prefer_project_expense_tool_visualization(tool_names, tool_results)
+    if expense_visual is not None:
+        visualization = expense_visual
+    elif visualization is None and tool_names:
         visualization = build_visualization_from_tool_results(tool_names, tool_results)
 
     if visualization:

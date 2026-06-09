@@ -69,6 +69,20 @@ KNOWN BUSINESS CONTEXT:
 - GL breakdown groups = ACCOUNT level (different from trade categories)
 """
 
+PROJECT_EXPENSE_TOOL_SOURCES = frozenset(
+    {
+        "project_expense_summary_mobile",
+        "project_expense_breakdown_mobile",
+        "compare_project_expenses",
+    },
+)
+
+
+def is_project_expense_tool_result(payload: Any) -> bool:
+    """Return True when a tool payload came from the mobile expense intelligence APIs."""
+    return isinstance(payload, dict) and payload.get("_source") in PROJECT_EXPENSE_TOOL_SOURCES
+
+
 _COMPARE_SIGNALS = (
     "compare",
     " vs ",

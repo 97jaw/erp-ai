@@ -123,12 +123,22 @@ async def test_confirmed_entity_turn_two_no_regression() -> None:
         confirmed_entities=confirmed,
         executor=MockToolExecutor(
             responses={
-                ("get_project_expenses", 1): {
+                ("get_project_expense_summary", 1): {
+                    "status": "success",
                     "project_id": 201,
+                    "project_name": "Zayidia Boys School Renovation",
+                    "currency": "AED",
+                    "wo_amount": 200000,
                     "total_expenses": 125000,
+                    "spend_percent_of_wo": 62.5,
+                    "top_expenses": [],
+                    "expense_lines": [],
+                    "variance_amount": 75000,
+                    "is_over_budget": False,
+                    "_source": "project_expense_summary_mobile",
                 },
             },
         ),
     )
     assert not second.awaiting_clarification
-    assert "get_project_expenses" in second.tools_called
+    assert "get_project_expense_summary" in second.tools_called

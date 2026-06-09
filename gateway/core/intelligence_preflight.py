@@ -90,7 +90,7 @@ def _format_project_resolution_prompt(
     action_instructions = {
         "show_candidates": (
             "Present the candidate list and ask the user to confirm one record "
-            "before calling get_project_expenses or any financial KPI tool."
+            "before calling get_project_expense_summary or any financial KPI tool."
         ),
     }
     instruction = action_instructions.get(

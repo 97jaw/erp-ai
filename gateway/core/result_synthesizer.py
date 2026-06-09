@@ -7,6 +7,7 @@ from typing import Any
 
 from gateway.core.execution_orchestrator import ExecutionResult
 from gateway.core.intent_analyzer import Intent
+from gateway.core.project_expense_routing import is_project_expense_tool_result
 
 
 @dataclass
@@ -55,6 +56,8 @@ class ResultSynthesizer:
         for step_number in sorted(results.keys()):
             payload = results[step_number]
             if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if is_project_expense_tool_result(payload):
                 continue
             project_name = (
                 payload.get("project_name")
