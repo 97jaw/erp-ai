@@ -24,6 +24,22 @@ export function IconSearch({ size = 20 }) {
   );
 }
 
+export function IconNewChat({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" {...stroke} />
+    </svg>
+  );
+}
+
+export function IconChats({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 6h16v10H8l-4 4V6z" {...stroke} />
+    </svg>
+  );
+}
+
 export function IconBell({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">

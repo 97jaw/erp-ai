@@ -2852,6 +2852,9 @@ async def clear_session(
         session_id,
         user_id=chat_user.id if chat_user else None,
     )
+    from gateway.session_scope import SessionScopeStore
+
+    SessionScopeStore.clear(session_id)
     conv_id = ConversationStore.conversation_id_for_session(session_id)
     return {
         "status": "cleared",

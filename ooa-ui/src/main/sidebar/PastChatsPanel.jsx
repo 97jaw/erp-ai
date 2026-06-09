@@ -8,6 +8,7 @@ export default function PastChatsPanel({
   onSelect,
   onRefresh,
   onNewChat,
+  onDelete,
 }) {
   return (
     <section className="ooa-past-chats" aria-label="Past chats">
@@ -51,7 +52,7 @@ export default function PastChatsPanel({
           const isActive = conv.id === activeConversationId;
 
           return (
-            <li key={conv.id}>
+            <li key={conv.id} className="ooa-past-chats__row">
               <button
                 type="button"
                 className={`ooa-past-chats__item${isActive ? " ooa-past-chats__item--active" : ""}`}
@@ -71,6 +72,21 @@ export default function PastChatsPanel({
                   ) : null}
                 </span>
               </button>
+              {onDelete ? (
+                <button
+                  type="button"
+                  className="ooa-past-chats__delete"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDelete?.(conv);
+                  }}
+                  disabled={loading}
+                  aria-label={`Delete chat: ${title}`}
+                  title="Delete chat"
+                >
+                  ×
+                </button>
+              ) : null}
             </li>
           );
         })}

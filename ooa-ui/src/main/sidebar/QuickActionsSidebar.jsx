@@ -17,6 +17,7 @@ export default function QuickActionsSidebar({
   onLoadPastChat,
   onRefreshPastChats,
   onNewChat,
+  onDeleteChat,
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -70,6 +71,7 @@ export default function QuickActionsSidebar({
           onSelect={onLoadPastChat}
           onRefresh={onRefreshPastChats}
           onNewChat={onNewChat}
+          onDelete={onDeleteChat}
         />
       ) : null}
 

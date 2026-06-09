@@ -80,6 +80,7 @@ export default function ProfileMenu({
                 setOpen(false);
                 onClearConversation();
               }}
+              title="Hard reset — clears cached UI state and starts a new thread"
             >
               Clear conversation
             </button>

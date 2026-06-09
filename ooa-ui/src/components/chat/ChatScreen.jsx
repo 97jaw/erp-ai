@@ -19,6 +19,8 @@ import {
   listPastConversations,
   loadConversationById,
   loadConversationHistory,
+  deleteConversation,
+  shouldResetChatAfterDelete,
 } from "../../utils/chatHistory";
 import { authFetch } from "../../config/api";
 import WelcomeScreen from "../layout/WelcomeScreen";
@@ -26,6 +28,7 @@ import { VisualizePanel, useVisualizePanel } from "../../visualize";
 import "../../visualize/styles/visualize.css";
 import MainTopBar from "../../main/topbar/MainTopBar";
 import QuickActionsSidebar from "../../main/sidebar/QuickActionsSidebar";
+import ChatsSheet from "../../main/sidebar/ChatsSheet";
 import ChatScrollView from "../../main/chat/ChatScrollView";
 import ChatInputBar from "../../main/chat/ChatInputBar";
 import VoiceStatusBanner from "../../main/chat/VoiceStatusBanner";
@@ -60,6 +63,7 @@ export default function ChatScreen({
   const [pastChatsError, setPastChatsError] = useState(null);
   const [input, setInput] = useState("");
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [chatsSheetOpen, setChatsSheetOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
   const [voicePhase, setVoicePhase] = useState("idle");
@@ -187,6 +191,42 @@ export default function ChatScreen({
     visualize.clearItems?.();
     fetchPastChats();
   }, [chatThreadId, fetchPastChats, visualize]);
+
+  const handleDeleteChat = useCallback(async (conversation) => {
+    if (!conversation?.id) return;
+    const title = (conversation.title || "Untitled chat").trim();
+    const confirmed = window.confirm(
+      `Delete "${title}"? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setPastChatsLoading(true);
+    setPastChatsError(null);
+    try {
+      await deleteConversation(conversation.id, {
+        externalSessionKey: conversation.external_session_key,
+      });
+      const resetActive = shouldResetChatAfterDelete(conversation, {
+        activeConversationId,
+        chatThreadId,
+      });
+      if (resetActive) {
+        await handleNewChat();
+      } else {
+        setPastChats((prev) => prev.filter((item) => item.id !== conversation.id));
+        await fetchPastChats();
+      }
+    } catch (err) {
+      setError(err.message || "Could not delete this chat");
+    } finally {
+      setPastChatsLoading(false);
+    }
+  }, [
+    activeConversationId,
+    chatThreadId,
+    fetchPastChats,
+    handleNewChat,
+  ]);
 
   const focusInput = useCallback((seed = "") => {
     if (seed) setInput(seed);
@@ -633,11 +673,26 @@ export default function ChatScreen({
           user={user}
           onLogout={handleLogout}
           onClearConversation={clearConversation}
+          onNewChat={handleNewChat}
+          onOpenChats={() => setChatsSheetOpen(true)}
           soundEnabled={soundEnabled}
           volume={volume}
           onToggleSound={toggleSound}
           onVolumeChange={updateVolume}
           onOpenSearch={() => focusInput()}
+        />
+
+        <ChatsSheet
+          open={chatsSheetOpen}
+          onClose={() => setChatsSheetOpen(false)}
+          conversations={pastChats}
+          loading={pastChatsLoading}
+          error={pastChatsError}
+          activeConversationId={activeConversationId}
+          onSelect={handleLoadPastChat}
+          onRefresh={fetchPastChats}
+          onNewChat={handleNewChat}
+          onDelete={handleDeleteChat}
         />
 
         <QuickActionsSidebar
@@ -663,6 +718,7 @@ export default function ChatScreen({
           onLoadPastChat={handleLoadPastChat}
           onRefreshPastChats={fetchPastChats}
           onNewChat={handleNewChat}
+          onDeleteChat={handleDeleteChat}
         />
 
         <main className="ooa-main-chat" id="ooa-chat-main">

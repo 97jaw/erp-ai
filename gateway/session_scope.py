@@ -30,6 +30,11 @@ class SessionScopeStore:
         return dict(cls._memory.get(session_id) or {})
 
     @classmethod
+    def clear(cls, session_id: str) -> None:
+        """Remove all in-memory scope for a session thread."""
+        cls._memory.pop(session_id, None)
+
+    @classmethod
     def clear_entity_scope(cls, session_id: str) -> dict[str, Any]:
         """Remove project/partner entity bindings while keeping last_turn and other facts."""
         from gateway.core.topic_shift import ENTITY_SCOPE_KEYS

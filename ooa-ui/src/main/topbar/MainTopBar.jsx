@@ -2,8 +2,10 @@ import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   IconBell,
+  IconChats,
   IconIntegration,
   IconLogout,
+  IconNewChat,
   IconSearch,
 } from "../../components/common/MainIcons";
 import ProfileMenu from "../../components/chat/ProfileMenu";
@@ -20,6 +22,8 @@ export default function MainTopBar({
   user,
   onLogout,
   onClearConversation,
+  onNewChat,
+  onOpenChats,
   soundEnabled,
   volume,
   onToggleSound,
@@ -97,6 +101,30 @@ export default function MainTopBar({
       </div>
 
       <div className="ooa-main-topbar__group ooa-main-topbar__group--utility">
+        {onNewChat ? (
+          <button
+            type="button"
+            className="ooa-main-topbar__icon-btn ooa-main-topbar__text-btn"
+            aria-label="New chat"
+            title="New chat"
+            onClick={onNewChat}
+          >
+            <IconNewChat />
+            <span className="ooa-main-topbar__btn-label">New chat</span>
+          </button>
+        ) : null}
+        {onOpenChats ? (
+          <button
+            type="button"
+            className="ooa-main-topbar__icon-btn ooa-main-topbar__text-btn"
+            aria-label="Past chats"
+            title="Past chats"
+            onClick={onOpenChats}
+          >
+            <IconChats />
+            <span className="ooa-main-topbar__btn-label">Chats</span>
+          </button>
+        ) : null}
         <button
           type="button"
           className="ooa-main-topbar__icon-btn"

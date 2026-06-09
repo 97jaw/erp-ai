@@ -1,4 +1,4 @@
-import { apiFetch } from "../config/api";
+import { apiFetch, authFetch } from "../config/api";
 import {
   getChatThreadId,
   hasRenderableVisualization,
@@ -63,6 +63,43 @@ export function messagesToQueries(messages = []) {
 export async function listPastConversations(limit = 30) {
   const data = await apiFetch(`/conversations?limit=${limit}`);
   return data.conversations || [];
+}
+
+/**
+ * Return true when deleting this conversation should reset the active chat UI.
+ */
+export function shouldResetChatAfterDelete(
+  conversation,
+  { activeConversationId, chatThreadId },
+) {
+  if (!conversation) return false;
+  if (conversation.id && conversation.id === activeConversationId) return true;
+  if (
+    conversation.external_session_key
+    && conversation.external_session_key === chatThreadId
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Delete a saved conversation and best-effort clear its gateway session scope.
+ */
+export async function deleteConversation(
+  conversationId,
+  { externalSessionKey } = {},
+) {
+  await apiFetch(`/conversations/${conversationId}`, { method: "DELETE" });
+  if (externalSessionKey) {
+    try {
+      await authFetch(`/session/${encodeURIComponent(externalSessionKey)}`, {
+        method: "DELETE",
+      });
+    } catch {
+      /* best-effort */
+    }
+  }
 }
 
 export async function loadConversationById(conversationId) {
