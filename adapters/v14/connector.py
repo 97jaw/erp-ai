@@ -1116,6 +1116,11 @@ class OdooV14Adapter(BaseOdooAdapter):
             ratio = SequenceMatcher(None, query_lower, name.lower()).ratio()
             if query_lower in name.lower():
                 ratio = max(ratio, 0.85)
+            if "wo: pending" in name.lower():
+                ratio -= 0.25
+            wo_amount = float(project.get("wo_amount") or 0)
+            if wo_amount > 0:
+                ratio += min(0.1, wo_amount / 10_000_000)
             scored.append((project, ratio))
 
         scored.sort(key=lambda item: item[1], reverse=True)

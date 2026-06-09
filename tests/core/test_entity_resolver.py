@@ -283,3 +283,30 @@ async def test_acronym_in_phrase_expands_for_project_search() -> None:
     assert result.confident_matches
     names = " ".join(match.entity["name"] for match in result.confident_matches).lower()
     assert "ngc" in names or "national guard" in names
+
+
+@pytest.mark.asyncio
+async def test_resolver_prefers_active_villa_over_wo_pending_duplicate() -> None:
+    catalog = [
+        {
+            "id": 15157,
+            "name": "Villa Maintenance No. 34 (WO: Pending)",
+            "wo_ref_no": "",
+            "wo_amount": 0,
+            "description": "Pending duplicate",
+        },
+        {
+            "id": 31034,
+            "name": "Villa Maintenance No. 34",
+            "wo_ref_no": "463189",
+            "wo_amount": 463189,
+            "description": "Active villa maintenance",
+        },
+    ]
+    resolver = EntityResolver(MockProjectSearch(catalog))
+    result = await resolver.resolve_project(
+        "Villa Maintenance No. 34",
+        _make_context_stack(primary_role="super_admin", level=100),
+    )
+    assert result.top_match is not None
+    assert result.top_match.entity["id"] == 31034

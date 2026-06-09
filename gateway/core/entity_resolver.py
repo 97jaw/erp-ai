@@ -218,6 +218,7 @@ PROJECT_SEARCH_FIELDS = (
     "name",
     "project_name_arabic",
     "wo_ref_no",
+    "wo_amount",
     "agreement_id",
     "partner_id",
     "description",
@@ -514,6 +515,23 @@ class EntityResolver:
                     best_by_id[project_id] = match
         return sorted(best_by_id.values(), key=lambda item: -item.confidence)
 
+    @staticmethod
+    def _project_duplicate_rank_key(match: Match) -> tuple[Any, ...]:
+        """Prefer active WO projects over (WO: Pending) duplicates."""
+        entity = match.entity
+        name = str(entity.get("name") or "").lower()
+        pending_penalty = 1 if "wo: pending" in name else 0
+        wo_amount = float(entity.get("wo_amount") or 0)
+        wo_ref = str(entity.get("wo_ref_no") or "").strip().lower()
+        missing_wo_ref = 1 if not wo_ref or wo_ref in {"pending", "false", "none"} else 0
+        return (pending_penalty, missing_wo_ref, -wo_amount, -match.confidence)
+
+    @classmethod
+    def _rerank_duplicate_projects(cls, matches: list[Match]) -> list[Match]:
+        if len(matches) <= 1:
+            return matches
+        return sorted(matches, key=cls._project_duplicate_rank_key)
+
     def _build_resolution_result(
         self,
         query: str,
@@ -543,8 +561,10 @@ class EntityResolver:
                     ),
                 ]
 
-        accessible = self._filter_by_permissions(confident, context)
-        weak_accessible = self._filter_by_permissions(weak, context)
+        accessible = self._rerank_duplicate_projects(self._filter_by_permissions(confident, context))
+        weak_accessible = self._rerank_duplicate_projects(
+            self._filter_by_permissions(weak, context),
+        )
         top_match = accessible[0] if accessible else (weak_accessible[0] if weak_accessible else None)
         return ResolutionResult(
             query=query,

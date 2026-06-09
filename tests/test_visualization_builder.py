@@ -152,6 +152,56 @@ def test_builds_project_counts_by_client_table():
     assert visual["data"]["rows"][0] == ["Alpha", 3]
 
 
+def test_builds_project_expense_summary_visual_from_unified_source():
+    payload = {
+        "status": "success",
+        "_source": "project_expense_summary",
+        "project_id": 14549,
+        "project_name": "Zayidia Boys School",
+        "currency": "AED",
+        "wo_amount": 0,
+        "total_expenses": 103_370,
+        "spend_percent_of_wo": 0,
+        "variance_amount": -103_370,
+        "is_over_budget": False,
+        "top_expenses": [{"name": "Civil", "amount": 103_370, "percent": 100.0}],
+        "expense_lines": [{"label": "Civil", "amount": 103_370}],
+    }
+
+    visual = build_visualization_from_tool_results(
+        ["get_project_expense_summary"],
+        [payload],
+    )
+
+    assert visual["visual_type"] == "PROJECT_EXPENSE_SUMMARY"
+    assert visual["kpis"]["total_expenses"]["value"] == 103_370
+
+
+def test_builds_project_expense_summary_visual_from_dashboard_source():
+    payload = {
+        "status": "success",
+        "_source": "project_expense_dashboard",
+        "project_id": 31034,
+        "project_name": "Villa Maintenance No. 34",
+        "currency": "AED",
+        "wo_amount": 463_189,
+        "total_expenses": 103_370,
+        "spend_percent_of_wo": 22.3,
+        "variance_amount": 359_819,
+        "is_over_budget": False,
+        "top_expenses": [{"name": "Civil", "amount": 103_370, "percent": 100.0}],
+        "expense_lines": [{"label": "Civil", "amount": 103_370}],
+    }
+
+    visual = build_visualization_from_tool_results(
+        ["get_project_expense_summary"],
+        [payload],
+    )
+
+    assert visual["visual_type"] == "PROJECT_EXPENSE_SUMMARY"
+    assert visual["expense_lines"][0]["label"] == "Civil"
+
+
 def test_builds_project_expense_summary_visual():
     payload = {
         "status": "success",

@@ -1965,6 +1965,23 @@ def _finalize_agent_response(
         language,
     )
 
+    from gateway.tools.project_expense import PROJECT_EXPENSE_TOOL_NAMES
+    from gateway.visualization_builder import build_visualization_from_tool_results, is_renderable_visualization
+
+    if visualization is None and any(name in PROJECT_EXPENSE_TOOL_NAMES for name in tool_names):
+        forced_visual = build_visualization_from_tool_results(tool_names, tool_results)
+        if forced_visual and is_renderable_visualization(forced_visual):
+            visualization = forced_visual
+        else:
+            for result in reversed(tool_results):
+                if isinstance(result, dict) and result.get("_source"):
+                    logger.warning(
+                        "[Agent] Expense visualization build failed source=%s keys=%s",
+                        result.get("_source"),
+                        sorted(result.keys()),
+                    )
+                    break
+
     if visualization is None and not clean_text.strip() and tool_results:
         for result in reversed(tool_results):
             if not isinstance(result, dict) or result.get("error"):

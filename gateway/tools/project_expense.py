@@ -14,6 +14,19 @@ logger = logging.getLogger(__name__)
 SERVICE_MODEL = "project.financial.service"
 SUMMARY_METHOD = "get_project_expense_summary_mobile"
 BREAKDOWN_METHOD = "get_project_expense_breakdown_mobile"
+DASHBOARD_METHOD = "get_project_expense_dashboard"
+
+SUMMARY_SOURCE = "project_expense_summary"
+SUMMARY_SOURCE_MOBILE = "project_expense_summary_mobile"
+SUMMARY_SOURCE_DASHBOARD = "project_expense_dashboard"
+
+SUMMARY_SOURCES = frozenset(
+    {
+        SUMMARY_SOURCE,
+        SUMMARY_SOURCE_MOBILE,
+        SUMMARY_SOURCE_DASHBOARD,
+    },
+)
 
 RANK_FIELD_MAP = {
     "total_expenses": "total_expenses",
@@ -141,27 +154,190 @@ def _service_error(message: str, *, error_code: str = "service_call_failed") -> 
     }
 
 
-def _normalize_summary(project_id: int, data: dict[str, Any]) -> dict[str, Any]:
-    """Map Odoo mobile payload to AI tool shape — numeric fields match Odoo exactly."""
-    wo_amount = data["project_count"]
-    total_expenses = data["total_expenses"]
+def _unwrap_odoo_payload(result: dict[str, Any]) -> tuple[str, dict[str, Any] | None, str | None]:
+    """Accept wrapped {status, data} or raw mobile/dashboard dicts from Odoo."""
+    if result.get("status") == "error":
+        return "error", None, str(result.get("message") or result.get("error_code") or "error")
+
+    if result.get("status") == "success":
+        data = result.get("data")
+        if isinstance(data, dict):
+            return "success", data, None
+
+    summary_keys = {"total_expenses", "project_count", "top_expenses", "expense_lines"}
+    dashboard_keys = {"kpis", "cost_distribution"}
+    if summary_keys & set(result.keys()):
+        return "success", result, None
+    if dashboard_keys & set(result.keys()):
+        return "success", result, None
+
+    return "unknown", None, "Unexpected response shape from Odoo service"
+
+
+def _validate_summary_payload(data: dict[str, Any]) -> bool:
+    """Require core KPI fields and at least one breakdown dimension."""
+    try:
+        total_expenses = float(data.get("total_expenses", data.get("total_cost", 0)) or 0)
+    except (TypeError, ValueError):
+        return False
+
+    wo_raw = data.get("project_count", data.get("wo_amount"))
+    if wo_raw is not None:
+        try:
+            float(wo_raw)
+        except (TypeError, ValueError):
+            return False
+
+    expense_lines = data.get("expense_lines") or []
+    top_expenses = data.get("top_expenses") or []
+    if expense_lines or top_expenses:
+        return True
+    return total_expenses > 0
+
+
+def _spend_percent(wo_amount: float, total_expenses: float, explicit: Any = None) -> float:
+    if explicit is not None:
+        try:
+            return float(explicit)
+        except (TypeError, ValueError):
+            pass
+    if wo_amount <= 0:
+        return 0.0
+    return round((total_expenses / wo_amount) * 100, 2)
+
+
+def _normalize_summary_from_mobile(project_id: int, data: dict[str, Any]) -> dict[str, Any]:
+    """Map Odoo mobile payload to canonical AI tool shape."""
+    wo_amount = float(data.get("project_count") or data.get("wo_amount") or 0)
+    total_expenses = float(data.get("total_expenses") or 0)
+    spend_pct = _spend_percent(wo_amount, total_expenses, data.get("spend_percent_of_wo"))
     return {
         "status": "success",
         "project_id": project_id,
-        "project_name": data["project_name"],
+        "project_name": data.get("project_name") or f"Project {project_id}",
         "agreement_name": data.get("agreement_name"),
-        "client_name": data.get("partner_name"),
-        "currency": data.get("currency_name", "AED"),
+        "client_name": data.get("partner_name") or data.get("client_name"),
+        "currency": data.get("currency_name") or data.get("currency") or "AED",
         "wo_amount": wo_amount,
         "total_expenses": total_expenses,
-        "spend_percent_of_wo": data["spend_percent_of_wo"],
+        "spend_percent_of_wo": spend_pct,
         "estimation_amount": data.get("estimation_amount"),
-        "top_expenses": data["top_expenses"],
-        "expense_lines": data["expense_lines"],
+        "top_expenses": data.get("top_expenses") or [],
+        "expense_lines": data.get("expense_lines") or [],
         "variance_amount": wo_amount - total_expenses,
-        "is_over_budget": total_expenses > wo_amount,
-        "_source": "project_expense_summary_mobile",
+        "is_over_budget": total_expenses > wo_amount if wo_amount > 0 else False,
+        "_source": SUMMARY_SOURCE,
+        "_origin": SUMMARY_SOURCE_MOBILE,
     }
+
+
+def _category_rows_from_distribution(distribution: list[dict[str, Any]]) -> list[dict[str, float | str]]:
+    rows: list[dict[str, float | str]] = []
+    for category in distribution:
+        name = str(category.get("name") or category.get("category") or "Unknown")
+        items = category.get("items") or []
+        amount = sum(float(item.get("amount") or 0) for item in items)
+        if amount <= 0 and category.get("total") is not None:
+            amount = float(category.get("total") or 0)
+        if amount > 0:
+            rows.append({"name": name, "amount": amount})
+    return rows
+
+
+def _normalize_summary_from_dashboard(project_id: int, dashboard: dict[str, Any]) -> dict[str, Any]:
+    """Map expense dashboard KPIs + cost_distribution into mobile summary shape."""
+    kpis = dashboard.get("kpis") or {}
+    wo_amount = float(kpis.get("budget") or dashboard.get("wo_amount") or 0)
+    total_expenses = float(
+        kpis.get("total_cost") or kpis.get("total_expense") or dashboard.get("total_expenses") or 0,
+    )
+    categories = _category_rows_from_distribution(dashboard.get("cost_distribution") or [])
+    category_total = sum(float(row["amount"]) for row in categories) or total_expenses
+    sorted_categories = sorted(categories, key=lambda row: float(row["amount"]), reverse=True)
+
+    top_expenses: list[dict[str, Any]] = []
+    for row in sorted_categories[:3]:
+        amount = float(row["amount"])
+        percent = round((amount / category_total) * 100, 2) if category_total > 0 else 0.0
+        top_expenses.append({"name": row["name"], "amount": amount, "percent": percent})
+
+    expense_lines = [
+        {"label": str(row["name"]), "amount": float(row["amount"])}
+        for row in sorted_categories
+        if float(row["amount"]) > 0
+    ]
+    spend_pct = _spend_percent(wo_amount, total_expenses, kpis.get("exceed_percent"))
+
+    return {
+        "status": "success",
+        "project_id": project_id,
+        "project_name": dashboard.get("project_name") or f"Project {project_id}",
+        "agreement_name": dashboard.get("agreement_name"),
+        "client_name": dashboard.get("client_name") or dashboard.get("partner_name"),
+        "currency": dashboard.get("currency") or dashboard.get("currency_name") or "AED",
+        "wo_amount": wo_amount,
+        "total_expenses": total_expenses,
+        "spend_percent_of_wo": spend_pct,
+        "estimation_amount": dashboard.get("estimation_amount"),
+        "top_expenses": top_expenses,
+        "expense_lines": expense_lines,
+        "variance_amount": wo_amount - total_expenses,
+        "is_over_budget": total_expenses > wo_amount if wo_amount > 0 else False,
+        "_source": SUMMARY_SOURCE,
+        "_origin": SUMMARY_SOURCE_DASHBOARD,
+    }
+
+
+async def _fetch_project_expense_summary(project_id: int, adapter: Any) -> dict[str, Any]:
+    """Mobile summary first; dashboard fallback when mobile is missing or invalid."""
+    mobile_error: str | None = None
+
+    try:
+        mobile_result = await _call_financial_service(adapter, SUMMARY_METHOD, project_id)
+    except Exception as exc:
+        logger.warning("[ProjectExpense] summary mobile call failed for %s: %s", project_id, exc)
+        mobile_error = str(exc)
+        mobile_result = None
+
+    if isinstance(mobile_result, dict):
+        status, data, error_message = _unwrap_odoo_payload(mobile_result)
+        if status == "error":
+            message = error_message or mobile_error or "Project expense summary request failed"
+            if "not found" in message.lower():
+                return {"status": "error", "message": message}
+            mobile_error = message
+        if status == "success" and isinstance(data, dict) and _validate_summary_payload(data):
+            return _normalize_summary_from_mobile(project_id, data)
+        mobile_error = error_message or mobile_error
+
+    try:
+        dashboard_result = await _call_financial_service(adapter, DASHBOARD_METHOD, project_id)
+    except Exception as exc:
+        logger.warning("[ProjectExpense] dashboard fallback failed for %s: %s", project_id, exc)
+        return _service_error(mobile_error or str(exc))
+
+    if not isinstance(dashboard_result, dict):
+        return _service_error(mobile_error or "Unexpected dashboard response type from Odoo service")
+
+    status, data, error_message = _unwrap_odoo_payload(dashboard_result)
+    if status == "success" and isinstance(data, dict):
+        normalized = _normalize_summary_from_dashboard(project_id, data)
+        if _validate_summary_payload(
+            {
+                **normalized,
+                "project_count": normalized.get("wo_amount"),
+            },
+        ):
+            logger.info(
+                "[ProjectExpense] Using dashboard fallback for project %s (mobile_error=%r)",
+                project_id,
+                mobile_error,
+            )
+            return normalized
+
+    return _service_error(
+        mobile_error or error_message or "Could not load project expense summary",
+    )
 
 
 async def execute_get_project_expense_summary(
@@ -169,27 +345,10 @@ async def execute_get_project_expense_summary(
     adapter: Any,
     context: ContextStack | None,
 ) -> dict[str, Any]:
-    """Wrap project.financial.service.get_project_expense_summary_mobile."""
+    """Wrap project.financial.service mobile summary with dashboard fallback."""
     del context
     project_id = int(tool_input["project_id"])
-
-    try:
-        result = await _call_financial_service(adapter, SUMMARY_METHOD, project_id)
-    except Exception as exc:
-        logger.warning("[ProjectExpense] summary call failed for %s: %s", project_id, exc)
-        return _service_error(str(exc))
-
-    if not isinstance(result, dict):
-        return _service_error("Unexpected response type from Odoo service")
-
-    if result.get("status") != "success":
-        return result
-
-    data = result.get("data")
-    if not isinstance(data, dict):
-        return _service_error("Missing data payload from Odoo service")
-
-    return _normalize_summary(project_id, data)
+    return await _fetch_project_expense_summary(project_id, adapter)
 
 
 def _compute_breakdown_totals(groups: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], float]:
@@ -243,10 +402,9 @@ async def execute_get_project_expense_breakdown(
     if not isinstance(result, dict):
         return _service_error("Unexpected response type from Odoo service")
 
-    if result.get("status") != "success":
-        return result
-
-    data = result.get("data")
+    status, data, error_message = _unwrap_odoo_payload(result)
+    if status == "error":
+        return _service_error(error_message or "Breakdown request failed")
     if not isinstance(data, dict):
         return _service_error("Missing data payload from Odoo service")
 

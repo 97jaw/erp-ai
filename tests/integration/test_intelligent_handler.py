@@ -234,7 +234,8 @@ async def test_zayidia_boys_school_costs_requires_confirmation_then_fetches() ->
                 "expense_lines": [],
                 "variance_amount": 75000,
                 "is_over_budget": False,
-                "_source": "project_expense_summary_mobile",
+                "_source": "project_expense_summary",
+                "status": "success",
             },
         },
     )
@@ -315,7 +316,8 @@ async def test_villa_maintenance_expense_uses_mobile_summary_after_confirm() -> 
                 "expense_lines": [{"label": "Labor", "amount": 80000}],
                 "variance_amount": 180000,
                 "is_over_budget": False,
-                "_source": "project_expense_summary_mobile",
+                "_source": "project_expense_summary",
+                "status": "success",
             },
         },
     )
@@ -348,6 +350,7 @@ async def test_villa_maintenance_expense_uses_mobile_summary_after_confirm() -> 
     assert second.tools_called == ["get_project_expense_summary"]
     assert executor.calls[0][1].get("project_id") == 31034
     assert (second.visualization or {}).get("visual_type") == "PROJECT_EXPENSE_SUMMARY"
+    assert (second.visualization or {}).get("expense_lines")
     assert "selected period" not in second.text.lower()
     assert "W.O" in second.text or "spend" in second.text.lower()
 
@@ -385,7 +388,8 @@ async def test_villa_maintenance_expense_for_this_year_uses_mobile_summary() -> 
                 "expense_lines": [{"label": "Labor", "amount": 4120.16}],
                 "variance_amount": 487879.84,
                 "is_over_budget": False,
-                "_source": "project_expense_summary_mobile",
+                "_source": "project_expense_summary",
+                "status": "success",
             },
         },
     )
@@ -416,6 +420,7 @@ async def test_villa_maintenance_expense_for_this_year_uses_mobile_summary() -> 
     assert not second.awaiting_clarification
     assert second.tools_called == ["get_project_expense_summary"]
     assert (second.visualization or {}).get("visual_type") == "PROJECT_EXPENSE_SUMMARY"
+    assert (second.visualization or {}).get("expense_lines")
     assert "selected period" not in second.text.lower()
     assert "12,120.16" in second.text or "12120" in second.text.replace(",", "")
     assert "calendar period" in second.text.lower() or "W.O-based" in second.text

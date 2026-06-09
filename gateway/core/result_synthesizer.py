@@ -9,6 +9,7 @@ from gateway.core.execution_orchestrator import ExecutionResult
 from gateway.core.intent_analyzer import Intent
 from gateway.core.project_expense_routing import is_project_expense_tool_result
 from gateway.quality_narrative import narrate_project_expense_summary
+from gateway.tools.project_expense import PROJECT_EXPENSE_TOOL_NAMES, SUMMARY_SOURCES
 
 
 @dataclass
@@ -34,13 +35,14 @@ class ResultSynthesizer:
         if len(aggregate_tables) == 1:
             return self._from_single_aggregate(aggregate_tables[0], intent)
 
-        mobile_summary = self._find_mobile_project_expense_summary(execution_result.results, intent)
+        mobile_summary = self._find_project_expense_summary(execution_result.results, intent)
         if mobile_summary is not None:
             return mobile_summary
 
-        project_summary = self._find_legacy_project_expense_kpi(execution_result.results)
-        if project_summary is not None:
-            return project_summary
+        if not self._used_project_expense_tools(execution_result):
+            project_summary = self._find_legacy_project_expense_kpi(execution_result.results)
+            if project_summary is not None:
+                return project_summary
 
         if execution_result.results:
             step_count = len(execution_result.results)
@@ -57,7 +59,14 @@ class ResultSynthesizer:
         )
 
     @staticmethod
-    def _find_mobile_project_expense_summary(
+    def _used_project_expense_tools(execution_result: ExecutionResult) -> bool:
+        for step in execution_result.strategy_used.steps:
+            if step.tool in PROJECT_EXPENSE_TOOL_NAMES:
+                return True
+        return False
+
+    @staticmethod
+    def _find_project_expense_summary(
         results: dict[int, Any],
         intent: Intent,
     ) -> SynthesizedResult | None:
@@ -65,7 +74,9 @@ class ResultSynthesizer:
             payload = results[step_number]
             if not isinstance(payload, dict) or payload.get("error"):
                 continue
-            if payload.get("_source") != "project_expense_summary_mobile":
+            if payload.get("_source") not in SUMMARY_SOURCES:
+                continue
+            if payload.get("status") != "success":
                 continue
             text = narrate_project_expense_summary(
                 payload,

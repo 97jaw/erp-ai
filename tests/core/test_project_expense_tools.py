@@ -357,6 +357,75 @@ async def test_all_tools_include_source_field_for_telemetry() -> None:
         None,
     )
 
-    assert summary["_source"] == "project_expense_summary_mobile"
+    assert summary["_source"] == "project_expense_summary"
+    assert summary["_origin"] == "project_expense_summary_mobile"
     assert breakdown["_source"] == "project_expense_breakdown_mobile"
     assert compare["_source"] == "compare_project_expenses"
+
+
+def _dashboard_odoo_payload(
+    *,
+    project_name: str = "Zayidia Boys School",
+    budget: float = 1_000_000,
+    total_cost: float = 850_000,
+) -> dict[str, Any]:
+    return {
+        "project_name": project_name,
+        "currency": "AED",
+        "kpis": {
+            "budget": budget,
+            "total_cost": total_cost,
+            "exceed_percent": 85.0,
+            "status": "warning",
+        },
+        "cost_distribution": [
+            {
+                "name": "Civil",
+                "items": [{"name": "Concrete", "amount": 300_000}],
+            },
+            {
+                "name": "Mechanical",
+                "items": [{"name": "HVAC", "amount": 200_000}],
+            },
+        ],
+    }
+
+
+# 10. unwrapped mobile Odoo response is accepted
+@pytest.mark.asyncio
+async def test_summary_accepts_unwrapped_mobile_response() -> None:
+    raw = _summary_odoo_payload()["data"]
+    adapter = MockAdapter({("get_project_expense_summary_mobile", 14549): raw})
+
+    result = await execute_get_project_expense_summary({"project_id": 14549}, adapter, None)
+
+    assert result["status"] == "success"
+    assert result["_source"] == "project_expense_summary"
+    assert result["total_expenses"] == 850_000
+
+
+# 11. dashboard fallback when mobile fails
+@pytest.mark.asyncio
+async def test_summary_falls_back_to_dashboard() -> None:
+    adapter = MockAdapter(
+        {
+            ("get_project_expense_summary_mobile", 14549): {
+                "status": "error",
+                "message": "mobile unavailable",
+            },
+            ("get_project_expense_dashboard", 14549): _dashboard_odoo_payload(),
+        },
+    )
+
+    result = await execute_get_project_expense_summary({"project_id": 14549}, adapter, None)
+
+    assert result["status"] == "success"
+    assert result["_source"] == "project_expense_summary"
+    assert result["_origin"] == "project_expense_dashboard"
+    assert result["wo_amount"] == 1_000_000
+    assert result["total_expenses"] == 850_000
+    assert result["top_expenses"][0]["name"] == "Civil"
+    assert result["expense_lines"][0]["label"] == "Civil"
+    assert ("get_project_expense_dashboard", 14549) in {
+        (call[1], int(call[2][0])) for call in adapter.calls
+    }

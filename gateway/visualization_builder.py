@@ -540,10 +540,19 @@ def _build_expense_insights(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return insights
 
 
+PROJECT_EXPENSE_SUMMARY_SOURCES = frozenset(
+    {
+        "project_expense_summary",
+        "project_expense_summary_mobile",
+        "project_expense_dashboard",
+    },
+)
+
+
 def _project_expense_summary_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
     if payload.get("status") != "success":
         return None
-    if payload.get("_source") != "project_expense_summary_mobile":
+    if payload.get("_source") not in PROJECT_EXPENSE_SUMMARY_SOURCES:
         return None
 
     currency = payload.get("currency") or "AED"
@@ -822,7 +831,7 @@ def _visual_from_payload(
         return _financial_visual(payload)
     if payload.get("clients"):
         return _project_counts_by_client_visual(payload)
-    if payload.get("_source") == "project_expense_summary_mobile":
+    if payload.get("_source") in PROJECT_EXPENSE_SUMMARY_SOURCES:
         return _project_expense_summary_visual(payload)
     if payload.get("_source") == "project_expense_breakdown_mobile":
         return _project_expense_breakdown_visual(payload)
@@ -876,7 +885,15 @@ def is_renderable_visualization(visual: dict[str, Any] | None) -> bool:
         return bool((visual.get("data") or {}).get("pdf_url"))
     if visual_type == "PROJECT_EXPENSE_SUMMARY":
         kpis = visual.get("kpis")
-        return isinstance(kpis, dict) and bool(kpis.get("wo_amount"))
+        if not isinstance(kpis, dict):
+            return False
+        total_entry = kpis.get("total_expenses") or {}
+        wo_entry = kpis.get("wo_amount") or {}
+        total_value = float((total_entry.get("value") if isinstance(total_entry, dict) else total_entry) or 0)
+        wo_value = float((wo_entry.get("value") if isinstance(wo_entry, dict) else wo_entry) or 0)
+        if total_value > 0 or wo_value > 0:
+            return True
+        return bool(visual.get("expense_lines") or visual.get("top_expenses"))
     if visual_type == "PROJECT_EXPENSE_BREAKDOWN":
         groups = visual.get("groups") or []
         return bool(groups)

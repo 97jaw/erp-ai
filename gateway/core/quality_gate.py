@@ -283,6 +283,14 @@ class QualityGate:
         numbers: set[float] = set()
         if isinstance(payload, dict):
             for key, value in payload.items():
+                if key == "kpis" and isinstance(value, dict):
+                    for kpi_entry in value.values():
+                        if isinstance(kpi_entry, dict):
+                            nested = kpi_entry.get("value")
+                            if isinstance(nested, (int, float)) and not isinstance(nested, bool):
+                                if abs(float(nested)) >= 1000:
+                                    numbers.add(float(nested))
+                    continue
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     if abs(float(value)) >= 1000:
                         numbers.add(float(value))

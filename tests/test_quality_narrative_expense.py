@@ -43,13 +43,14 @@ def test_result_synthesizer_mobile_expense_summary_text() -> None:
     execution = ExecutionResult(
         results={
             1: {
+                "status": "success",
                 "project_name": "Villa Maintenance No. 34",
                 "wo_amount": 500000,
                 "total_expenses": 12120.16,
                 "spend_percent_of_wo": 2.4,
                 "top_expenses": [{"name": "Maintenance", "amount": 8000, "percent": 66.0}],
                 "is_over_budget": False,
-                "_source": "project_expense_summary_mobile",
+                "_source": "project_expense_summary",
             },
         },
         failures=[],

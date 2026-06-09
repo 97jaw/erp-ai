@@ -71,7 +71,9 @@ KNOWN BUSINESS CONTEXT:
 
 PROJECT_EXPENSE_TOOL_SOURCES = frozenset(
     {
+        "project_expense_summary",
         "project_expense_summary_mobile",
+        "project_expense_dashboard",
         "project_expense_breakdown_mobile",
         "compare_project_expenses",
     },
