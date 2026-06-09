@@ -517,30 +517,10 @@ def _strip_visualization_markup(text: str) -> str:
 # Odoo Adapter Factory
 # ---------------------------------------------------------------------------
 
-# Cached adapter — authenticate once, reuse connection
-_adapter: OdooV14Adapter | None = None
-
 def get_adapter() -> OdooV14Adapter:
-    global _adapter
-    if _adapter is None:
-        from adapters.v14.auth_errors import OdooAuthError
+    from gateway.odoo_adapter_pool import get_shared_odoo_adapter
 
-        config = OdooConnectionConfig(
-            url      = os.environ["ODOO_V14_URL"],
-            database = os.environ["ODOO_V14_DB"],
-            username = os.environ["ODOO_V14_USER"],
-            api_key  = os.environ["ODOO_V14_PASSWORD"],
-            version  = OdooVersion.V14,
-        )
-        adapter = OdooV14Adapter(config)
-        try:
-            adapter.authenticate()
-        except (OdooAuthError, ConnectionError) as exc:
-            logger.error("[Adapter] Odoo connection failed: %s", exc)
-            raise
-        _adapter = adapter
-        logger.info("[Adapter] Connected to Odoo — uid: %d", _adapter._uid)
-    return _adapter
+    return get_shared_odoo_adapter()
 
 # ---------------------------------------------------------------------------
 # Tool Definitions (Claude function calling)

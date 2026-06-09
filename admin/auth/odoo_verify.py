@@ -13,26 +13,10 @@ def _odoo_configured() -> bool:
     return all(os.environ.get(key) for key in required)
 
 
-_adapter = None
-
-
 def _get_adapter():
-    global _adapter
-    if _adapter is None:
-        from adapters.v14.connector import OdooV14Adapter
-        from core.base_adapter import OdooConnectionConfig
-        from core.state import OdooVersion
+    from gateway.odoo_adapter_pool import get_shared_odoo_adapter
 
-        config = OdooConnectionConfig(
-            url=os.environ["ODOO_V14_URL"],
-            database=os.environ["ODOO_V14_DB"],
-            username=os.environ["ODOO_V14_USER"],
-            api_key=os.environ["ODOO_V14_PASSWORD"],
-            version=OdooVersion.V14,
-        )
-        _adapter = OdooV14Adapter(config)
-        _adapter.authenticate()
-    return _adapter
+    return get_shared_odoo_adapter()
 
 
 async def verify_file_id_with_odoo(file_id: str) -> dict[str, Any] | None:

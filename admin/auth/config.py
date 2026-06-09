@@ -12,6 +12,7 @@ VERIFY_ODOO_ON_LOGIN = os.environ.get("AUTH_VERIFY_ODOO_ON_LOGIN", "").strip().l
     "true",
     "yes",
 )
+ODOO_SYNC_TTL_HOURS = int(os.environ.get("AUTH_ODOO_SYNC_TTL_HOURS", "24"))
 PASSWORD_RESET_HOURS = int(os.environ.get("AUTH_PASSWORD_RESET_HOURS", "1"))
 
 

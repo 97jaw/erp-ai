@@ -382,7 +382,8 @@ Copy from `deploy/aws/.env.production.example`. File lives at `/opt/ooa/.env.pro
 | `RBAC_ENFORCE` | `true` | Enforce role-based access |
 | `JWT_ACCESS_HOURS` | `8` | Access token TTL |
 | `JWT_REFRESH_DAYS` | `30` | Refresh token TTL |
-| `AUTH_VERIFY_ODOO_ON_LOGIN` | `false` | Verify employee against Odoo on each login |
+| `AUTH_VERIFY_ODOO_ON_LOGIN` | `false` | Block login when Odoo verify fails and no cached identity |
+| `AUTH_ODOO_SYNC_TTL_HOURS` | `24` | Skip Odoo employee re-verify on login when cache is fresh (`0` = always sync) |
 
 ### Tuning
 

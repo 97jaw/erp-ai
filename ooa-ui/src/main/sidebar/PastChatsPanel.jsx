@@ -45,8 +45,9 @@ export default function PastChatsPanel({
         </p>
       ) : null}
 
-      <ul className="ooa-past-chats__list">
-        {conversations.map((conv) => {
+      <div className="ooa-past-chats__scroll">
+        <ul className="ooa-past-chats__list">
+          {conversations.map((conv) => {
           const title = (conv.title || "Untitled chat").trim();
           const when = formatConversationWhen(conv.last_message_at || conv.started_at);
           const isActive = conv.id === activeConversationId;
@@ -90,7 +91,8 @@ export default function PastChatsPanel({
             </li>
           );
         })}
-      </ul>
+        </ul>
+      </div>
     </section>
   );
 }

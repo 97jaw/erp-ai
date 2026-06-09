@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from admin.auth.config import (
     LOCKOUT_MINUTES,
     MAX_FAILED_ATTEMPTS,
+    ODOO_SYNC_TTL_HOURS,
     VERIFY_ODOO_ON_LOGIN,
     auth_db_enabled,
 )
@@ -21,6 +22,10 @@ from admin.auth.jwt_tokens import (
     hash_token,
 )
 from admin.auth.odoo_verify import verify_file_id_with_odoo
+from admin.auth.odoo_identity_cache import (
+    has_cached_odoo_identity,
+    odoo_identity_cache_fresh,
+)
 from admin.auth.principal import CurrentUser
 from admin.db.connection import AdminDatabase, init_admin_db
 from admin.db.repositories.audit import AuditRepository
@@ -99,9 +104,11 @@ class AuthService:
                 detail=f"Account locked until {locked_until.isoformat()}",
             )
 
-        if VERIFY_ODOO_ON_LOGIN:
+        if VERIFY_ODOO_ON_LOGIN and not odoo_identity_cache_fresh(
+            user, ttl_hours=ODOO_SYNC_TTL_HOURS
+        ):
             verified = await verify_file_id_with_odoo(normalized)
-            if not verified:
+            if not verified and not has_cached_odoo_identity(user):
                 await self._users.record_failed_login(
                     normalized,
                     max_attempts=MAX_FAILED_ATTEMPTS,
@@ -117,6 +124,8 @@ class AuthService:
                     metadata={"reason": "odoo_verification_failed"},
                 )
                 raise HTTPException(status_code=401, detail="File ID not recognized.")
+            if verified:
+                await self._persist_odoo_identity(user, verified)
 
         await self._sync_odoo_user_link(user)
 
@@ -167,18 +176,63 @@ class AuthService:
         )
         return payload
 
+    async def _persist_odoo_identity(self, user: Any, verified: dict[str, Any]) -> None:
+        now = datetime.now(timezone.utc)
+        odoo_user_id = verified.get("odoo_user_id")
+        if odoo_user_id is not None:
+            odoo_user_id = int(odoo_user_id)
+        odoo_employee_id = verified.get("employee_id")
+        if odoo_employee_id is not None:
+            odoo_employee_id = int(odoo_employee_id)
+        identity_json = {
+            key: verified[key]
+            for key in ("file_id", "name", "email", "language", "employee_id", "odoo_user_id")
+            if verified.get(key) is not None
+        }
+        await self._users.set_odoo_identity(
+            int(user["id"]),
+            odoo_user_id=odoo_user_id,
+            odoo_employee_id=odoo_employee_id,
+            odoo_verified_at=now,
+            odoo_identity_json=identity_json,
+            language=verified.get("language"),
+        )
+        user["odoo_user_id"] = odoo_user_id or user.get("odoo_user_id")
+        user["odoo_employee_id"] = odoo_employee_id or user.get("odoo_employee_id")
+        user["odoo_verified_at"] = now
+        user["odoo_identity_json"] = identity_json
+
     async def _sync_odoo_user_link(self, user: Any) -> None:
-        """Keep users.odoo_user_id aligned with Odoo res.users login = file_id."""
+        """Keep users.odoo_user_id aligned with Odoo; skip RPC when cache is fresh."""
         from admin.auth.odoo_verify import _odoo_configured, verify_file_id_with_odoo
 
         if not _odoo_configured():
             return
+        if odoo_identity_cache_fresh(user, ttl_hours=ODOO_SYNC_TTL_HOURS):
+            logger.debug(
+                "[Auth] Skipping Odoo verify for %s — cache fresh (ttl=%sh)",
+                user.get("file_id"),
+                ODOO_SYNC_TTL_HOURS,
+            )
+            return
+
         verified = await verify_file_id_with_odoo(user["file_id"])
-        if verified and verified.get("odoo_user_id"):
-            odoo_uid = int(verified["odoo_user_id"])
-            if user.get("odoo_user_id") != odoo_uid:
-                await self._users.set_odoo_user_id(int(user["id"]), odoo_uid)
-                user["odoo_user_id"] = odoo_uid
+        if verified:
+            await self._persist_odoo_identity(user, verified)
+            return
+
+        if has_cached_odoo_identity(user):
+            logger.warning(
+                "[Auth] Odoo verify failed for %s — using cached identity from %s",
+                user.get("file_id"),
+                user.get("odoo_verified_at"),
+            )
+            return
+
+        logger.warning(
+            "[Auth] Odoo verify failed for %s and no cached identity available",
+            user.get("file_id"),
+        )
 
     async def _issue_login_tokens(
         self,
@@ -249,7 +303,11 @@ class AuthService:
                 language=odoo_user.get("language", "en"),
                 role_name="user",
             )
-            return await self._users.get_by_id(user_id)
+            user = await self._users.get_by_id(user_id)
+            if user:
+                await self._persist_odoo_identity(dict(user), odoo_user)
+                user = await self._users.get_by_id(user_id)
+            return user
 
         legacy = LEGACY_ALLOWED_FILE_IDS.get(file_id)
         if legacy:

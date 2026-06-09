@@ -192,9 +192,24 @@ class OdooV14Adapter(BaseOdooAdapter):
         if self._uid is None:
             self.authenticate()
 
-    # -----------------------------------------------------------------------
-    # 2. Core execute_kw wrapper
-    # -----------------------------------------------------------------------
+    def _is_transient_odoo_rpc_error(self, exc: BaseException) -> bool:
+        if isinstance(exc, xmlrpc.client.ProtocolError):
+            return True
+        if isinstance(exc, (TimeoutError, OSError, ConnectionError)):
+            return True
+        if isinstance(exc, xmlrpc.client.Fault):
+            fault = str(exc).lower()
+            return any(
+                token in fault
+                for token in (
+                    "access denied",
+                    "accessdenied",
+                    "session",
+                    "expired",
+                    "invalid",
+                )
+            )
+        return False
 
     def _execute(
         self,
@@ -207,42 +222,59 @@ class OdooV14Adapter(BaseOdooAdapter):
         Central XML-RPC execute_kw call.
         All adapter methods route through here.
         """
-        self._ensure_authenticated()
         method_label = f"{model}.{method}"
-        start = time.perf_counter()
-        try:
-            result = self._object.execute_kw(
-                self.config.database,
-                self._uid,
-                self.config.api_key,
-                model,
-                method,
-                args,
-                kwargs or {},
-            )
-        except Exception:
+        last_exc: BaseException | None = None
+
+        for attempt in range(2):
+            self._ensure_authenticated()
+            start = time.perf_counter()
+            try:
+                result = self._object.execute_kw(
+                    self.config.database,
+                    self._uid,
+                    self.config.api_key,
+                    model,
+                    method,
+                    args,
+                    kwargs or {},
+                )
+            except Exception as exc:
+                last_exc = exc
+                try:
+                    from gateway.metrics import record_odoo_call
+
+                    record_odoo_call(
+                        method_label,
+                        time.perf_counter() - start,
+                        status="error",
+                    )
+                except Exception:
+                    pass
+                if attempt == 0 and self._is_transient_odoo_rpc_error(exc):
+                    logger.warning(
+                        "[V14Adapter] %s failed (%s) — re-authenticating once",
+                        method_label,
+                        exc,
+                    )
+                    self._uid = None
+                    continue
+                raise
+
             try:
                 from gateway.metrics import record_odoo_call
 
                 record_odoo_call(
                     method_label,
                     time.perf_counter() - start,
-                    status="error",
+                    status="success",
                 )
             except Exception:
                 pass
-            raise
-        try:
-            from gateway.metrics import record_odoo_call
+            return result
 
-            record_odoo_call(
-                method_label,
-                time.perf_counter() - start,
-                status="success",
-            )
-        except Exception:
-            pass
-        return result
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError(f"Odoo RPC failed without exception: {method_label}")
 
     # -----------------------------------------------------------------------
     # 3. Retrieval

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from typing import Any
 
 import asyncpg
@@ -40,6 +42,35 @@ class UserRepository:
             """,
             user_id,
             odoo_user_id,
+        )
+
+    async def set_odoo_identity(
+        self,
+        user_id: int,
+        *,
+        odoo_user_id: int | None = None,
+        odoo_employee_id: int | None = None,
+        odoo_verified_at: datetime | None = None,
+        odoo_identity_json: dict[str, Any] | None = None,
+        language: str | None = None,
+    ) -> None:
+        await self._db.execute(
+            """
+            UPDATE users
+            SET odoo_user_id = COALESCE($2, odoo_user_id),
+                odoo_employee_id = COALESCE($3, odoo_employee_id),
+                odoo_verified_at = COALESCE($4, odoo_verified_at),
+                odoo_identity_json = COALESCE($5::jsonb, odoo_identity_json),
+                language = COALESCE($6, language),
+                updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            """,
+            user_id,
+            odoo_user_id,
+            odoo_employee_id,
+            odoo_verified_at,
+            json.dumps(odoo_identity_json) if odoo_identity_json is not None else None,
+            language,
         )
 
     async def create_super_admin(
