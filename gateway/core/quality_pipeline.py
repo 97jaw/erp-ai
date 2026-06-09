@@ -27,6 +27,89 @@ RAW_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 NO_DATA_PREFIX = "No data found for"
 
+_BREAKDOWN_EMPTY_WITH_SUMMARY_SUFFIX = (
+    "Want me to show the trade-category breakdown from the summary instead?"
+)
+
+
+def _primary_tool_name(tool_names: list[str] | None) -> str:
+    if not tool_names:
+        return ""
+    return str(tool_names[0] or "")
+
+
+def _infer_tool_name_from_results(tool_results: list[Any] | None) -> str:
+    source_to_tool = {
+        "project_expense_breakdown_mobile": "get_project_expense_breakdown",
+        "project_expense_summary_mobile": "get_project_expense_summary",
+    }
+    for payload in reversed(tool_results or []):
+        if not isinstance(payload, dict):
+            continue
+        source = str(payload.get("_source") or "")
+        if source in source_to_tool:
+            return source_to_tool[source]
+    return ""
+
+
+def _resolve_tool_name(
+    tool_names: list[str] | None,
+    tool_results: list[Any] | None,
+) -> str:
+    return _primary_tool_name(tool_names) or _infer_tool_name_from_results(tool_results)
+
+
+def _get_strategies_for_context(tool_name: str) -> list[str]:
+    """Return context-appropriate strategy descriptions for no-data messaging."""
+    lowered = (tool_name or "").lower()
+    if "expense" in lowered or "project" in lowered:
+        return ["project expense breakdown", "GL group hierarchy"]
+    if "financial" in lowered or "ledger" in lowered:
+        return ["group_and_aggregate", "posted invoice filters"]
+    return ["data search"]
+
+
+def _project_label_from_context(context: ContextStack | None) -> str | None:
+    if context is None:
+        return None
+    facts = context.working_memory.session_facts
+    if facts.get("project_name"):
+        return str(facts["project_name"])
+    confirmed = facts.get("confirmed_entities") or {}
+    project = confirmed.get("project") or {}
+    if project.get("name"):
+        return str(project["name"])
+    return None
+
+
+def _breakdown_empty_with_prior_summary_message(
+    *,
+    context: ContextStack | None,
+    tool_results: list[Any] | None = None,
+) -> str | None:
+    """Custom copy when GL breakdown is empty but a prior expense summary exists."""
+    if context is None:
+        return None
+    if not context.working_memory.session_facts.get("last_expense_summary_project_id"):
+        return None
+
+    project_name = _project_label_from_context(context)
+    if tool_results:
+        for payload in reversed(tool_results):
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("_source") != "project_expense_breakdown_mobile":
+                continue
+            project_name = payload.get("project_name") or project_name
+            break
+
+    label = project_name or "this project"
+    return (
+        f"I found the expense summary for {label}, but the detailed GL breakdown has no data. "
+        "This may mean the project expenses haven't been categorized by account group yet in Odoo. "
+        f"{_BREAKDOWN_EMPTY_WITH_SUMMARY_SUFFIX}"
+    )
+
 
 def tool_results_from_execution(results: dict[int, Any]) -> list[Any]:
     """Flatten orchestrator step results into a tool result list."""
@@ -48,6 +131,10 @@ def has_meaningful_tool_data(tool_results: list[Any]) -> bool:
     for payload in tool_results:
         if not isinstance(payload, dict) or payload.get("error"):
             continue
+        if payload.get("_source") == "search_entities" and payload.get("status") == "success":
+            return True
+        if payload.get("candidates"):
+            return True
         for key in scalar_keys:
             value = payload.get(key)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -71,13 +158,24 @@ def no_data_message(
     *,
     user_message: str = "",
     context: ContextStack | None = None,
+    tool_names: list[str] | None = None,
+    tool_results: list[Any] | None = None,
 ) -> str:
     """Honest empty-data response — never fabricate figures."""
+    tool_name = _resolve_tool_name(tool_names, tool_results)
+    if tool_name == "get_project_expense_breakdown":
+        summary_message = _breakdown_empty_with_prior_summary_message(
+            context=context,
+            tool_results=tool_results,
+        )
+        if summary_message:
+            return summary_message
+
     responder = HonestFailureResponder()
     failure = HonestFailureResponder.failure_from_no_data(
         intent,
         user_message or intent.specific_intent,
-        strategies_tried=["group_and_aggregate", "posted invoice filters"],
+        strategies_tried=_get_strategies_for_context(tool_name),
     )
     stack = context or _minimal_context(user_message or intent.specific_intent)
     return responder.respond(failure, stack).text
@@ -168,7 +266,13 @@ def build_quality_response(
 ) -> QualityResponse:
     """Build a polished payload ready for quality gate review."""
     if not has_meaningful_tool_data(tool_results):
-        honest_text = no_data_message(intent, user_message=message, context=context)
+        honest_text = no_data_message(
+            intent,
+            user_message=message,
+            context=context,
+            tool_names=tool_names,
+            tool_results=tool_results,
+        )
         return QualityResponse(
             text=honest_text,
             visualization=None,
@@ -210,7 +314,12 @@ class QualityResponseReviser:
         tool_results = response.tool_results
 
         if not has_meaningful_tool_data(tool_results):
-            text = no_data_message(intent, user_message=response.text, context=context)
+            text = no_data_message(
+                intent,
+                user_message=response.text,
+                context=context,
+                tool_results=tool_results,
+            )
             visualization = None
         elif "no_fabrication" in failed_names:
             text = strip_raw_syntax(text)
@@ -250,6 +359,16 @@ class QualityResponseReviser:
                 tool_results=tool_results,
                 language="en",
             )
+
+        if "not_all_zero" in failed_names:
+            from gateway.core.quality_gate import build_zero_data_honest_message
+
+            text = build_zero_data_honest_message(response, intent)
+            if not suggestions:
+                suggestions = [
+                    "Search for a different project name or WO number.",
+                    "Show related projects that may match what you meant.",
+                ]
 
         return QualityResponse(
             text=strip_raw_syntax(text),

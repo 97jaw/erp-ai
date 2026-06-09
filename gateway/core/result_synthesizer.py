@@ -48,6 +48,10 @@ class ResultSynthesizer:
         if mobile_summary is not None:
             return mobile_summary
 
+        entity_candidates = self._find_entity_candidates(execution_result.results, intent)
+        if entity_candidates is not None:
+            return entity_candidates
+
         if not self._used_project_expense_tools(execution_result):
             project_summary = self._find_legacy_project_expense_kpi(execution_result.results)
             if project_summary is not None:
@@ -112,6 +116,33 @@ class ResultSynthesizer:
                 user_message=intent.specific_intent,
             )
             return SynthesizedResult(text=text, visualization=None)
+        return None
+
+    @staticmethod
+    def _find_entity_candidates(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if payload.get("_source") != "search_entities":
+                continue
+            if payload.get("status") != "success":
+                continue
+            candidates = payload.get("candidates") or []
+            query = str(payload.get("query") or intent.specific_intent)
+            if not candidates:
+                return SynthesizedResult(
+                    text=f"I couldn't find any matching records for {query!r}. Try a different name or WO number.",
+                )
+            return SynthesizedResult(
+                text=(
+                    f"I found {len(candidates)} matching record(s) for {query!r}. "
+                    "Pick the one you mean to continue."
+                ),
+            )
         return None
 
     @staticmethod

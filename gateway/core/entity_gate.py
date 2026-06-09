@@ -212,12 +212,12 @@ class EntityGate:
         if entities != intent.entities:
             updates["entities"] = entities
 
-        if looks_like_project_cost_query(message, subject_area=intent.subject_area) or is_project_expense_query(
-            message,
-            intent,
-        ):
+        if (
+            looks_like_project_cost_query(message, subject_area=intent.subject_area)
+            or is_project_expense_query(message, intent)
+        ) and intent.primary_action != "search_entity":
             updates["subject_area"] = "project"
-            if intent.primary_action in {"other", "search_entity"}:
+            if intent.primary_action in {"other"}:
                 updates["primary_action"] = "fetch_data"
 
         if not updates:
@@ -301,8 +301,11 @@ class EntityGate:
             context is not None
             and is_project_expense_follow_up(message)
             and EntityGate.has_active_project_scope(context)
+            and not intent.entities
         ):
             return False
+        if intent.entities:
+            return True
         if EntityGate.infer_required_entities(message, intent, context):
             return True
         query_blob = f"{message} {intent.specific_intent}".lower()

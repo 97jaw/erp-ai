@@ -6,7 +6,10 @@ In-memory for Phase 1; PostgreSQL persistence deferred to Admin Panel plan.
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from gateway.core.intent_analyzer import Intent
 
 
 @dataclass
@@ -19,12 +22,43 @@ class WorkingMemory:
 
     # Current session
     recent_entities: list[dict[str, Any]] = field(default_factory=list)
+    recent_intents: list["Intent"] = field(default_factory=list)
     recent_periods: list[Any] = field(default_factory=list)
     session_facts: dict[str, Any] = field(default_factory=dict)
 
     # Strategy memory
     successful_strategies: dict[str, Any] = field(default_factory=dict)
     failed_strategies: dict[str, Any] = field(default_factory=dict)
+
+    def detect_topic_shift(self, message: str, intent: "Intent") -> bool:
+        """Return True when this turn shifts topic away from the previous turn."""
+        from gateway.core.topic_shift import detect_topic_shift
+
+        last_turn = self.session_facts.get("last_turn")
+        if last_turn is None and self.recent_intents:
+            previous = self.recent_intents[-1]
+            last_turn = {
+                "message": previous.specific_intent,
+                "entity_values": [entity.value for entity in previous.entities],
+                "subject_area": previous.subject_area,
+            }
+        return detect_topic_shift(message, intent, last_turn=last_turn)
+
+    def clear_entity_context(self) -> None:
+        """Wipe recent entities and session entity facts after a topic shift."""
+        self.recent_entities = []
+        for key in (
+            "confirmed_entities",
+            "resolved_project_id",
+            "last_expense_summary_project_id",
+            "project_name",
+        ):
+            self.session_facts.pop(key, None)
+
+    def remember_intent(self, intent: "Intent") -> None:
+        """Track recent intents for topic-shift detection within the same request cycle."""
+        self.recent_intents.append(intent)
+        self.recent_intents = self.recent_intents[-5:]
 
     def remember_entity(self, entity_type: str, entity: dict[str, Any]) -> None:
         """Add to recent entities for quick reference."""

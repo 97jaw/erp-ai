@@ -16,6 +16,7 @@ from gateway.tools.project_expense import (
     BREAKDOWN_METHOD,
     SERVICE_MODEL,
     SUMMARY_METHOD,
+    _unwrap_odoo_payload,
     execute_compare_project_expenses,
     execute_get_project_expense_breakdown,
     execute_get_project_expense_summary,
@@ -48,6 +49,47 @@ def _summary_odoo_payload(
                 {"label": "Labor", "amount": 250_000},
             ],
         },
+    }
+
+
+def _villa_34_breakdown_odoo_payload() -> dict[str, Any]:
+    """Live Odoo envelope for project 15157 (top-level breakdown + wizard_id)."""
+    return {
+        "breakdown": {
+            "title": "Villa Maintenance No. 34",
+            "eyebrow": "Expense Breakdown",
+            "empty_message": "No expense totals were found for the current project.",
+            "total_display": "11,053.15\u00a0AED",
+            "groups_count": 1,
+            "subgroups_count": 1,
+            "accounts_count": 1,
+            "groups": [
+                {
+                    "name": "Salary",
+                    "total": 11053.15,
+                    "subgroups": [
+                        {
+                            "name": "Labor",
+                            "total": 11053.15,
+                            "accounts": [
+                                {
+                                    "name": "55002 LABER WAGES",
+                                    "total": 11053.15,
+                                    "total_display": "11,053.15\u00a0AED",
+                                },
+                            ],
+                            "total_display": "11,053.15\u00a0AED",
+                        },
+                    ],
+                    "total_display": "11,053.15\u00a0AED",
+                },
+            ],
+        },
+        "export_url": (
+            "https://erp.elrace.com/x_spreadsheet_summary_table/"
+            "project_expense_breakdown/export/84"
+        ),
+        "wizard_id": 84,
     }
 
 
@@ -167,6 +209,16 @@ async def test_summary_handles_odoo_error_gracefully() -> None:
     assert result == {"status": "error", "message": "Project not found"}
 
 
+def test_unwrap_odoo_payload_recognizes_breakdown_envelope() -> None:
+    payload = _villa_34_breakdown_odoo_payload()
+    status, data, error = _unwrap_odoo_payload(payload)
+    assert status == "success"
+    assert error is None
+    assert isinstance(data, dict)
+    assert "breakdown" in data
+    assert data["wizard_id"] == 84
+
+
 # 3. breakdown tool parses hierarchy correctly
 @pytest.mark.asyncio
 async def test_breakdown_parses_hierarchy_correctly() -> None:
@@ -213,6 +265,41 @@ async def test_breakdown_computes_totals_at_each_level() -> None:
     assert result["groups"][0]["subgroups"][0]["total"] == 150_000
     assert result["groups"][1]["total"] == 25_000
     assert result["_truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_breakdown_villa_34_top_level_envelope() -> None:
+    """Project 15157 — live Odoo shape with top-level breakdown + wizard_id."""
+    adapter = MockAdapter(
+        {("get_project_expense_breakdown_mobile", 15157): _villa_34_breakdown_odoo_payload()},
+    )
+
+    result = await execute_get_project_expense_breakdown({"project_id": 15157}, adapter, None)
+
+    assert result["status"] == "success"
+    assert result["project_id"] == 15157
+    assert result["project_name"] == "Villa Maintenance No. 34"
+    assert result["group_count"] == 1
+    assert result["wizard_id"] == 84
+    assert result["export_url"].endswith("/export/84")
+    assert result["grand_total"] == 11053.15
+    assert result["grand_total_display"] == "11,053.15\u00a0AED"
+
+    groups = result["groups"]
+    assert len(groups) == 1
+    assert groups[0]["name"] == "Salary"
+    assert groups[0]["total"] == 11053.15
+
+    subgroups = groups[0]["subgroups"]
+    assert len(subgroups) == 1
+    assert subgroups[0]["name"] == "Labor"
+    assert subgroups[0]["total"] == 11053.15
+
+    accounts = subgroups[0]["accounts"]
+    assert len(accounts) == 1
+    assert accounts[0]["name"] == "55002 LABER WAGES"
+    assert accounts[0]["total"] == 11053.15
+    assert result["_source"] == "project_expense_breakdown_mobile"
 
 
 # 5. compare tool fetches projects in parallel

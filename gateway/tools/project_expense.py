@@ -166,9 +166,12 @@ def _unwrap_odoo_payload(result: dict[str, Any]) -> tuple[str, dict[str, Any] | 
 
     summary_keys = {"total_expenses", "project_count", "top_expenses", "expense_lines"}
     dashboard_keys = {"kpis", "cost_distribution"}
+    breakdown_keys = {"breakdown", "wizard_id"}
     if summary_keys & set(result.keys()):
         return "success", result, None
     if dashboard_keys & set(result.keys()):
+        return "success", result, None
+    if breakdown_keys & set(result.keys()):
         return "success", result, None
 
     return "unknown", None, "Unexpected response shape from Odoo service"
@@ -417,12 +420,14 @@ async def execute_get_project_expense_breakdown(
     return {
         "status": "success",
         "project_id": project_id,
-        "project_name": data.get("project_name"),
+        "project_name": breakdown.get("title") or data.get("project_name"),
         "currency": data.get("currency_name", "AED"),
         "groups": groups,
         "grand_total": grand_total,
-        "group_count": len(groups),
+        "grand_total_display": breakdown.get("total_display"),
+        "group_count": breakdown.get("groups_count") or len(groups),
         "wizard_id": data.get("wizard_id"),
+        "export_url": data.get("export_url"),
         "_source": "project_expense_breakdown_mobile",
         "_truncated": len(groups) > 10,
     }

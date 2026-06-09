@@ -30,8 +30,9 @@ def enrich_tool_input(
     if tool_name in PROJECT_FOLLOW_UP_TOOLS:
         project = confirmed.get("project")
         if project and project.get("id"):
-            enriched["project_id"] = int(project["id"])
-            if project.get("name"):
+            if not enriched.get("project_id"):
+                enriched["project_id"] = int(project["id"])
+            if not enriched.get("project_name") and project.get("name"):
                 enriched["project_name"] = str(project["name"])
         else:
             if not enriched.get("project_id") and scope.get("project_id"):

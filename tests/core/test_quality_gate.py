@@ -145,7 +145,7 @@ async def test_inconsistent_totals_fail_data_consistency() -> None:
     assert "does not match" in check.issue
 
 
-def test_pass_rate_seven_of_eight_passes_overall() -> None:
+def test_pass_rate_eight_of_nine_passes_overall() -> None:
     checks = [
         CheckResult(name=name, passed=True, issue=None)
         for name in QUALITY_CHECKS[:-1]
@@ -158,12 +158,12 @@ def test_pass_rate_seven_of_eight_passes_overall() -> None:
         ),
     )
     review = QualityGate._finalize_review(checks)
-    assert review.pass_rate == pytest.approx(7 / 8)
+    assert review.pass_rate == pytest.approx(8 / 9)
     assert review.passed is True
     assert review.pass_rate >= MIN_PASS_RATE
 
 
-def test_pass_rate_six_of_eight_fails_overall() -> None:
+def test_pass_rate_seven_of_nine_fails_overall() -> None:
     checks = [
         CheckResult(name=name, passed=True, issue=None)
         for name in QUALITY_CHECKS[:-2]
@@ -181,7 +181,7 @@ def test_pass_rate_six_of_eight_fails_overall() -> None:
         ),
     ])
     review = QualityGate._finalize_review(checks)
-    assert review.pass_rate == pytest.approx(6 / 8)
+    assert review.pass_rate == pytest.approx(7 / 9)
     assert review.passed is False
 
 
@@ -291,3 +291,113 @@ async def test_quality_review_contains_all_checks_run() -> None:
     review = await gate.review(_good_response(), _compare_intent(), _make_context_stack())
     assert len(review.checks) == len(QUALITY_CHECKS)
     assert [check.name for check in review.checks] == list(QUALITY_CHECKS)
+
+
+def _expense_intent(**overrides: Any) -> Intent:
+    defaults = {
+        "primary_action": "fetch_data",
+        "subject_area": "project",
+        "specific_intent": "Villa No. 48 expense this year",
+        "entities": [],
+        "expected_output": "summary",
+    }
+    defaults.update(overrides)
+    return Intent(**defaults)
+
+
+def _zero_expense_response(**overrides: Any) -> QualityResponse:
+    defaults = {
+        "text": "Villa 48: total spend AED 0 of W.O AED 0. Status: on track.",
+        "visualization": {
+            "visual_type": "PROJECT_EXPENSE_SUMMARY",
+            "project_name": "Villa No. 48",
+            "kpis": {
+                "wo_amount": {"value": 0},
+                "total_expenses": {"value": 0},
+                "spend_pct": {
+                    "value": 0,
+                    "trend": {"direction": "neutral", "context": "On track"},
+                },
+            },
+        },
+        "suggestions": ["Show me the cost breakdown for Villa 48."],
+        "tool_results": [
+            {
+                "status": "success",
+                "_source": "project_expense_summary_mobile",
+                "project_name": "Villa No. 48",
+                "wo_amount": 0,
+                "total_expenses": 0,
+            },
+        ],
+    }
+    defaults.update(overrides)
+    return QualityResponse(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_zero_values_with_success_fails_quality() -> None:
+    gate = QualityGate()
+    review = await gate.review(
+        _zero_expense_response(),
+        _expense_intent(),
+        _make_context_stack(),
+    )
+
+    assert not review.passed
+    failed = [check for check in review.checks if not check.passed]
+    assert any(check.name == "not_all_zero" for check in failed)
+
+
+@pytest.mark.asyncio
+async def test_zero_values_without_success_still_fails() -> None:
+    gate = QualityGate()
+    response = _zero_expense_response(
+        text="Villa 48 expenses: AED 0 spent of AED 0 budget.",
+        visualization={"wo_amount": 0, "total_expenses": 0},
+    )
+    review = await gate.review(response, _expense_intent(), _make_context_stack())
+
+    check = next(item for item in review.checks if item.name == "not_all_zero")
+    assert check.passed is False
+
+
+@pytest.mark.asyncio
+async def test_real_zero_spent_with_real_budget_passes() -> None:
+    gate = QualityGate()
+    response = _zero_expense_response(
+        text="Villa 48: spent AED 0 of AED 100,000 W.O budget. Project not yet started.",
+        visualization={
+            "visual_type": "PROJECT_EXPENSE_SUMMARY",
+            "project_name": "Villa No. 48",
+            "kpis": {
+                "wo_amount": {"value": 100_000},
+                "total_expenses": {"value": 0},
+                "variance": {"value": 100_000},
+                "spend_pct": {"value": 0},
+            },
+        },
+    )
+    review = await gate.review(response, _expense_intent(), _make_context_stack())
+    check = next(item for item in review.checks if item.name == "not_all_zero")
+    assert check.passed is True
+
+
+@pytest.mark.asyncio
+async def test_quality_gate_retries_on_zero_data() -> None:
+    from gateway.core.quality_pipeline import QualityResponseReviser
+
+    gate = QualityGate(retry_handler=RetryHandler(reviser=QualityResponseReviser()))
+    final_response, final_review, retries = await gate.ensure_quality(
+        _zero_expense_response(),
+        _expense_intent(),
+        _make_context_stack(),
+    )
+
+    assert retries >= 1
+    assert "no expense data recorded" in final_response.text.lower()
+    assert "on track" not in final_response.text.lower()
+    not_all_zero = next(
+        check for check in final_review.checks if check.name == "not_all_zero"
+    )
+    assert not_all_zero.passed is True

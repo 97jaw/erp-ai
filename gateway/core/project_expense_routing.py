@@ -129,6 +129,8 @@ _ARABIC_EXPENSE = re.compile(r"تكاليف|مصروف|تكلفة")
 
 def is_project_expense_query(message: str, intent: Intent) -> bool:
     """Return True when the query is about project expense intelligence tools."""
+    if intent.primary_action == "search_entity":
+        return False
     blob = _query_blob(message, intent)
     if any(signal in blob for signal in _BREAKDOWN_SIGNALS):
         return True
@@ -144,6 +146,7 @@ def is_project_expense_query(message: str, intent: Intent) -> bool:
         "fetch_data",
         "analyze",
         "compare",
+        "generate_report",
     }:
         if any(token in blob for token in ("cost", "expense", "spending", "budget", "money")):
             return True

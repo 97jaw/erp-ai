@@ -8,42 +8,40 @@
 
 **File:** `docs/CONVERSATION_INTEGRITY_FIX_PLAN.md` — Conversation Integrity Fix Sprint
 
-> **BLOCKER:** Must complete F1–F6 before `ELRACE_OMNI_AGENT_FINAL_PLAN.md` / Universal Odoo Access.
+**Status:** CODE COMPLETE — live verify on EC2 pending
 
 ---
 
-## 📍 ACTIVE PHASE
+## 📍 SPRINT SIGN-OFF
 
-**Phase:** F1 — Cache Integrity
-**Status:** COMPLETE (unit tests pass; live verify pending on EC2)
-**Completed:** 2026-06-09
+| Phase | Description | Code | Automated tests | Live verify |
+|-------|-------------|------|-----------------|-------------|
+| F1 | Cache integrity | ✅ | ✅ | ⏳ |
+| F2 | Topic-shift + EntityGate | ✅ | ✅ | ⏳ |
+| F3 | search_entity routing | ✅ | ✅ | ⏳ |
+| F4 | Zero-data quality gate | ✅ | ✅ | ⏳ |
+| F5 | Format clarification suppress | ✅ | ✅ | ⏳ |
+| F6 | Integration replay + sign-off | ✅ | ✅ | ⏳ |
 
----
-
-## ✅ F1 DELIVERABLES
-
-| Task | Deliverable | Status |
-|------|-------------|--------|
-| Explicit cache key | `build_tool_cache_key()` in `gateway/tool_cache.py` | ✅ |
-| User scoping | `user_id` passed from `execute_tool()` | ✅ |
-| Entity TTL | `ENTITY_CACHE_TTL_SECONDS = 300` for entity-bound tools | ✅ |
-| Unit tests | `tests/test_tool_cache_integrity.py` (4 tests) | ✅ |
-| Live verify | Villa 48 → Al Mushrif → Hatta Hospital sequence | ⏳ deploy + manual |
-
-**Key shape:** `{user_id}:{tool_name}:{entity_id|noid}:{hint_hash}`
-
-**Run tests:**
+**Run full sprint test suite:**
 ```bash
-pytest tests/test_tool_cache_integrity.py tests/test_backend_hardening.py -q
+python scripts/verify_conversation_integrity_sprint.py
+# or:
+pytest tests/integration/test_conversation_integrity_sprint.py \
+  tests/test_tool_cache_integrity.py tests/core/test_topic_shift.py \
+  tests/core/test_search_entity_routing.py tests/core/test_quality_gate.py \
+  tests/core/test_clarification_validation.py -q
 ```
 
 **Live verify (same session, after deploy):**
 ```
-1. Villa No. 48 expense this year
-2. Al Mushrif expense this year
-3. Hatta Hospital expense this year
+1. Villa Maintenance No. 48 expense for this year
+2. General maintenance work need expense report
+3. now General maintenance work
+4. give General maintenance work need expense report
+5. General maintenance work - Al Mushrif need expense report
 ```
-Expect 3 distinct `project_id`s; grep logs for `cached:true` only when same entity repeats.
+Plus cache spot-check: Villa 48 → Al Mushrif → Hatta Hospital (3 distinct `project_id`s).
 
 **Deploy:**
 ```bash
@@ -52,32 +50,13 @@ git push origin main
 cd /opt/ooa && git pull && ./deploy/aws/scripts/deploy-code.sh
 ```
 
----
-
-## ⏭ NEXT PHASE
-
-**Phase F2 — Topic-Shift Detection + EntityGate Always Runs** (see `CONVERSATION_INTEGRITY_FIX_PLAN.md` §4)
+**Edge cases / deferred items:** `docs/PARKING_LOT.md`
 
 ---
 
-## 📊 SPRINT PROGRESS
+## ⏭ NEXT
 
-```
-F1 Cache integrity          ✅ (live verify pending)
-F2 Topic-shift / EntityGate ⬜
-F3 search_entity routing    ⬜
-F4 Quality gate AED 0       ⬜
-F5 Format clarification     ⬜
-F6 Integration + sign-off   ⬜
-```
-
----
-
-## 📋 PRIOR WORK (COMPLETE)
-
-- Phase 10 Hardening — production readiness (2026-06-07)
-- Phase 9 Integration & Migration — entity gate, safe_search_read
-- Villa expense pipeline + breakdown follow-up context (commits dc1d269, 4a6f363)
+**Unblocked after live verify:** `ELRACE_OMNI_AGENT_FINAL_PLAN.md` — Universal Odoo Access (4 tools on this foundation)
 
 ---
 

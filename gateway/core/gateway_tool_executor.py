@@ -32,6 +32,11 @@ class GatewayToolExecutor:
         context: ContextStack,
     ) -> Any:
         """Run one gateway tool through the existing execute_tool pipeline."""
+        if tool == "search_entities":
+            from gateway.tools.search_entities import execute_search_entities
+
+            return await execute_search_entities(self._adapter, tool_input, context)
+
         from gateway.main import execute_tool
 
         async with self._lock:

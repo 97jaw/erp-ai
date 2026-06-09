@@ -6,6 +6,7 @@ from typing import Any
 
 CACHE_TTLS: dict[str, int] = {
     "search_odoo": 60,
+    "search_entities": 120,
     "get_project_expenses": 180,
     "get_project_financial_data": 180,
     "get_project_cost_categories": 180,
@@ -141,3 +142,11 @@ class ToolResultCache:
     @classmethod
     def clear(cls) -> None:
         cls._entries.clear()
+
+    @classmethod
+    def clear_user(cls, user_id: int | str) -> None:
+        """Drop cached tool results for one user (e.g. after topic shift)."""
+        prefix = f"{user_id}:"
+        cls._entries = {
+            key: value for key, value in cls._entries.items() if not key.startswith(prefix)
+        }

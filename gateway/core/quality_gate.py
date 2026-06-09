@@ -25,7 +25,25 @@ QUALITY_CHECKS: tuple[str, ...] = (
     "actionable_suggestions",
     "right_visualization",
     "clear_language",
+    "not_all_zero",
 )
+
+ZERO_DATA_SUCCESS_LANGUAGE = (
+    "on track",
+    "healthy",
+    "good shape",
+    "no concerns",
+)
+
+ZERO_DATA_HONEST_LANGUAGE = (
+    "no expense data",
+    "no data recorded",
+    "both zero",
+    "has not started",
+    "verify or search",
+)
+
+EXPENSE_KPI_KEYS = ("wo_amount", "total_expenses", "total_spent", "spent")
 
 RAW_SYNTAX_PATTERNS: tuple[str, ...] = (
     r"amount_total:sum",
@@ -127,6 +145,18 @@ class RetryHandler:
         """Ask for a revision that addresses failed quality checks."""
         if self._reviser is not None:
             return await self._reviser(response, review, intent, context)
+
+        failed_names = {check.name for check in review.checks if not check.passed}
+        if "not_all_zero" in failed_names:
+            return QualityResponse(
+                text=build_zero_data_honest_message(response, intent),
+                visualization=response.visualization,
+                suggestions=response.suggestions or [
+                    "Search for a different project name or WO number.",
+                    "Show related projects that may match what you meant.",
+                ],
+                tool_results=response.tool_results,
+            )
 
         revised_text = response.text.strip()
         if review.issues:
@@ -243,6 +273,7 @@ class QualityGate:
             "actionable_suggestions": self._check_actionable_suggestions,
             "right_visualization": self._check_right_visualization,
             "clear_language": self._check_clear_language,
+            "not_all_zero": self._check_not_all_zero,
         }
         handler = checks.get(check_name)
         if handler is None:
@@ -541,3 +572,114 @@ class QualityGate:
                     issue=f"Response exposes technical jargon matching '{pattern}'",
                 )
         return CheckResult(name="clear_language", passed=True)
+
+    @staticmethod
+    def _extract_expense_kpi_value(visualization: dict[str, Any], *keys: str) -> float | None:
+        kpis = visualization.get("kpis") or {}
+        for key in keys:
+            direct = visualization.get(key)
+            if isinstance(direct, (int, float)) and not isinstance(direct, bool):
+                return float(direct)
+            entry = kpis.get(key)
+            if isinstance(entry, dict) and isinstance(entry.get("value"), (int, float)):
+                return float(entry["value"])
+            if isinstance(entry, (int, float)) and not isinstance(entry, bool):
+                return float(entry)
+        return None
+
+    @classmethod
+    def _collect_expense_numeric_values(cls, visualization: dict[str, Any]) -> list[float]:
+        values: list[float] = []
+        for key in ("wo_amount", "total_expenses", "total_spent", "variance", "spend_percent_of_wo"):
+            extracted = cls._extract_expense_kpi_value(visualization, key)
+            if extracted is not None:
+                values.append(extracted)
+        kpis = visualization.get("kpis") or {}
+        for entry in kpis.values():
+            if isinstance(entry, dict) and isinstance(entry.get("value"), (int, float)):
+                values.append(float(entry["value"]))
+        return values
+
+    @classmethod
+    def _response_claims_zero_data_success(cls, response: QualityResponse, visualization: dict[str, Any]) -> bool:
+        text_lower = (response.text or "").lower()
+        if any(phrase in text_lower for phrase in ZERO_DATA_SUCCESS_LANGUAGE):
+            return True
+        spend_pct = (visualization.get("kpis") or {}).get("spend_pct") or {}
+        trend = spend_pct.get("trend") if isinstance(spend_pct, dict) else {}
+        context = str((trend or {}).get("context") or "").lower()
+        return context in {"on track", "healthy", "good shape"}
+
+    def _check_not_all_zero(
+        self,
+        response: QualityResponse,
+        intent: Intent,
+        context: ContextStack,
+    ) -> CheckResult:
+        del context
+        visualization = response.visualization or {}
+        visual_type = visualization.get("visual_type")
+        if visual_type not in {None, "PROJECT_EXPENSE_SUMMARY", "KPI_CARD"}:
+            return CheckResult(name="not_all_zero", passed=True)
+
+        wo_amount = self._extract_expense_kpi_value(visualization, "wo_amount")
+        total_spent = self._extract_expense_kpi_value(
+            visualization,
+            "total_expenses",
+            "total_spent",
+            "spent",
+        )
+        if wo_amount is None and total_spent is None:
+            return CheckResult(name="not_all_zero", passed=True)
+
+        text_lower = (response.text or "").lower()
+        if any(phrase in text_lower for phrase in ZERO_DATA_HONEST_LANGUAGE):
+            return CheckResult(name="not_all_zero", passed=True)
+
+        numeric_values = self._collect_expense_numeric_values(visualization)
+        if not numeric_values:
+            return CheckResult(name="not_all_zero", passed=True)
+
+        all_zero = all(value == 0 for value in numeric_values)
+        claims_success = self._response_claims_zero_data_success(response, visualization)
+
+        if all_zero and claims_success:
+            return CheckResult(
+                name="not_all_zero",
+                passed=False,
+                issue=(
+                    "Response shows all-zero values but claims success status. "
+                    "This is likely a missing-data scenario, not a real result. "
+                    "Should say 'no data found' or verify entity is correct."
+                ),
+            )
+
+        if wo_amount == 0 and total_spent == 0:
+            return CheckResult(
+                name="not_all_zero",
+                passed=False,
+                issue=(
+                    "Both W.O Amount and Total Spent are zero. "
+                    "Project may have no W.O assigned, no expenses logged, "
+                    "or wrong entity was matched. Verify before presenting as result."
+                ),
+            )
+
+        return CheckResult(name="not_all_zero", passed=True)
+
+
+def build_zero_data_honest_message(response: QualityResponse, intent: Intent) -> str:
+    """Honest narrative when expense KPIs are all zero — not a healthy 'on track' result."""
+    visualization = response.visualization or {}
+    project_name = (
+        visualization.get("project_name")
+        or visualization.get("label")
+        or (intent.entities[0].value if intent.entities else None)
+        or "this project"
+    )
+    return (
+        f"I found {project_name}, but there is no expense data recorded for it "
+        "(W.O amount and spend are both zero). This could mean the project has not started, "
+        "data is logged elsewhere, or a different project was matched. "
+        "Want me to verify or search related projects?"
+    )

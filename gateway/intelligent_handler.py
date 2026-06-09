@@ -241,7 +241,24 @@ class IntelligentQueryHandler:
                 PipelineStage.INTENT,
                 self._intent_analyzer.analyze(message, context),
             )
-            intent = self._apply_expense_follow_up_intent(message, intent, context)
+            if context.working_memory.detect_topic_shift(message, intent):
+                last_turn = context.working_memory.session_facts.get("last_turn") or {}
+                logger.info(
+                    "[TopicShift] Detected. Clearing entity context. "
+                    "Last: %r, Now: %r",
+                    last_turn.get("message"),
+                    message,
+                )
+                self._apply_topic_shift_clear(
+                    resolved_session=resolved_session,
+                    context=context,
+                    user_id=user.id,
+                )
+            else:
+                intent = self._apply_expense_follow_up_intent(message, intent, context)
+            from gateway.core.clarification_validation import validate_clarification
+
+            intent = validate_clarification(intent)
             telemetry.intent_extracted = intent
 
             if intent.out_of_scope:
@@ -475,7 +492,26 @@ class IntelligentQueryHandler:
                 intent=intent,
             )
         finally:
+            if intent is not None and resolved_session:
+                from gateway.core.topic_shift import persist_last_turn
+
+                persist_last_turn(resolved_session, message, intent)
             await capture.record(telemetry)
+
+    @staticmethod
+    def _apply_topic_shift_clear(
+        *,
+        resolved_session: str,
+        context: ContextStack,
+        user_id: int,
+    ) -> None:
+        """Clear stale entity scope and user-scoped tool cache after a topic shift."""
+        from gateway.core.topic_shift import apply_topic_shift_clear
+        from gateway.tool_cache import ToolResultCache
+
+        if resolved_session:
+            apply_topic_shift_clear(resolved_session, context.working_memory)
+        ToolResultCache.clear_user(user_id)
 
     async def _run_pipeline_orchestration(
         self,

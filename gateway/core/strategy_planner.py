@@ -123,7 +123,12 @@ class StrategyPlanner:
                 f"{intent.out_of_scope_reason or 'capability unavailable'}",
             )
 
-        if self._is_revenue_by_client_comparison(intent):
+        if intent.primary_action == "search_entity" or self._needs_project_entity_search(
+            intent,
+            context,
+        ):
+            strategy = self.plan_entity_search(intent, context)
+        elif self._is_revenue_by_client_comparison(intent):
             strategy = self.plan_revenue_comparison(intent, context)
         elif self._is_revenue_by_client_period(intent):
             strategy = self.plan_revenue_by_client(intent, context)
@@ -141,6 +146,112 @@ class StrategyPlanner:
             strategy.estimated_duration_ms,
         )
         return strategy
+
+    @staticmethod
+    def _project_entity_hints(intent: Intent) -> list[str]:
+        return [
+            entity.value.strip()
+            for entity in intent.entities
+            if entity.type == "project" and entity.value.strip()
+        ]
+
+    @staticmethod
+    def _entity_hint_matches_scope(intent: Intent, context: ContextStack) -> bool:
+        """Return True when explicit project hints align with session/confirmed project."""
+        hints = StrategyPlanner._project_entity_hints(intent)
+        if not hints:
+            return True
+
+        hint = hints[0].lower()
+        names: list[str] = []
+        facts = context.working_memory.session_facts
+        if facts.get("project_name"):
+            names.append(str(facts["project_name"]).lower())
+        confirmed = (facts.get("confirmed_entities") or {}).get("project") or {}
+        if confirmed.get("name"):
+            names.append(str(confirmed["name"]).lower())
+        if not names:
+            return False
+
+        hint_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9]+", hint)
+            if len(token) > 2
+        }
+        for name in names:
+            if hint in name or name in hint:
+                return True
+            name_tokens = {
+                token
+                for token in re.findall(r"[a-z0-9]+", name)
+                if len(token) > 2
+            }
+            if hint_tokens and name_tokens and len(hint_tokens & name_tokens) >= 2:
+                return True
+        return False
+
+    @staticmethod
+    def _needs_project_entity_search(intent: Intent, context: ContextStack) -> bool:
+        """Route to search_entities when the user names a project that is not in scope."""
+        from gateway.core.entity_gate import EntityGate
+        from gateway.core.project_expense_routing import is_project_expense_query
+
+        hints = StrategyPlanner._project_entity_hints(intent)
+        if not hints:
+            return False
+
+        blob = f"{intent.specific_intent} {intent.primary_action} {intent.subject_area}"
+        expense_like = is_project_expense_query(blob, intent) or looks_like_project_cost_query(
+            blob,
+            subject_area=intent.subject_area,
+        )
+        if intent.primary_action != "search_entity" and not expense_like:
+            return False
+
+        if EntityGate.project_confirmed(context) and StrategyPlanner._entity_hint_matches_scope(
+            intent,
+            context,
+        ):
+            return False
+
+        if EntityGate.has_active_project_scope(context):
+            return not StrategyPlanner._entity_hint_matches_scope(intent, context)
+
+        return True
+
+    def plan_entity_search(self, intent: Intent, context: ContextStack) -> Strategy:
+        """When the user wants to search for entities, not fetch specific project data."""
+        del context
+        entity_type = "project"
+        entity_hint = intent.specific_intent.strip()
+        if intent.entities:
+            entity_type = intent.entities[0].type or "project"
+            entity_hint = intent.entities[0].value.strip() or entity_hint
+
+        step = ExecutionStep(
+            step_number=1,
+            description=f"Search for {entity_type} matching '{entity_hint}'",
+            tool="search_entities",
+            tool_input={
+                "entity_type": entity_type,
+                "query": entity_hint,
+                "limit": 10,
+                "min_confidence": 0.3,
+            },
+            depends_on=[],
+            parallel_with=[],
+            expected_output="entity_list",
+            fallback_if_fails="Retry search_entities with broader query terms",
+        )
+        return Strategy(
+            steps=[step],
+            synthesis_approach="present_candidates",
+            quality_checks=[
+                "Verify candidate list reflects search results",
+                "Do not fabricate project names or financial numbers",
+            ],
+            estimated_duration_ms=2000,
+        )
 
     def plan_revenue_comparison(self, intent: Intent, context: ContextStack) -> Strategy:
         """Build a deterministic two-period revenue-by-client comparison."""
@@ -325,6 +436,8 @@ class StrategyPlanner:
     @staticmethod
     def _is_project_cost_query(intent: Intent, context: ContextStack) -> bool:
         """Return True when a confirmed project expense intelligence query can run."""
+        if intent.primary_action == "search_entity":
+            return False
         from gateway.core.entity_gate import EntityGate
         from gateway.core.project_expense_routing import is_project_expense_query
 
@@ -334,6 +447,8 @@ class StrategyPlanner:
                 compare_ids = facts.get("compare_project_ids") or facts.get("resolved_project_ids") or []
                 return len(compare_ids) >= 2
             if EntityGate.has_active_project_scope(context):
+                if StrategyPlanner._project_entity_hints(intent):
+                    return StrategyPlanner._entity_hint_matches_scope(intent, context)
                 return True
             if extract_project_id_from_text(intent.specific_intent):
                 return True
@@ -362,7 +477,7 @@ class StrategyPlanner:
             resolve_project_expense_tool_for_strategy,
         )
 
-        if intent.primary_action not in {"search_entity", "fetch_data", "analyze", "compare"}:
+        if intent.primary_action not in {"fetch_data", "analyze", "compare", "generate_report"}:
             return None
         if not is_project_expense_query(intent.specific_intent, intent):
             return None

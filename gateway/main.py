@@ -81,6 +81,7 @@ TOOL_STATUS_LABELS = {
     "generate_pdf_report"     : "Generating PDF report...",
     "synthesize_pdf"          : "Generating PDF report...",
     "search_odoo"             : "Gathering records...",
+    "search_entities"         : "Searching for matching records...",
     "get_my_payslips"         : "Loading your payslips...",
     "get_employee_payslips"   : "Loading employee payslips...",
     "list_recent_payslips"    : "Listing recent payslips...",
@@ -1202,6 +1203,35 @@ TOOLS = [
         },
     },
     *PROJECT_EXPENSE_TOOL_DEFINITIONS,
+    {
+        "name": "search_entities",
+        "description": (
+            "Search for project or partner candidates by name when the user wants to "
+            "find or list matching records before fetching financial data."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity_type": {
+                    "type": "string",
+                    "description": "Entity type to search (currently project).",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Natural-language name or phrase to search for.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum candidates to return (default 10).",
+                },
+                "min_confidence": {
+                    "type": "number",
+                    "description": "Minimum match confidence (default 0.3).",
+                },
+            },
+            "required": ["query"],
+        },
+    },
 ]
 
 
@@ -1458,6 +1488,18 @@ def execute_tool(
             result = calculate(tool_input)
         elif tool_name in {"generate_pdf_report", "synthesize_pdf"}:
             result = generate_pdf_report(tool_input, session_id=session_id)
+        elif tool_name == "search_entities":
+            import asyncio
+
+            from gateway.tools.search_entities import execute_search_entities, minimal_search_context
+
+            result = asyncio.run(
+                execute_search_entities(
+                    adapter,
+                    tool_input,
+                    minimal_search_context(user_message=user_message),
+                ),
+            )
         elif tool_name == "search_odoo":
             if tool_input.get("model") == "purchase.order":
                 result = purchase_order_search_via_get_tool(adapter, tool_input)

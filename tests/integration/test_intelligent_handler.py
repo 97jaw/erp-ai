@@ -511,6 +511,64 @@ async def test_villa_cost_breakdown_follow_up_reuses_session_project() -> None:
 
 
 @pytest.mark.asyncio
+async def test_general_maintenance_returns_candidates() -> None:
+    """search_entity intent returns candidate list, not a random project's expense data."""
+    intent = Intent(
+        primary_action="search_entity",
+        subject_area="project",
+        specific_intent="general maintenance",
+        entities=[],
+        estimated_complexity="simple",
+    )
+    query = "show me general maintenance projects"
+    executor = MockToolExecutor(
+        responses={
+            ("search_entities", 1): {
+                "status": "success",
+                "_source": "search_entities",
+                "query": "general maintenance",
+                "total_matches": 2,
+                "candidates": [
+                    {
+                        "id": 501,
+                        "name": "General Maintenance Contract A",
+                        "entity_type": "project",
+                        "wo_ref_no": "WO-501",
+                    },
+                    {
+                        "id": 502,
+                        "name": "General Maintenance Contract B",
+                        "entity_type": "project",
+                        "wo_ref_no": "WO-502",
+                    },
+                ],
+            },
+        },
+    )
+    handler = IntelligentQueryHandler(
+        context_builder=ContextStackBuilder(),
+        intent_analyzer=FixedIntentAnalyzer(intent),
+        entity_resolver=EntityResolver(MockProjectSearch([])),
+        proactive_layer=StubProactiveIntelligence(),
+        telemetry_capture=TelemetryCapture(repository=InMemoryTelemetryStore()),
+    )
+
+    response = await handler.handle(
+        query,
+        _super_admin(),
+        adapter=object(),
+        executor=executor,
+        session_id="general-maintenance-search",
+    )
+
+    assert not response.awaiting_clarification
+    assert response.tools_called == ["search_entities"]
+    assert "get_project_expense_summary" not in response.tools_called
+    assert (response.visualization or {}).get("visual_type") == "ENTITY_CANDIDATES"
+    assert len((response.visualization or {}).get("candidates") or []) == 2
+
+
+@pytest.mark.asyncio
 async def test_payslip_query_honest_unavailable_response() -> None:
     intent = Intent(
         primary_action="fetch_data",

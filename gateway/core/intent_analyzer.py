@@ -10,6 +10,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
+from gateway.core.clarification_validation import CLARIFICATION_PROMPT_RULES, validate_clarification
 from gateway.session_entities import build_session_context_prompt
 
 logger = logging.getLogger(__name__)
@@ -195,6 +196,7 @@ class IntentAnalyzer:
 
         intent = self._parse_response(raw_response, query, context)
         intent = self._apply_manifest_guardrails(query, intent, context)
+        intent = validate_clarification(intent)
         logger.info(
             "[IntentAnalyzer] query=%r intent=%s",
             query,
@@ -251,7 +253,8 @@ class IntentAnalyzer:
             "use fetch_data for report/data requests; "
             "when CONVERSATION CONTEXT lists a last project and the user asks for "
             "cost/expense breakdown or drill-down without naming a new project, set "
-            "requires_clarification=false, subject_area=project, primary_action=analyze."
+            "requires_clarification=false, subject_area=project, primary_action=analyze.\n"
+            f"{CLARIFICATION_PROMPT_RULES}"
         )
 
     def _parse_response(

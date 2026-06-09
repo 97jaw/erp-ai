@@ -96,6 +96,36 @@ def _projects_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _entity_candidates_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
+    from gateway.core.entity_gate import build_entity_options, format_entity_confirm_label
+
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        return None
+
+    rows = []
+    for candidate in candidates:
+        rows.append([
+            candidate.get("name") or format_entity_confirm_label(candidate),
+            candidate.get("wo_ref_no") or candidate.get("detail"),
+            candidate.get("id"),
+        ])
+
+    return {
+        "visual_type": "ENTITY_CANDIDATES",
+        "label": payload.get("query") or "Matching records",
+        "value": len(candidates),
+        "unit": "matches",
+        "query": payload.get("query"),
+        "candidates": candidates,
+        "options": build_entity_options(candidates),
+        "data": {
+            "headers": ["Name", "Detail", "ID"],
+            "rows": rows,
+        },
+    }
+
+
 def _financial_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
     kpis = payload.get("kpis")
     if not isinstance(kpis, dict):
@@ -817,6 +847,8 @@ def _visual_from_payload(
         return _project_expense_breakdown_visual(payload)
     if tool_name == "compare_project_expenses":
         return _project_expense_comparison_visual(payload)
+    if tool_name == "search_entities" or payload.get("_source") == "search_entities":
+        return _entity_candidates_visual(payload)
     if tool_name in {
         "get_financial_report",
         "get_project_expenses",
@@ -900,4 +932,7 @@ def is_renderable_visualization(visual: dict[str, Any] | None) -> bool:
     if visual_type == "PROJECT_EXPENSE_COMPARISON":
         projects = visual.get("projects") or []
         return len(projects) >= 2
+    if visual_type == "ENTITY_CANDIDATES":
+        candidates = visual.get("candidates") or visual.get("options") or []
+        return bool(candidates)
     return False
