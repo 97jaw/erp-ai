@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { API_BASE } from "../config/api";
+import { resolveApiBase } from "../config/api";
 
 const parseLoginError = (body, fallback) => {
   if (typeof body?.detail === "string") return body.detail;
@@ -30,7 +30,7 @@ export default function LoginInline({ onSubmit, formRef }) {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
+      const res = await fetch(`${resolveApiBase()}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ file_id: normalizedFileId }),
@@ -46,7 +46,14 @@ export default function LoginInline({ onSubmit, formRef }) {
 
       await onSubmit?.(body, normalizedFileId);
     } catch (err) {
-      setError(err.message || "File ID not recognized");
+      const message = err?.message || "";
+      if (message === "Failed to fetch" || err instanceof TypeError) {
+        setError(
+          "Cannot reach the server. Use http:// (not https://) and confirm the gateway is running.",
+        );
+      } else {
+        setError(message || "File ID not recognized");
+      }
     } finally {
       setLoading(false);
     }
@@ -57,7 +64,7 @@ export default function LoginInline({ onSubmit, formRef }) {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/mfa/verify`, {
+      const res = await fetch(`${resolveApiBase()}/auth/mfa/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mfa_token: mfaToken, code: mfaCode.trim() }),
@@ -66,7 +73,14 @@ export default function LoginInline({ onSubmit, formRef }) {
       if (!res.ok) throw new Error(parseLoginError(body, "Invalid MFA code"));
       await onSubmit?.(body, normalizedFileId);
     } catch (err) {
-      setError(err.message || "Invalid MFA code");
+      const message = err?.message || "";
+      if (message === "Failed to fetch" || err instanceof TypeError) {
+        setError(
+          "Cannot reach the server. Use http:// (not https://) and confirm the gateway is running.",
+        );
+      } else {
+        setError(message || "Invalid MFA code");
+      }
     } finally {
       setLoading(false);
     }

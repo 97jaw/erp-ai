@@ -1,5 +1,5 @@
-/** API base URL — same origin in production; localhost:8000 when CRA dev server runs on :3000. */
-export const API_BASE = (() => {
+/** Resolve API base at call time so production always uses the page origin. */
+export function resolveApiBase() {
   const configured = process.env.REACT_APP_API_BASE;
   if (configured && configured.trim()) {
     return configured.replace(/\/$/, "");
@@ -11,7 +11,10 @@ export const API_BASE = (() => {
     return window.location.origin;
   }
   return "http://localhost:8000";
-})();
+}
+
+/** @deprecated Prefer resolveApiBase() for network calls — kept for static imports. */
+export const API_BASE = resolveApiBase();
 
 export const AUTH_STORAGE_KEY = "ooa_auth";
 
@@ -85,7 +88,7 @@ export async function refreshAccessToken() {
 
   refreshInFlight = (async () => {
     try {
-      const res = await fetch(`${API_BASE}/auth/refresh`, {
+      const res = await fetch(`${resolveApiBase()}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: auth.refreshToken }),
@@ -169,7 +172,7 @@ async function fetchWithAuth(path, options = {}, { retried = false } = {}) {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...options.headers,
   };
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${resolveApiBase()}${path}`, { ...options, headers });
 
   if (res.status === 401) {
     const canRetry = !retried && isJwt(token) && readStoredAuth()?.refreshToken;

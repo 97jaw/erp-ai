@@ -1,4 +1,4 @@
-export const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000";
+export { API_BASE, resolveApiBase } from "../config/api";
 
 export const QUICK_ACTIONS = [
   { icon: "📊", label: "P&L Report", query: "Show profit and loss this month" },
