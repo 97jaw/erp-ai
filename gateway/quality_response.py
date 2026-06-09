@@ -189,7 +189,8 @@ def polish_agent_response(
         or is_legacy_period_expense_text(clean_text)
         or (
             visualization is not None
-            and visualization.get("visual_type") == "PROJECT_EXPENSE_SUMMARY"
+            and visualization.get("visual_type")
+            in {"PROJECT_EXPENSE_SUMMARY", "PROJECT_EXPENSE_BREAKDOWN"}
         )
     )
     if should_refresh_expense_text and visualization:

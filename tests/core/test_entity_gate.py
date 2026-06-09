@@ -37,6 +37,23 @@ def test_infer_required_entities_from_cost_query() -> None:
     assert ("project", "Zayidia Boys School") in required
 
 
+def test_follow_up_breakdown_skips_entity_confirmation_with_scope() -> None:
+    context = _make_context_stack()
+    context.working_memory.session_facts["last_expense_summary_project_id"] = 31034
+    context.working_memory.session_facts["resolved_project_id"] = 31034
+    intent = Intent(
+        primary_action="other",
+        subject_area="general",
+        specific_intent="show me cost break down as well",
+        requires_clarification=True,
+        clarification_question="Which project would you like to see the cost breakdown for?",
+    )
+    message = "show me cost break down as well"
+
+    assert EntityGate.infer_required_entities(message, intent, context) == []
+    assert not EntityGate.intent_requires_entity_confirmation(message, intent, context)
+
+
 def test_infer_required_entities_partner_mislabelled_as_project() -> None:
     """Claude often types schools as partner on short follow-up queries."""
     intent = Intent(

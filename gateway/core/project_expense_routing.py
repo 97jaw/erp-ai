@@ -97,6 +97,8 @@ _COMPARE_SIGNALS = (
 _BREAKDOWN_SIGNALS = (
     "break down",
     "breakdown",
+    "cost breakdown",
+    "cost break down",
     "by account",
     "gl detail",
     "gl details",
@@ -108,6 +110,7 @@ _BREAKDOWN_SIGNALS = (
     "show gl",
     "account level",
     "by gl",
+    "breakdown as well",
 )
 
 _FOLLOW_UP_BREAKDOWN_SIGNALS = (
@@ -115,6 +118,9 @@ _FOLLOW_UP_BREAKDOWN_SIGNALS = (
     "show breakdown",
     "break it down",
     "breakdown by account",
+    "as well",
+    "also show",
+    "show me cost",
 )
 
 _MATERIALS_FILTER = re.compile(r"\bmaterials?\b", re.IGNORECASE)
@@ -191,7 +197,7 @@ def resolve_project_expense_tool_for_strategy(
     if tool_name == "compare_project_expenses":
         return selected
 
-    if EntityGate.project_confirmed(context) or _collect_project_ids(message, intent, context):
+    if EntityGate.has_active_project_scope(context) or _collect_project_ids(message, intent, context):
         return selected
 
     raise ValueError("Project must be confirmed before project expense tools")

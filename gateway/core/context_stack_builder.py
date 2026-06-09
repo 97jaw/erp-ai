@@ -56,6 +56,20 @@ class ContextStackBuilder:
                 )
             if scope.get("project_id"):
                 working_memory.session_facts["resolved_project_id"] = int(scope["project_id"])
+            if scope.get("last_expense_summary_project_id"):
+                working_memory.session_facts["last_expense_summary_project_id"] = int(
+                    scope["last_expense_summary_project_id"],
+                )
+            if scope.get("project_name"):
+                working_memory.session_facts["project_name"] = str(scope["project_name"])
+            if scope.get("project_id") and not (
+                working_memory.session_facts.get("confirmed_entities") or {}
+            ).get("project"):
+                working_memory.session_facts.setdefault("confirmed_entities", {})
+                working_memory.session_facts["confirmed_entities"]["project"] = {
+                    "id": int(scope["project_id"]),
+                    "name": str(scope.get("project_name") or f"Project {scope['project_id']}"),
+                }
         return ContextStack(
             user=self._build_user_context(user),
             conversation=ConversationContext(

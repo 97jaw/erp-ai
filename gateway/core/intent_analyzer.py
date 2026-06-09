@@ -10,7 +10,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
-from gateway.core.context_stack import ContextStack
+from gateway.session_entities import build_session_context_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -211,11 +211,21 @@ class IntentAnalyzer:
             capability.code for capability in context.capability_manifest.unavailable
         )
         user = context.user
+        session_context = build_session_context_prompt(context.conversation.session_id)
+        facts = context.working_memory.session_facts
+        if not session_context and facts.get("resolved_project_id"):
+            project_name = facts.get("project_name") or "the last project"
+            session_context = (
+                "\n\nCONVERSATION CONTEXT:\n"
+                f"- Last project discussed: {project_name} "
+                f"(ID: {facts['resolved_project_id']})\n"
+            )
         return (
             "You are an intent analyzer for an ERP assistant.\n"
             f"User: {user.name} ({user.primary_role}, assumption={user.assumption_level()})\n"
             f"Available capabilities: {available}\n"
             f"Unavailable capabilities: {unavailable}\n"
+            f"{session_context}"
             f'Query: "{query}"\n'
             "Return ONLY valid JSON with this schema:\n"
             "{"
@@ -238,7 +248,10 @@ class IntentAnalyzer:
             "}\n"
             "Rules: mark out_of_scope when unavailable capability is required; "
             "minimize requires_clarification for super_admin/top_mgmt; "
-            "use fetch_data for report/data requests."
+            "use fetch_data for report/data requests; "
+            "when CONVERSATION CONTEXT lists a last project and the user asks for "
+            "cost/expense breakdown or drill-down without naming a new project, set "
+            "requires_clarification=false, subject_area=project, primary_action=analyze."
         )
 
     def _parse_response(

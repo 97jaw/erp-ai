@@ -170,8 +170,16 @@ ZAYIDIA_GIRLS = 14610
             "get_project_expense_summary",
             {"project_id": ZAYIDIA_BOYS},
         ),
+        (
+            16,
+            "show me cost break down as well",
+            {},
+            {"last_expense_summary_project_id": ZAYIDIA_BOYS, "project_id": ZAYIDIA_BOYS},
+            "get_project_expense_breakdown",
+            {"project_id": ZAYIDIA_BOYS},
+        ),
     ],
-    ids=[f"case_{index}" for index in range(1, 16)],
+    ids=[f"case_{index}" for index in range(1, 17)],
 )
 def test_project_expense_tool_selection(
     case_id: int,

@@ -16,6 +16,7 @@ from gateway.core.entity_resolver import (
 from gateway.core.intent_analyzer import EntityReference, Intent
 from gateway.core.project_query_utils import (
     extract_project_name_hint,
+    is_project_expense_follow_up,
     looks_like_project_cost_query,
     meaningful_project_words,
 )
@@ -187,9 +188,10 @@ class EntityGate:
         entities = list(intent.entities)
         if not any(entity.type == "project" for entity in entities):
             if looks_like_project_cost_query(message, subject_area=intent.subject_area):
-                hint = extract_project_name_hint(message)
-                if hint:
-                    entities.append(EntityReference(type="project", value=hint, confidence=0.85))
+                if not is_project_expense_follow_up(message):
+                    hint = extract_project_name_hint(message)
+                    if hint:
+                        entities.append(EntityReference(type="project", value=hint, confidence=0.85))
 
         partner_entity = next((entity for entity in entities if entity.type == "partner"), None)
         if partner_entity is None and "client" in message.lower():
@@ -223,8 +225,19 @@ class EntityGate:
         return replace(intent, **updates)
 
     @staticmethod
-    def infer_required_entities(message: str, intent: Intent) -> list[tuple[str, str]]:
+    def infer_required_entities(
+        message: str,
+        intent: Intent,
+        context: ContextStack | None = None,
+    ) -> list[tuple[str, str]]:
         """Return (entity_type, query_value) pairs that must be confirmed."""
+        if (
+            context is not None
+            and is_project_expense_follow_up(message)
+            and EntityGate.has_active_project_scope(context)
+        ):
+            return []
+
         required: list[tuple[str, str]] = []
         seen: set[tuple[str, str]] = set()
 
@@ -268,14 +281,38 @@ class EntityGate:
         return required
 
     @staticmethod
-    def intent_requires_entity_confirmation(message: str, intent: Intent) -> bool:
+    def has_active_project_scope(context: ContextStack) -> bool:
+        """True when session has a project from confirmation or prior expense tool."""
+        if EntityGate.project_confirmed(context):
+            return True
+        facts = context.working_memory.session_facts
+        return bool(
+            facts.get("resolved_project_id") or facts.get("last_expense_summary_project_id"),
+        )
+
+    @staticmethod
+    def intent_requires_entity_confirmation(
+        message: str,
+        intent: Intent,
+        context: ContextStack | None = None,
+    ) -> bool:
         """Return True when this turn needs entity discovery/confirmation before KPI tools."""
-        if EntityGate.infer_required_entities(message, intent):
+        if (
+            context is not None
+            and is_project_expense_follow_up(message)
+            and EntityGate.has_active_project_scope(context)
+        ):
+            return False
+        if EntityGate.infer_required_entities(message, intent, context):
             return True
         query_blob = f"{message} {intent.specific_intent}".lower()
         if intent.subject_area == "project" and intent.primary_action == "fetch_data":
+            if is_project_expense_follow_up(message) and context and EntityGate.has_active_project_scope(context):
+                return False
             return True
         if looks_like_project_cost_query(query_blob, subject_area=intent.subject_area):
+            if is_project_expense_follow_up(message) and context and EntityGate.has_active_project_scope(context):
+                return False
             return True
         return False
 
@@ -287,7 +324,7 @@ class EntityGate:
         confirmed_entities: list[ConfirmedEntityRef] | None = None,
     ) -> EntityGateResult:
         """Discover entities and decide whether financial tools may proceed."""
-        required = self.infer_required_entities(message, intent)
+        required = self.infer_required_entities(message, intent, context)
         if not required:
             return EntityGateResult(status="not_required")
 

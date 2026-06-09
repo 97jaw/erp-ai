@@ -8,8 +8,13 @@ from typing import Any
 from gateway.core.execution_orchestrator import ExecutionResult
 from gateway.core.intent_analyzer import Intent
 from gateway.core.project_expense_routing import is_project_expense_tool_result
-from gateway.quality_narrative import narrate_project_expense_summary
+from gateway.quality_narrative import (
+    narrate_project_expense_breakdown,
+    narrate_project_expense_summary,
+)
 from gateway.tools.project_expense import PROJECT_EXPENSE_TOOL_NAMES, SUMMARY_SOURCES
+
+BREAKDOWN_SOURCE = "project_expense_breakdown_mobile"
 
 
 @dataclass
@@ -34,6 +39,10 @@ class ResultSynthesizer:
             return self._from_parallel_aggregates(aggregate_tables, intent)
         if len(aggregate_tables) == 1:
             return self._from_single_aggregate(aggregate_tables[0], intent)
+
+        mobile_summary = self._find_project_expense_breakdown(execution_result.results, intent)
+        if mobile_summary is not None:
+            return mobile_summary
 
         mobile_summary = self._find_project_expense_summary(execution_result.results, intent)
         if mobile_summary is not None:
@@ -64,6 +73,26 @@ class ResultSynthesizer:
             if step.tool in PROJECT_EXPENSE_TOOL_NAMES:
                 return True
         return False
+
+    @staticmethod
+    def _find_project_expense_breakdown(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if payload.get("_source") != BREAKDOWN_SOURCE:
+                continue
+            if payload.get("status") != "success":
+                continue
+            text = narrate_project_expense_breakdown(
+                payload,
+                user_message=intent.specific_intent,
+            )
+            return SynthesizedResult(text=text, visualization=None)
+        return None
 
     @staticmethod
     def _find_project_expense_summary(

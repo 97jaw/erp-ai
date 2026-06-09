@@ -18,6 +18,7 @@ from gateway.core.entity_gate import (
     build_entity_not_found_clarification,
     build_entity_options,
 )
+from gateway.core.project_query_utils import is_project_expense_follow_up
 from gateway.core.entity_resolver import EntityResolver, OdooProjectSearch, ResolutionStrategy
 from gateway.core.execution_orchestrator import ExecutionOrchestrator, ExecutionResult
 from gateway.core.failure_handler import Failure, FailureMode, HonestFailureResponder
@@ -240,6 +241,7 @@ class IntelligentQueryHandler:
                 PipelineStage.INTENT,
                 self._intent_analyzer.analyze(message, context),
             )
+            intent = self._apply_expense_follow_up_intent(message, intent, context)
             telemetry.intent_extracted = intent
 
             if intent.out_of_scope:
@@ -323,6 +325,11 @@ class IntelligentQueryHandler:
                 session_id=session_id,
                 strategy_override=strategy_override,
                 executor=executor,
+            )
+            self._persist_execution_scope(
+                resolved_session=resolved_session,
+                context=context,
+                execution_result=pipeline["execution_result"],
             )
             strategy_used = pipeline["strategy"]
             quality_review = pipeline["quality_review"]
@@ -631,6 +638,71 @@ class IntelligentQueryHandler:
         remember_shown_suggestions(context, suggestions)
         return suggestions
 
+    @staticmethod
+    def _apply_expense_follow_up_intent(
+        message: str,
+        intent: Intent,
+        context: ContextStack,
+    ) -> Intent:
+        """Clear spurious clarification when user drills into the active project."""
+        if not is_project_expense_follow_up(message):
+            return intent
+        if not EntityGate.has_active_project_scope(context):
+            return intent
+        updates: dict[str, Any] = {
+            "requires_clarification": False,
+            "clarification_question": None,
+        }
+        if intent.subject_area in {"general", "other", "financial"}:
+            updates["subject_area"] = "project"
+        if intent.primary_action in {"other", "ask_question", "search_entity"}:
+            updates["primary_action"] = "analyze"
+        return replace(intent, **updates)
+
+    @staticmethod
+    def _persist_execution_scope(
+        *,
+        resolved_session: str,
+        context: ContextStack,
+        execution_result: ExecutionResult,
+    ) -> None:
+        """Persist project scope from tool results for follow-up turns."""
+        if not resolved_session:
+            return
+        from gateway.session_entities import update_scope_from_tool_result
+
+        for step in execution_result.strategy_used.steps:
+            result = execution_result.results.get(step.step_number)
+            if result is None:
+                continue
+            update_scope_from_tool_result(
+                resolved_session,
+                step.tool,
+                step.tool_input or {},
+                result,
+            )
+            if not isinstance(result, dict) or result.get("status") != "success":
+                continue
+            project_id = result.get("project_id") or (step.tool_input or {}).get("project_id")
+            if not project_id:
+                continue
+            pid = int(project_id)
+            context.working_memory.session_facts["resolved_project_id"] = pid
+            if step.tool == "get_project_expense_summary":
+                context.working_memory.session_facts["last_expense_summary_project_id"] = pid
+            project_name = result.get("project_name")
+            if project_name:
+                context.working_memory.session_facts["project_name"] = str(project_name)
+            confirmed = dict(
+                context.working_memory.session_facts.get("confirmed_entities") or {},
+            )
+            if not confirmed.get("project"):
+                confirmed["project"] = {
+                    "id": pid,
+                    "name": str(project_name or f"Project {pid}"),
+                }
+                context.working_memory.session_facts["confirmed_entities"] = confirmed
+
     async def _run_entity_gate(
         self,
         intent: Intent,
@@ -641,7 +713,7 @@ class IntelligentQueryHandler:
         confirmed_entities: list[ConfirmedEntityRef] | None = None,
     ) -> tuple[Intent, EntityResolutionMeta]:
         meta = EntityResolutionMeta()
-        if not EntityGate.intent_requires_entity_confirmation(message, intent):
+        if not EntityGate.intent_requires_entity_confirmation(message, intent, context):
             meta.entity_gate_status = "skipped"
             return intent, meta
 

@@ -97,6 +97,52 @@ def narrate_project_expense_summary(
     return " ".join(parts)
 
 
+def narrate_project_expense_breakdown(
+    payload: dict[str, Any],
+    *,
+    user_message: str = "",
+    language: str = "en",
+) -> str:
+    """Build narrative for GL expense breakdown (MG → SG → Account)."""
+    del user_message
+    project_name = payload.get("project_name") or "Project"
+    currency = payload.get("currency") or "AED"
+    grand_total = float(payload.get("grand_total") or 0)
+    groups = payload.get("groups") or []
+    group_count = int(payload.get("group_count") or len(groups))
+
+    if language == "ar":
+        lead = (
+            f"{project_name}: تفصيل المصروفات على مستوى الحسابات "
+            f"{format_currency(grand_total)} عبر {group_count} مجموعة رئيسية."
+        )
+    else:
+        lead = (
+            f"{project_name}: GL expense breakdown totals {format_currency(grand_total)} "
+            f"across {group_count} main group(s)."
+        )
+
+    top_bits: list[str] = []
+    for group in groups[:3]:
+        if not isinstance(group, dict):
+            continue
+        name = group.get("name") or group.get("code") or "Group"
+        amount = float(group.get("total") or 0)
+        top_bits.append(f"{name} ({format_currency(amount)})")
+
+    parts = [lead]
+    if top_bits:
+        if language == "ar":
+            parts.append(f"أبرز المجموعات: {', '.join(top_bits)}.")
+        else:
+            parts.append(f"Top main groups: {', '.join(top_bits)}.")
+    if language == "ar":
+        parts.append("راجع البطاقة للتسلسل الهرمي MG → SG → Account.")
+    else:
+        parts.append("See the card for the full MG → SG → Account hierarchy.")
+    return " ".join(parts)
+
+
 def _payload_from_expense_visualization(visualization: dict[str, Any]) -> dict[str, Any]:
     kpis = visualization.get("kpis") or {}
     wo = (kpis.get("wo_amount") or {}).get("value")
@@ -160,7 +206,11 @@ def generate_narrative(
     visual_type = visualization.get("visual_type")
     if visual_type == "PROJECT_EXPENSE_SUMMARY":
         for result in reversed(tool_results):
-            if isinstance(result, dict) and result.get("_source") == "project_expense_summary_mobile":
+            if isinstance(result, dict) and result.get("_source") in {
+                "project_expense_summary",
+                "project_expense_summary_mobile",
+                "project_expense_dashboard",
+            }:
                 return narrate_project_expense_summary(
                     result,
                     user_message=user_message,
@@ -168,6 +218,26 @@ def generate_narrative(
                 )
         return narrate_project_expense_summary(
             _payload_from_expense_visualization(visualization),
+            user_message=user_message,
+            language=language,
+        )
+
+    if visual_type == "PROJECT_EXPENSE_BREAKDOWN":
+        for result in reversed(tool_results):
+            if isinstance(result, dict) and result.get("_source") == "project_expense_breakdown_mobile":
+                return narrate_project_expense_breakdown(
+                    result,
+                    user_message=user_message,
+                    language=language,
+                )
+        return narrate_project_expense_breakdown(
+            {
+                "project_name": visualization.get("project_name"),
+                "currency": visualization.get("currency"),
+                "grand_total": visualization.get("grand_total"),
+                "group_count": visualization.get("group_count"),
+                "groups": visualization.get("groups") or [],
+            },
             user_message=user_message,
             language=language,
         )

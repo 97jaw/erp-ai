@@ -109,6 +109,58 @@ def meaningful_project_words(query: str) -> list[str]:
     ]
 
 
+_EXPENSE_FOLLOW_UP_SIGNALS = (
+    "break down",
+    "breakdown",
+    "cost breakdown",
+    "cost break down",
+    "breakdown as well",
+    "as well",
+    "drill down",
+    "drill into",
+    "by account",
+    "gl detail",
+    "gl details",
+    "full breakdown",
+    "show breakdown",
+    "where did the money",
+    "where exactly",
+)
+
+_BREAKDOWN_HINT_WORDS = frozenset(
+    {
+        "break",
+        "down",
+        "breakdown",
+        "well",
+        "also",
+        "cost",
+        "account",
+        "gl",
+        "show",
+        "me",
+        "the",
+        "as",
+    },
+)
+
+
+def is_project_expense_follow_up(message: str) -> bool:
+    """True when the user is drilling into the last discussed project expense."""
+    blob = (message or "").lower().strip()
+    if not blob:
+        return False
+    if not any(signal in blob for signal in _EXPENSE_FOLLOW_UP_SIGNALS):
+        return False
+    hint = extract_project_name_hint(message)
+    if hint is None:
+        return True
+    words = [word.lower() for word in hint.split()]
+    if not words:
+        return True
+    return all(word in _BREAKDOWN_HINT_WORDS or word in PROJECT_STOP_WORDS for word in words)
+
+
 def looks_like_project_cost_query(message: str, *, subject_area: str = "") -> bool:
     """Return True when the user is likely asking for project cost data."""
     message_blob = message.lower()

@@ -427,6 +427,90 @@ async def test_villa_maintenance_expense_for_this_year_uses_mobile_summary() -> 
 
 
 @pytest.mark.asyncio
+async def test_villa_cost_breakdown_follow_up_reuses_session_project() -> None:
+    """Follow-up breakdown uses last project from session scope without re-asking."""
+    from gateway.core.telemetry_capture import InMemoryTelemetryStore, TelemetryCapture
+    from gateway.session_scope import SessionScopeStore
+
+    session_id = "villa-breakdown-follow-up"
+    SessionScopeStore.update(
+        session_id,
+        project_id=31034,
+        project_name="Villa Maintenance No. 34",
+        last_expense_summary_project_id=31034,
+        confirmed_entities={
+            "project": {"id": 31034, "name": "Villa Maintenance No. 34"},
+        },
+    )
+
+    follow_up = "show me cost break down as well"
+    intent = Intent(
+        primary_action="analyze",
+        subject_area="project",
+        specific_intent=follow_up,
+        requires_clarification=True,
+        clarification_question="Which project would you like to see the cost breakdown for?",
+        estimated_complexity="simple",
+    )
+    executor = MockToolExecutor(
+        responses={
+            ("get_project_expense_breakdown", 1): {
+                "status": "success",
+                "project_id": 31034,
+                "project_name": "Villa Maintenance No. 34",
+                "currency": "AED",
+                "grand_total": 11053.15,
+                "group_count": 1,
+                "groups": [
+                    {
+                        "code": "MG01",
+                        "name": "Salary",
+                        "total": 11053.15,
+                        "subgroups": [
+                            {
+                                "code": "SG01",
+                                "name": "Labor",
+                                "total": 11053.15,
+                                "accounts": [
+                                    {
+                                        "code": "55002",
+                                        "name": "LABER WAGES",
+                                        "total": 11053.15,
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+                "_source": "project_expense_breakdown_mobile",
+            },
+        },
+    )
+    handler = IntelligentQueryHandler(
+        context_builder=ContextStackBuilder(),
+        intent_analyzer=FixedIntentAnalyzer(intent),
+        entity_resolver=EntityResolver(MockProjectSearch([])),
+        proactive_layer=StubProactiveIntelligence(),
+        telemetry_capture=TelemetryCapture(repository=InMemoryTelemetryStore()),
+    )
+
+    response = await handler.handle(
+        follow_up,
+        _super_admin(),
+        adapter=object(),
+        executor=executor,
+        session_id=session_id,
+    )
+
+    assert not response.awaiting_clarification
+    assert "Which project" not in response.text
+    assert response.tools_called == ["get_project_expense_breakdown"]
+    assert executor.calls[0][1].get("project_id") == 31034
+    assert (response.visualization or {}).get("visual_type") == "PROJECT_EXPENSE_BREAKDOWN"
+    assert (response.visualization or {}).get("groups")
+
+
+@pytest.mark.asyncio
 async def test_payslip_query_honest_unavailable_response() -> None:
     intent = Intent(
         primary_action="fetch_data",

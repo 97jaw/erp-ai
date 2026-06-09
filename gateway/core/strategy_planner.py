@@ -333,7 +333,7 @@ class StrategyPlanner:
             if intent.primary_action == "compare":
                 compare_ids = facts.get("compare_project_ids") or facts.get("resolved_project_ids") or []
                 return len(compare_ids) >= 2
-            if EntityGate.project_confirmed(context):
+            if EntityGate.has_active_project_scope(context):
                 return True
             if extract_project_id_from_text(intent.specific_intent):
                 return True
@@ -373,7 +373,7 @@ class StrategyPlanner:
             except ValueError:
                 return None
 
-        if EntityGate.project_confirmed(context) or extract_project_id_from_text(intent.specific_intent):
+        if EntityGate.has_active_project_scope(context) or extract_project_id_from_text(intent.specific_intent):
             return resolve_project_expense_tool_for_strategy(intent, context)
         return None
 
