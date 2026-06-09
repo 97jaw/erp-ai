@@ -70,6 +70,15 @@ class ContextStackBuilder:
                     "id": int(scope["project_id"]),
                     "name": str(scope.get("project_name") or f"Project {scope['project_id']}"),
                 }
+            if scope.get("project_id"):
+                working_memory.set_active_project(
+                    int(scope["project_id"]),
+                    str(scope.get("project_name") or f"Project {scope['project_id']}"),
+                    confirmed=bool(
+                        (scope.get("confirmed_entities") or {}).get("project")
+                        or scope.get("last_expense_summary_project_id")
+                    ),
+                )
             if scope.get("last_turn"):
                 working_memory.session_facts["last_turn"] = dict(scope["last_turn"])
         return ContextStack(

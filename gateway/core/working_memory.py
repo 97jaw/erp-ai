@@ -6,10 +6,25 @@ In-memory for Phase 1; PostgreSQL persistence deferred to Admin Panel plan.
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gateway.core.intent_analyzer import Intent
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ActiveContext:
+    """The subject the conversation is currently about."""
+
+    project_id: int | None = None
+    project_name: str | None = None
+    project_wo: str | None = None
+    confirmed: bool = False
+    set_at_turn: int = 0
+    last_referenced_turn: int = 0
 
 
 @dataclass
@@ -25,10 +40,57 @@ class WorkingMemory:
     recent_intents: list["Intent"] = field(default_factory=list)
     recent_periods: list[Any] = field(default_factory=list)
     session_facts: dict[str, Any] = field(default_factory=dict)
+    active_context: ActiveContext = field(default_factory=ActiveContext)
+    turn_count: int = 0
 
     # Strategy memory
     successful_strategies: dict[str, Any] = field(default_factory=dict)
     failed_strategies: dict[str, Any] = field(default_factory=dict)
+
+    def set_active_project(
+        self,
+        project_id: int,
+        name: str,
+        *,
+        wo: str | None = None,
+        confirmed: bool = True,
+    ) -> None:
+        """Mark a project as the active subject of conversation."""
+        self.active_context = ActiveContext(
+            project_id=int(project_id),
+            project_name=name,
+            project_wo=wo,
+            confirmed=confirmed,
+            set_at_turn=self.turn_count,
+            last_referenced_turn=self.turn_count,
+        )
+        self.session_facts["resolved_project_id"] = int(project_id)
+        self.session_facts["project_name"] = name
+        if confirmed:
+            confirmed_entities = dict(self.session_facts.get("confirmed_entities") or {})
+            confirmed_entities["project"] = {"id": int(project_id), "name": name}
+            self.session_facts["confirmed_entities"] = confirmed_entities
+        logger.info("[ActiveContext] Set to %s (id=%s)", name, project_id)
+
+    def get_active_project(self) -> ActiveContext | None:
+        """Return active project when conversation is still about one."""
+        if self.active_context.project_id is None:
+            return None
+        return self.active_context
+
+    def touch_active(self) -> None:
+        """Mark active context as still relevant this turn."""
+        if self.active_context.project_id is not None:
+            self.active_context.last_referenced_turn = self.turn_count
+
+    def clear_active_project(self) -> None:
+        """User switched away from the current project."""
+        if self.active_context.project_id is not None:
+            logger.info(
+                "[ActiveContext] Cleared (was %s)",
+                self.active_context.project_name,
+            )
+        self.active_context = ActiveContext()
 
     def detect_topic_shift(self, message: str, intent: "Intent") -> bool:
         """Return True when this turn shifts topic away from the previous turn."""
@@ -47,6 +109,7 @@ class WorkingMemory:
     def clear_entity_context(self) -> None:
         """Wipe recent entities and session entity facts after a topic shift."""
         self.recent_entities = []
+        self.clear_active_project()
         for key in (
             "confirmed_entities",
             "resolved_project_id",
@@ -57,6 +120,7 @@ class WorkingMemory:
 
     def remember_intent(self, intent: "Intent") -> None:
         """Track recent intents for topic-shift detection within the same request cycle."""
+        self.turn_count += 1
         self.recent_intents.append(intent)
         self.recent_intents = self.recent_intents[-5:]
 

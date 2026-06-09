@@ -283,6 +283,9 @@ class EntityGate:
     @staticmethod
     def has_active_project_scope(context: ContextStack) -> bool:
         """True when session has a project from confirmation or prior expense tool."""
+        active = context.working_memory.get_active_project()
+        if active and active.project_id is not None:
+            return True
         if EntityGate.project_confirmed(context):
             return True
         facts = context.working_memory.session_facts

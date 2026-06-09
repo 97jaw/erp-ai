@@ -8,6 +8,7 @@ from typing import Any
 from gateway.core.context_stack import ContextStack
 from gateway.core.intent_analyzer import EntityReference, Intent
 from gateway.core.project_query_utils import looks_like_project_cost_query
+from gateway.core.working_memory import ActiveContext
 from gateway.tool_validation import extract_project_id_from_text
 
 PROJECT_EXPENSE_PROMPT_SECTION = """
@@ -136,6 +137,69 @@ _FOLLOW_UP_BREAKDOWN_SIGNALS = (
     "show me cost",
 )
 
+FOLLOW_UP_SIGNALS = (
+    "breakdown",
+    "break down",
+    "drill down",
+    "drill into",
+    "show more",
+    "more detail",
+    "the detail",
+    "expand",
+    "as well",
+    "also",
+    "and the",
+    "what about",
+    "share the",
+    "give me the",
+    "show the",
+    "التفاصيل",
+    "بالتفصيل",
+    "أيضا",
+)
+
+
+def is_followup_to_active(
+    query: str,
+    intent: Intent,
+    active: ActiveContext | None,
+) -> bool:
+    """Return True when the query is a follow-up about the active project."""
+    if active is None or active.project_id is None:
+        return False
+
+    for entity in intent.entities:
+        if entity.type != "project":
+            continue
+        val = entity.value.strip().lower()
+        if val == str(active.project_id):
+            return True
+        active_name = (active.project_name or "").lower()
+        if active_name and active_name in val:
+            return True
+        if active_name and val in active_name:
+            return True
+        return False
+
+    query_lower = query.lower()
+    return any(signal in query_lower for signal in FOLLOW_UP_SIGNALS)
+
+
+def apply_active_follow_up_context(context: ContextStack, active: ActiveContext) -> None:
+    """Inject active project into session facts and skip entity discovery."""
+    from gateway.core.entity_gate import EntityGate
+
+    context.working_memory.touch_active()
+    EntityGate.apply_confirmed_entities(
+        context,
+        {
+            "project": {
+                "id": active.project_id,
+                "name": active.project_name or f"Project {active.project_id}",
+            },
+        },
+    )
+
 _MATERIALS_FILTER = re.compile(r"\bmaterials?\b", re.IGNORECASE)
 _ARABIC_EXPENSE = re.compile(r"تكاليف|مصروف|تكلفة")
 
@@ -261,6 +325,10 @@ def _collect_project_ids(
 ) -> list[int]:
     ids: list[int] = []
     facts = context.working_memory.session_facts
+
+    active = context.working_memory.get_active_project()
+    if active and active.project_id is not None:
+        ids.append(int(active.project_id))
 
     confirmed = facts.get("confirmed_entities") or {}
     project = confirmed.get("project") or {}

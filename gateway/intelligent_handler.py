@@ -273,16 +273,43 @@ class IntelligentQueryHandler:
                 )
 
             intent = EntityGate.infer_entity_hints(message, intent)
-            intent, entity_meta = await self._run_stage(
-                PipelineStage.ENTITY_RESOLUTION,
-                self._run_entity_gate(
-                    intent,
-                    context,
-                    adapter,
-                    message,
-                    confirmed_entities=confirmed_entities,
-                ),
+            from gateway.core.project_expense_routing import (
+                apply_active_follow_up_context,
+                is_followup_to_active,
             )
+
+            active = context.working_memory.get_active_project()
+            if is_followup_to_active(message, intent, active):
+                logger.info(
+                    "[FollowUp] Using active project %s (id=%s) — skipping entity resolution",
+                    active.project_name,
+                    active.project_id,
+                )
+                apply_active_follow_up_context(context, active)
+                intent = self._apply_expense_follow_up_intent(message, intent, context)
+                entity_meta = EntityResolutionMeta(
+                    entity_gate_status="skipped",
+                    resolved_entities=[
+                        {
+                            "entity_type": "project",
+                            "project_id": active.project_id,
+                            "project_name": active.project_name,
+                            "id": active.project_id,
+                            "name": active.project_name,
+                        },
+                    ],
+                )
+            else:
+                intent, entity_meta = await self._run_stage(
+                    PipelineStage.ENTITY_RESOLUTION,
+                    self._run_entity_gate(
+                        intent,
+                        context,
+                        adapter,
+                        message,
+                        confirmed_entities=confirmed_entities,
+                    ),
+                )
             telemetry.intent_extracted = intent
 
             if entity_meta.resolved_entities and resolved_session:
@@ -723,21 +750,19 @@ class IntelligentQueryHandler:
             if not project_id:
                 continue
             pid = int(project_id)
-            context.working_memory.session_facts["resolved_project_id"] = pid
+            project_name = result.get("project_name")
+            if step.tool in {
+                "get_project_expense_summary",
+                "get_project_expense_breakdown",
+                "get_project_expenses",
+            }:
+                context.working_memory.set_active_project(
+                    pid,
+                    str(project_name or f"Project {pid}"),
+                    confirmed=True,
+                )
             if step.tool == "get_project_expense_summary":
                 context.working_memory.session_facts["last_expense_summary_project_id"] = pid
-            project_name = result.get("project_name")
-            if project_name:
-                context.working_memory.session_facts["project_name"] = str(project_name)
-            confirmed = dict(
-                context.working_memory.session_facts.get("confirmed_entities") or {},
-            )
-            if not confirmed.get("project"):
-                confirmed["project"] = {
-                    "id": pid,
-                    "name": str(project_name or f"Project {pid}"),
-                }
-                context.working_memory.session_facts["confirmed_entities"] = confirmed
 
     async def _run_entity_gate(
         self,
