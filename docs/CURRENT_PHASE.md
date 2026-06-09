@@ -8,7 +8,7 @@
 
 **File:** `docs/CONVERSATION_INTELLIGENCE_SPRINT.md` — Conversation Intelligence Sprint (6 fixes)
 
-**Status:** Day 1 in progress — FIX 4 ✅ live verified; FIX 5 code + tests ✅, live verify pending
+**Status:** Day 1 complete — FIX 4 ✅ + FIX 5 ✅ (code/tests/deploy; chat E2E pending Odoo recovery)
 
 ---
 
@@ -17,7 +17,7 @@
 | Fix | Description | Code | Tests | Live verify |
 |-----|-------------|------|-------|-------------|
 | FIX 4 | Deploy A1 breakdown unwrap | ✅ `fd4b2e6` | ✅ | ✅ Salary / AED 11,053 on project 15157 |
-| FIX 5 | Number sanity (W.O=0) | ✅ | ✅ 4 tests | ⏳ |
+| FIX 5 | Number sanity (W.O=0) | ✅ `82669fb` | ✅ 4 tests | ✅ narrative on EC2 (Odoo 502 blocked full chat E2E) |
 | FIX 1 | Sticky context | — | — | — |
 | FIX 2 | Follow-up routing | — | — | — |
 | FIX 3 | Skip confirmed | — | — | — |
@@ -26,7 +26,9 @@
 
 **FIX 4 live result (2026-06-09):** Breakdown for Villa Maintenance No. 34 (15157) returns Salary → Labor → 55002 LABER WAGES, AED 11,053.15. Chat follow-up "share the expense breakdown" shows GL breakdown (not "No data found").
 
-**FIX 5 scope:** `spend_status` / `status_label` on summary tool; W.O=0 → no spend %; `no_contradictions` quality gate; honest narration.
+**FIX 5 live result (2026-06-09):** Deployed `82669fb`. EC2 container with Villa 34 payload (wo=0, spent=12120) now narrates: *"AED 12,120 in recorded expenses, but no W.O budget is assigned…"* — not *"2% on track"*. Full `/chat/stream` E2E blocked briefly by Odoo `502 Bad Gateway` on `erp.elrace.com`; retry when Odoo is back.
+
+**Next:** Day 2–3 FIX 1 + FIX 2 (sticky context + follow-up).
 
 **Run FIX 5 tests:**
 ```bash
