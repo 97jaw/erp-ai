@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import time
 from typing import Any
-
 
 CACHE_TTLS: dict[str, int] = {
     "search_odoo": 60,
@@ -36,6 +34,51 @@ CACHE_TTLS: dict[str, int] = {
 }
 
 DEFAULT_CACHE_TTL = 180
+ENTITY_CACHE_TTL_SECONDS = 300
+
+ENTITY_BOUND_TOOLS = frozenset(
+    {
+        "get_project_expenses",
+        "get_project_financial_data",
+        "get_project_cost_categories",
+        "get_project_expense_summary",
+        "get_project_expense_breakdown",
+        "compare_project_expenses",
+        "get_purchase_orders",
+        "get_partner_ageing",
+        "get_partner_ledger",
+    },
+)
+
+
+def build_tool_cache_key(
+    user_id: int | str,
+    tool_name: str,
+    tool_input: dict[str, Any],
+) -> str:
+    """Build cache key scoped by user and entity identity."""
+    payload = dict(tool_input or {})
+    entity_id = (
+        payload.get("project_id")
+        or payload.get("partner_id")
+        or payload.get("employee_id")
+        or payload.get("id")
+    )
+    if entity_id is None and payload.get("project_ids"):
+        entity_id = ",".join(str(value) for value in sorted(payload["project_ids"]))
+
+    entity_hint = (
+        payload.get("project_name")
+        or payload.get("name_search")
+        or payload.get("query")
+        or ""
+    )
+    hint_hash = (
+        hashlib.md5(str(entity_hint).encode("utf-8")).hexdigest()[:8]
+        if entity_hint
+        else "noent"
+    )
+    return f"{user_id}:{tool_name}:{entity_id or 'noid'}:{hint_hash}"
 
 
 class ToolResultCache:
@@ -45,21 +88,27 @@ class ToolResultCache:
 
     @classmethod
     def _ttl(cls, tool_name: str) -> int:
+        if tool_name in ENTITY_BOUND_TOOLS:
+            return ENTITY_CACHE_TTL_SECONDS
         return CACHE_TTLS.get(tool_name, DEFAULT_CACHE_TTL)
 
     @classmethod
-    def make_key(cls, tool_name: str, tool_input: dict[str, Any]) -> str:
-        clean = {
-            key: value
-            for key, value in (tool_input or {}).items()
-            if key not in {"context_hint", "cache_bust"}
-        }
-        payload = json.dumps(clean, sort_keys=True, default=str)
-        return hashlib.md5(f"{tool_name}:{payload}".encode("utf-8")).hexdigest()
+    def make_key(
+        cls,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        user_id: int | str = "anon",
+    ) -> str:
+        return build_tool_cache_key(user_id, tool_name, tool_input)
 
     @classmethod
-    def get(cls, tool_name: str, tool_input: dict[str, Any]) -> Any | None:
-        key = cls.make_key(tool_name, tool_input)
+    def get(
+        cls,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        user_id: int | str = "anon",
+    ) -> Any | None:
+        key = cls.make_key(tool_name, tool_input, user_id)
         entry = cls._entries.get(key)
         if not entry:
             return None
@@ -70,13 +119,24 @@ class ToolResultCache:
         return value
 
     @classmethod
-    def set(cls, tool_name: str, tool_input: dict[str, Any], value: Any) -> None:
-        key = cls.make_key(tool_name, tool_input)
+    def set(
+        cls,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        value: Any,
+        user_id: int | str = "anon",
+    ) -> None:
+        key = cls.make_key(tool_name, tool_input, user_id)
         cls._entries[key] = (time.monotonic() + cls._ttl(tool_name), value)
 
     @classmethod
-    def delete(cls, tool_name: str, tool_input: dict[str, Any]) -> None:
-        cls._entries.pop(cls.make_key(tool_name, tool_input), None)
+    def delete(
+        cls,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        user_id: int | str = "anon",
+    ) -> None:
+        cls._entries.pop(cls.make_key(tool_name, tool_input, user_id), None)
 
     @classmethod
     def clear(cls) -> None:

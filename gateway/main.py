@@ -1225,6 +1225,7 @@ def execute_tool(
 
     try:
         user = get_request_user()
+        cache_user_id = user.id if user is not None else "anon"
         if user is not None:
             denied = check_tool_allowed(user, tool_name, tool_input)
             if denied:
@@ -1249,9 +1250,9 @@ def execute_tool(
         date_was_defaulted = bool(tool_input.pop("_date_was_defaulted", False))
 
         if should_bust_cache(user_message):
-            ToolResultCache.delete(tool_name, tool_input)
+            ToolResultCache.delete(tool_name, tool_input, cache_user_id)
         else:
-            cached_result = ToolResultCache.get(tool_name, tool_input)
+            cached_result = ToolResultCache.get(tool_name, tool_input, cache_user_id)
             if cached_result is not None:
                 cached = True
                 result = validate_tool_result(tool_name, cached_result)
@@ -1524,7 +1525,7 @@ def execute_tool(
                 result["date_to"] = tool_input["date_to"]
             if date_was_defaulted:
                 result["_date_was_defaulted"] = True
-            ToolResultCache.set(tool_name, tool_input, result)
+            ToolResultCache.set(tool_name, tool_input, result, cache_user_id)
 
         result = validate_tool_result(tool_name, result)
         update_scope_from_tool_result(session_id, tool_name, tool_input, result)

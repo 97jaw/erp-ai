@@ -6,69 +6,81 @@
 
 ## 🎯 ACTIVE PLAN
 
-**File:** `AI_CORE_INTELLIGENCE_ARCHITECTURE.md` — Phase 10 Hardening (production readiness)
+**File:** `docs/CONVERSATION_INTEGRITY_FIX_PLAN.md` — Conversation Integrity Fix Sprint
+
+> **BLOCKER:** Must complete F1–F6 before `ELRACE_OMNI_AGENT_FINAL_PLAN.md` / Universal Odoo Access.
 
 ---
 
 ## 📍 ACTIVE PHASE
 
-**Phase:** Phase 10 — Hardening & Production Readiness
-**Status:** COMPLETE
-**Completed:** 2026-06-07
+**Phase:** F1 — Cache Integrity
+**Status:** COMPLETE (unit tests pass; live verify pending on EC2)
+**Completed:** 2026-06-09
 
 ---
 
-## ✅ PHASE 10 DELIVERABLES
+## ✅ F1 DELIVERABLES
 
 | Task | Deliverable | Status |
 |------|-------------|--------|
-| 1 — k6 load test | `scripts/load/phase10_chat_stream.js`, `queries.js`, README | ✅ |
-| 2 — Performance baseline | `scripts/phase10_baseline.py`, migration `009_phase10_query_telemetry.sql` | ✅ |
-| 3 — Edge cases | `tests/integration/test_phase10_edge_cases.py` + Part XII canonical | ✅ |
-| 4 — Error logging review | `scripts/phase10_acceptance.py` log scan | ✅ |
-| 5 — Documentation | `PHASE_10_HARDENING_REPORT.md`, `PROJECT_CONTEXT.md`, release tag | ✅ |
+| Explicit cache key | `build_tool_cache_key()` in `gateway/tool_cache.py` | ✅ |
+| User scoping | `user_id` passed from `execute_tool()` | ✅ |
+| Entity TTL | `ENTITY_CACHE_TTL_SECONDS = 300` for entity-bound tools | ✅ |
+| Unit tests | `tests/test_tool_cache_integrity.py` (4 tests) | ✅ |
+| Live verify | Villa 48 → Al Mushrif → Hatta Hospital sequence | ⏳ deploy + manual |
 
-**Targets:** p50 < 3s, p95 < 8s, cost < $0.50/query
+**Key shape:** `{user_id}:{tool_name}:{entity_id|noid}:{hint_hash}`
 
-**Run commands:**
+**Run tests:**
 ```bash
-k6 run scripts/load/phase10_chat_stream.js
-python scripts/phase10_baseline.py
-python scripts/phase10_acceptance.py
+pytest tests/test_tool_cache_integrity.py tests/test_backend_hardening.py -q
+```
+
+**Live verify (same session, after deploy):**
+```
+1. Villa No. 48 expense this year
+2. Al Mushrif expense this year
+3. Hatta Hospital expense this year
+```
+Expect 3 distinct `project_id`s; grep logs for `cached:true` only when same entity repeats.
+
+**Deploy:**
+```bash
+git push origin main
+# EC2:
+cd /opt/ooa && git pull && ./deploy/aws/scripts/deploy-code.sh
 ```
 
 ---
 
-## 📋 PHASE 9 SUMMARY (COMPLETE)
+## ⏭ NEXT PHASE
 
-Phase 9 — Integration & Migration. Entity gate, strict confirmation, `safe_search_read()` adapter fix.
-
-- [x] Entity gate + mandatory confirm (0/1/many matches)
-- [x] `safe_search_read()` — Odoo `search_read` override workaround
-- [x] Failure handler — no `DATA_AMBIGUOUS` from entity resolution
-- [x] Zayidia live regression fixed and verified
+**Phase F2 — Topic-Shift Detection + EntityGate Always Runs** (see `CONVERSATION_INTEGRITY_FIX_PLAN.md` §4)
 
 ---
 
-## 📋 PHASE 8 SUMMARY (COMPLETE)
+## 📊 SPRINT PROGRESS
 
-Phase 8 — Telemetry & Learning. Verified 2026-06-07.
-
-- [x] **8.1** `InteractionTelemetry` + migration `008_ai_interactions.sql`
-- [x] **8.2** `TelemetryCapture` wired into handler
-- [x] **8.3** `LearningEngine` + daily job
+```
+F1 Cache integrity          ✅ (live verify pending)
+F2 Topic-shift / EntityGate ⬜
+F3 search_entity routing    ⬜
+F4 Quality gate AED 0       ⬜
+F5 Format clarification     ⬜
+F6 Integration + sign-off   ⬜
+```
 
 ---
 
-## 📊 OVERALL PROJECT PROGRESS
+## 📋 PRIOR WORK (COMPLETE)
 
-```
-Completed: 10 (Phases 1–10)
-Next: Production deployment / Server 2 infrastructure
-```
+- Phase 10 Hardening — production readiness (2026-06-07)
+- Phase 9 Integration & Migration — entity gate, safe_search_read
+- Villa expense pipeline + breakdown follow-up context (commits dc1d269, 4a6f363)
 
 ---
 
 ## 🎯 NORTH STAR
 
-> **"Senior management consultant working alongside a CFO's chief of staff"**
+> Fix the five conversation-integrity bugs from the 2026-06-09 incident **before** expanding to Universal Odoo Access.
