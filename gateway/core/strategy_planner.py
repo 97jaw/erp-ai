@@ -10,6 +10,7 @@ from typing import Any
 
 from gateway.core.context_stack import ContextStack
 from gateway.core.project_query_utils import looks_like_project_cost_query
+from gateway.tool_validation import extract_project_id_from_text
 from gateway.core.intent_analyzer import (
     AnthropicJsonClient,
     Intent,
@@ -315,7 +316,7 @@ class StrategyPlanner:
         """Return True when one gateway tool can fulfill the intent."""
         if intent.estimated_complexity != "simple":
             return False
-        if intent.primary_action in {"compare"}:
+        if intent.primary_action == "compare":
             return False
         if intent.primary_action == "analyze" and len(intent.entities) > 1:
             return False
@@ -323,8 +324,20 @@ class StrategyPlanner:
 
     @staticmethod
     def _is_project_cost_query(intent: Intent, context: ContextStack) -> bool:
-        """Return True when a confirmed project should use get_project_expenses directly."""
+        """Return True when a confirmed project expense intelligence query can run."""
         from gateway.core.entity_gate import EntityGate
+        from gateway.core.project_expense_routing import is_project_expense_query
+
+        if is_project_expense_query(intent.specific_intent, intent):
+            facts = context.working_memory.session_facts
+            if intent.primary_action == "compare":
+                compare_ids = facts.get("compare_project_ids") or facts.get("resolved_project_ids") or []
+                return len(compare_ids) >= 2
+            if EntityGate.project_confirmed(context):
+                return True
+            if extract_project_id_from_text(intent.specific_intent):
+                return True
+            return False
 
         if not EntityGate.project_confirmed(context):
             return False
@@ -360,6 +373,24 @@ class StrategyPlanner:
                     "date_from": context.temporal_context.last_3_months[0],
                     "date_to": context.temporal_context.last_3_months[1],
                 }
+
+        if intent.primary_action in {"search_entity", "fetch_data", "analyze", "compare"} and intent.subject_area == "project":
+            from gateway.core.entity_gate import EntityGate
+            from gateway.core.project_expense_routing import (
+                is_project_expense_query,
+                resolve_project_expense_tool_for_strategy,
+            )
+
+            if is_project_expense_query(intent.specific_intent, intent):
+                if intent.primary_action == "compare":
+                    try:
+                        return resolve_project_expense_tool_for_strategy(intent, context)
+                    except ValueError:
+                        pass
+                elif EntityGate.project_confirmed(context):
+                    return resolve_project_expense_tool_for_strategy(intent, context)
+                elif extract_project_id_from_text(intent.specific_intent):
+                    return resolve_project_expense_tool_for_strategy(intent, context)
 
         if intent.primary_action in {"search_entity", "fetch_data"} and intent.subject_area == "project":
             from gateway.core.entity_gate import EntityGate

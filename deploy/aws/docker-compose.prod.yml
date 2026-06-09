@@ -1,0 +1,63 @@
+# OOA — AWS staging / production stack
+# Usage on EC2:
+#   cp deploy/aws/.env.production.example .env.production
+#   # edit secrets, then:
+#   docker compose -f deploy/aws/docker-compose.prod.yml --env-file .env.production up -d
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ooa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-ooa}
+    volumes:
+      - ooa-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ooa} -d ${POSTGRES_DB:-ooa}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ooa-net
+
+  gateway:
+    image: ${OOA_IMAGE:-ooa-gateway:latest}
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile.prod
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${OOA_HTTP_PORT:-8000}:8000"
+    env_file:
+      - ${OOA_ENV_FILE:-../../.env.production}
+    environment:
+      OOA_DB_URL: postgresql://${POSTGRES_USER:-ooa}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ooa}
+      OOA_GATEWAY_HOST: 0.0.0.0
+      OOA_GATEWAY_PORT: 8000
+      OOA_LOG_JSON: "true"
+      OOA_LOG_FILE: /app/logs/ooa-gateway.jsonl
+    volumes:
+      - ooa-logs:/app/logs
+      - ooa-cache:/app/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    networks:
+      - ooa-net
+
+volumes:
+  ooa-pg-data:
+  ooa-logs:
+  ooa-cache:
+
+networks:
+  ooa-net:
+    driver: bridge

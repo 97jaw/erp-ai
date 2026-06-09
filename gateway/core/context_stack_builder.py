@@ -46,6 +46,16 @@ class ContextStackBuilder:
         """Assemble all context components for the current user and request."""
         working_memory = WorkingMemory()
         await self._load_user_patterns(user.id, working_memory)
+        if request.session_id:
+            from gateway.session_scope import SessionScopeStore
+
+            scope = SessionScopeStore.get(request.session_id)
+            if scope.get("confirmed_entities"):
+                working_memory.session_facts["confirmed_entities"] = dict(
+                    scope["confirmed_entities"],
+                )
+            if scope.get("project_id"):
+                working_memory.session_facts["resolved_project_id"] = int(scope["project_id"])
         return ContextStack(
             user=self._build_user_context(user),
             conversation=ConversationContext(

@@ -150,3 +150,109 @@ def test_builds_project_counts_by_client_table():
 
     assert visual["visual_type"] == "DATA_TABLE"
     assert visual["data"]["rows"][0] == ["Alpha", 3]
+
+
+def test_builds_project_expense_summary_visual():
+    payload = {
+        "status": "success",
+        "_source": "project_expense_summary_mobile",
+        "project_id": 14549,
+        "project_name": "Zayidia Boys School",
+        "currency": "AED",
+        "wo_amount": 2_240_000,
+        "total_expenses": 1_745_000,
+        "spend_percent_of_wo": 77.9,
+        "variance_amount": 495_000,
+        "is_over_budget": False,
+        "top_expenses": [{"name": "Civil", "amount": 580_000, "percent": 33.2}],
+        "expense_lines": [{"label": "LPO", "amount": 400_000}],
+    }
+
+    visual = build_visualization_from_tool_results(
+        ["get_project_expense_summary"],
+        [payload],
+    )
+
+    assert visual["visual_type"] == "PROJECT_EXPENSE_SUMMARY"
+    assert visual["kpis"]["wo_amount"]["value"] == 2_240_000
+    assert visual["top_expenses"][0]["label"] == "Civil"
+    assert visual["data"]["summary_chart"]["data"]["rows"][0]["value"] == 580_000
+
+
+def test_builds_project_expense_breakdown_visual():
+    payload = {
+        "status": "success",
+        "_source": "project_expense_breakdown_mobile",
+        "project_id": 14549,
+        "project_name": "Zayidia Boys School",
+        "currency": "AED",
+        "grand_total": 150_000,
+        "group_count": 1,
+        "groups": [
+            {
+                "code": "MG01",
+                "name": "Direct Costs",
+                "total": 150_000,
+                "subgroups": [
+                    {
+                        "code": "SG01",
+                        "name": "Materials",
+                        "total": 150_000,
+                        "accounts": [{"code": "5001", "name": "Steel", "total": 100_000}],
+                    },
+                ],
+            },
+        ],
+    }
+
+    visual = build_visualization_from_tool_results(
+        ["get_project_expense_breakdown"],
+        [payload],
+    )
+
+    assert visual["visual_type"] == "PROJECT_EXPENSE_BREAKDOWN"
+    assert visual["groups"][0]["expanded"] is True
+    assert visual["groups"][0]["subgroups"][0]["accounts"][0]["total"] == 100_000
+
+
+def test_builds_project_expense_comparison_visual():
+    payload = {
+        "status": "success",
+        "_source": "compare_project_expenses",
+        "projects": [
+            {
+                "project_id": 14549,
+                "project_name": "Zayidia Boys School",
+                "currency": "AED",
+                "wo_amount": 2_240_000,
+                "total_expenses": 1_745_000,
+                "spend_percent_of_wo": 78,
+                "is_over_budget": False,
+            },
+            {
+                "project_id": 14610,
+                "project_name": "Zayidia Girls School",
+                "currency": "AED",
+                "wo_amount": 2_850_000,
+                "total_expenses": 2_910_000,
+                "spend_percent_of_wo": 102,
+                "is_over_budget": True,
+            },
+        ],
+        "totals": {
+            "combined_wo": 5_090_000,
+            "combined_expenses": 4_655_000,
+            "over_budget_count": 1,
+        },
+        "ranked_by": "total_expenses",
+    }
+
+    visual = build_visualization_from_tool_results(
+        ["compare_project_expenses"],
+        [payload],
+    )
+
+    assert visual["visual_type"] == "PROJECT_EXPENSE_COMPARISON"
+    assert len(visual["projects"]) == 2
+    assert visual["projects"][1]["is_over_budget"] is True
+    assert visual["insights"]

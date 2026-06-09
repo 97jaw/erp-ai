@@ -1,4 +1,17 @@
-export const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000";
+/** API base URL — same origin in production; localhost:8000 when CRA dev server runs on :3000. */
+export const API_BASE = (() => {
+  const configured = process.env.REACT_APP_API_BASE;
+  if (configured && configured.trim()) {
+    return configured.replace(/\/$/, "");
+  }
+  if (typeof window !== "undefined") {
+    if (window.location.port === "3000") {
+      return "http://localhost:8000";
+    }
+    return window.location.origin;
+  }
+  return "http://localhost:8000";
+})();
 
 export const AUTH_STORAGE_KEY = "ooa_auth";
 

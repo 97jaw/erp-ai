@@ -52,6 +52,7 @@ def main() -> int:
         from dotenv import load_dotenv
 
         load_dotenv(ROOT / ".env")
+        load_dotenv(ROOT / ".env.production")
     except ImportError:
         pass
 

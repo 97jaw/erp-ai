@@ -198,6 +198,21 @@ ARABIC_EQUIVALENTS: dict[str, list[str]] = {
     "ministry of education": ["وزارة التربية"],
 }
 
+TRANSLITERATION_VARIANTS: dict[str, list[str]] = {
+    "zaidia": ["zayidia", "zayedia", "zaidiya", "zaydia"],
+    "zayidia": ["zaidia", "zayedia", "zaidiya", "zaydia"],
+    "zayedia": ["zayidia", "zaidia", "zaidiya"],
+    "zaidiya": ["zayidia", "zaidia", "zayedia"],
+    "zaydia": ["zayidia", "zaidia", "zayedia"],
+}
+
+GENERIC_BROAD_WORDS = frozenset(
+    {"boys", "girls", "the", "with", "from", "that", "this", "last", "month"},
+)
+
+PHASE_A_FAST_THRESHOLD = 0.7
+FUZZY_LOCAL_SCORE_CUTOFF = 55
+
 PROJECT_SEARCH_FIELDS = (
     "id",
     "name",
@@ -247,8 +262,10 @@ class EntityResolver:
         "fuzzy_match",
         "acronym_match",
         "arabic_english_equivalent",
+        "transliteration_variant",
         "semantic_similarity",
         "description_match",
+        "fuzzy_local",
     )
 
     def __init__(
@@ -268,8 +285,56 @@ class EntityResolver:
         context: ContextStack,
         min_confidence: float = 0.6,
     ) -> ResolutionResult:
-        """Find project(s) matching the query using multiple strategies."""
+        """Find project(s) matching the query using ilike strategies then local fuzzy fallback."""
         normalized_query = query.strip()
+        phase_a = await self._run_ilike_strategies(normalized_query, context, min_confidence)
+
+        if (
+            phase_a.confident_matches
+            and phase_a.confident_matches[0].confidence > PHASE_A_FAST_THRESHOLD
+        ):
+            return phase_a
+
+        logger.info(
+            "[EntityResolver] Phase A found no matches above %.1f. "
+            "Running Phase B fuzzy search for %r",
+            PHASE_A_FAST_THRESHOLD,
+            normalized_query,
+        )
+
+        broad_candidates = await self._fetch_broad_candidates(normalized_query, context)
+        fuzzy_matches = self._local_fuzzy_match(normalized_query, broad_candidates)
+
+        if not fuzzy_matches:
+            return phase_a
+
+        merged = self._merge_match_lists(
+            phase_a.confident_matches,
+            phase_a.weak_matches,
+            fuzzy_matches,
+        )
+        return self._build_resolution_result(
+            normalized_query,
+            merged,
+            min_confidence=min_confidence,
+            context=context,
+            raw_discovery_count=phase_a.raw_discovery_count + len(broad_candidates),
+            strategies_used=[*phase_a.strategies_used, "fuzzy_local"],
+        )
+
+    async def _run_ilike_strategies(
+        self,
+        normalized_query: str,
+        context: ContextStack,
+        min_confidence: float,
+    ) -> ResolutionResult:
+        """Phase A — Odoo ilike strategies plus known transliteration variants."""
+        all_results: list[list[dict[str, Any]]] = []
+
+        variant_hits = await self._transliteration_variant_search(normalized_query, context)
+        if variant_hits:
+            all_results.append(variant_hits)
+
         fast_strategies = (
             self._exact_phrase_match,
             self._all_words_match,
@@ -283,7 +348,6 @@ class EntityResolver:
             self._description_match,
         )
 
-        all_results: list[list[dict[str, Any]]] = []
         for strategy in fast_strategies:
             all_results.append(await strategy(normalized_query, context))
 
@@ -296,38 +360,203 @@ class EntityResolver:
                     break
 
         scored = self._score_matches(merged, normalized_query)
-        confident = [match for match in scored if match.confidence >= min_confidence]
+        return self._build_resolution_result(
+            normalized_query,
+            scored,
+            min_confidence=min_confidence,
+            context=context,
+            raw_discovery_count=len(merged),
+            strategies_used=list(self.STRATEGY_NAMES),
+        )
+
+    async def _transliteration_variant_search(
+        self,
+        query: str,
+        context: ContextStack,
+    ) -> list[dict[str, Any]]:
+        del context
+        results: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for word in meaningful_project_words(query):
+            for variant in TRANSLITERATION_VARIANTS.get(word.lower(), []):
+                hits = await self._search_with_strategy(
+                    query,
+                    [["name", "ilike", variant]],
+                    strategy="transliteration_variant",
+                    limit=20,
+                )
+                for project in hits:
+                    project_id = int(project.get("id") or 0)
+                    if project_id <= 0 or project_id in seen:
+                        continue
+                    seen.add(project_id)
+                    results.append(project)
+        return results
+
+    async def _fetch_broad_candidates(
+        self,
+        query: str,
+        context: ContextStack,
+    ) -> list[dict[str, Any]]:
+        """Fetch a broad candidate set for local fuzzy matching (Phase B)."""
+        del context
+        words = self._broad_fetch_words(query)
+        candidates_by_id: dict[int, dict[str, Any]] = {}
+
+        for word in words:
+            results = await self._search.search_projects(
+                [["name", "ilike", word]],
+                limit=50,
+            )
+            for project in results:
+                project_id = int(project.get("id") or 0)
+                if project_id <= 0:
+                    continue
+                candidates_by_id[project_id] = self._tag_entity(project, "broad_word_match")
+
+        if candidates_by_id:
+            return list(candidates_by_id.values())
+
+        results = await self._search.search_projects([["active", "=", True]], limit=500)
+        return [self._tag_entity(project, "broad_active") for project in results]
+
+    @staticmethod
+    def _broad_fetch_words(query: str) -> list[str]:
+        words = meaningful_project_words(query) or [part for part in query.split() if part]
+        selected = [
+            word
+            for word in words
+            if len(word) >= 4 and word.lower() not in GENERIC_BROAD_WORDS
+        ]
+        if not selected:
+            selected = [
+                word
+                for word in words
+                if len(word) >= 3 and word.lower() not in GENERIC_BROAD_WORDS
+            ]
+        return list(dict.fromkeys(selected))
+
+    def _local_fuzzy_match(
+        self,
+        query: str,
+        candidates: list[dict[str, Any]],
+    ) -> list[Match]:
+        """Apply rapidfuzz (or SequenceMatcher fallback) on broad Odoo candidates."""
+        if not candidates:
+            return []
+
+        id_to_project = {
+            int(project.get("id") or 0): project
+            for project in candidates
+            if int(project.get("id") or 0) > 0
+        }
+        if not id_to_project:
+            return []
+
+        query_lower = query.strip().lower()
+        try:
+            from rapidfuzz import fuzz, process
+
+            extracted = process.extract(
+                query_lower,
+                {pid: str(project.get("name") or "").lower() for pid, project in id_to_project.items()},
+                scorer=fuzz.WRatio,
+                score_cutoff=FUZZY_LOCAL_SCORE_CUTOFF,
+                limit=10,
+            )
+            matches: list[Match] = []
+            for _name, score, project_id in extracted:
+                project = id_to_project.get(int(project_id))
+                if project is None:
+                    continue
+                matches.append(
+                    Match(
+                        entity=project,
+                        confidence=score / 100.0,
+                        strategy="fuzzy_local",
+                    ),
+                )
+            return matches
+        except ImportError:
+            logger.warning("[EntityResolver] rapidfuzz not installed — using SequenceMatcher fallback")
+            return self._local_fuzzy_match_sequence(query_lower, id_to_project)
+
+    @staticmethod
+    def _local_fuzzy_match_sequence(
+        query_lower: str,
+        id_to_project: dict[int, dict[str, Any]],
+    ) -> list[Match]:
+        scored: list[Match] = []
+        for project_id, project in id_to_project.items():
+            name_lower = str(project.get("name") or "").lower()
+            ratio = SequenceMatcher(None, query_lower, name_lower).ratio()
+            if ratio * 100 < FUZZY_LOCAL_SCORE_CUTOFF:
+                continue
+            scored.append(
+                Match(
+                    entity=project,
+                    confidence=ratio,
+                    strategy="fuzzy_local",
+                ),
+            )
+        return sorted(scored, key=lambda match: -match.confidence)[:10]
+
+    @staticmethod
+    def _merge_match_lists(*groups: list[Match]) -> list[Match]:
+        best_by_id: dict[int, Match] = {}
+        for group in groups:
+            for match in group:
+                project_id = int(match.entity.get("id") or 0)
+                if project_id <= 0:
+                    continue
+                existing = best_by_id.get(project_id)
+                if existing is None or match.confidence > existing.confidence:
+                    best_by_id[project_id] = match
+        return sorted(best_by_id.values(), key=lambda item: -item.confidence)
+
+    def _build_resolution_result(
+        self,
+        query: str,
+        scored_matches: list[Match],
+        *,
+        min_confidence: float,
+        context: ContextStack,
+        raw_discovery_count: int,
+        strategies_used: list[str],
+    ) -> ResolutionResult:
+        confident = [match for match in scored_matches if match.confidence >= min_confidence]
         weak = [
             match
-            for match in scored
+            for match in scored_matches
             if WEAK_CONFIDENCE_MIN <= match.confidence < min_confidence
         ]
-        if not confident and not weak and merged:
-            salvage = sorted(scored, key=lambda match: -match.confidence)
-            if salvage and salvage[0].confidence > 0:
+        if not confident and not weak and scored_matches:
+            salvage = sorted(scored_matches, key=lambda match: -match.confidence)
+            if salvage[0].confidence > 0:
                 weak = [salvage[0]]
             else:
                 weak = [
                     Match(
-                        entity=merged[0],
+                        entity=scored_matches[0].entity,
                         confidence=WEAK_CONFIDENCE_MIN,
-                        strategy=str(merged[0].get("_strategy") or "discovery"),
+                        strategy=str(scored_matches[0].strategy or "discovery"),
                     ),
                 ]
+
         accessible = self._filter_by_permissions(confident, context)
         weak_accessible = self._filter_by_permissions(weak, context)
         top_match = accessible[0] if accessible else (weak_accessible[0] if weak_accessible else None)
         return ResolutionResult(
-            query=normalized_query,
-            total_matches=len(merged),
+            query=query,
+            total_matches=len(scored_matches),
             confident_matches=accessible,
             weak_matches=weak_accessible,
-            raw_discovery_count=len(merged),
+            raw_discovery_count=raw_discovery_count,
             top_match=top_match,
             confidence=top_match.confidence if top_match else 0.0,
             winning_strategy=top_match.strategy if top_match else None,
             ambiguity_level=self._calculate_ambiguity(accessible or weak_accessible),
-            strategies_used=list(self.STRATEGY_NAMES),
+            strategies_used=strategies_used,
         )
 
     async def _exact_phrase_match(self, query: str, context: ContextStack) -> list[dict[str, Any]]:

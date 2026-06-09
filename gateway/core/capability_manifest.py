@@ -72,6 +72,7 @@ CRITICAL RULES:
         """Return gateway tool names available for strategy planning prompts."""
         return (
             "get_financial_report, get_project_expenses, get_project_financial_data, "
+            "get_project_expense_summary, get_project_expense_breakdown, compare_project_expenses, "
             "get_general_ledger, get_trial_balance, get_partner_ageing, get_partner_ledger, "
             "get_projects_summary, search_odoo, group_and_aggregate"
         )
@@ -99,6 +100,9 @@ CAPABILITY_MANIFEST = CapabilityManifest(
         Capability("financial.trial_balance", "Trial Balance"),
         Capability("financial.general_ledger", "General Ledger"),
         Capability("project.financials", "Project financial data"),
+        Capability("project.expense_summary", "Project expense summary (mobile API KPIs)"),
+        Capability("project.expense_breakdown", "Project GL expense breakdown"),
+        Capability("project.expense_compare", "Multi-project expense comparison"),
         Capability("project.search", "Project search by name/code"),
         Capability("partner.search", "Customer/Vendor search"),
         Capability("partner.ageing", "Receivables/Payables ageing"),

@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './styles/global.css';
 import './main/styles/main-layout.css';
+import './components/visualization/project_expense/project-expense.css';
 import './styles/animations.css';
 import './styles/admin.css';
 import './index.css';

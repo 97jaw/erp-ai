@@ -336,6 +336,15 @@ export const hasRenderableVisualization = (viz) => {
     const groups = normalized.data?.groups || normalized.groups;
     return Array.isArray(groups) && groups.length > 0;
   }
+  if (visualType === "PROJECT_EXPENSE_SUMMARY") {
+    return Boolean(normalized.kpis?.wo_amount);
+  }
+  if (visualType === "PROJECT_EXPENSE_BREAKDOWN") {
+    return Array.isArray(normalized.groups) && normalized.groups.length > 0;
+  }
+  if (visualType === "PROJECT_EXPENSE_COMPARISON") {
+    return Array.isArray(normalized.projects) && normalized.projects.length >= 2;
+  }
   return false;
 };
 

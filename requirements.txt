@@ -103,6 +103,7 @@ xlsxwriter==3.2.9
 fpdf2==2.8.3
 matplotlib==3.10.3
 Jinja2==3.1.6
+rapidfuzz==3.14.1
 xxhash==3.6.0
 yarl==1.23.0
 zstandard==0.25.0

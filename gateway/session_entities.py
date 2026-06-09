@@ -11,6 +11,8 @@ PROJECT_FOLLOW_UP_TOOLS = {
     "get_project_expenses",
     "get_project_financial_data",
     "get_project_cost_categories",
+    "get_project_expense_summary",
+    "get_project_expense_breakdown",
 }
 
 
@@ -68,6 +70,8 @@ def update_scope_from_tool_result(
             updates["project_id"] = int(project_id)
         if project_name:
             updates["project_name"] = str(project_name)
+        if tool_name == "get_project_expense_summary" and project_id:
+            updates["last_expense_summary_project_id"] = int(project_id)
 
     if tool_name == "get_purchase_orders":
         request = result.get("request") or {}
@@ -107,7 +111,10 @@ def build_session_context_prompt(session_id: str | None) -> str:
         + "\n".join(lines)
         + "\n- When the user says this project, the expenses, categorize them, or drill down, "
         "reuse the last project ID instead of repeating the previous dashboard.\n"
-        + "- For category breakdowns, call get_project_cost_categories.\n"
+        + "- When the user asks for project expense overview, KPIs, or spend status, call get_project_expense_summary.\n"
+        + "- When the user asks for GL/account drill-down, call get_project_expense_breakdown.\n"
+        + "- When comparing multiple projects, call compare_project_expenses.\n"
+        + "- For trade category breakdowns (LPO, labor, materials), call get_project_cost_categories.\n"
         + "- Never invent project names or financial numbers.\n"
     )
 

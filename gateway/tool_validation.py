@@ -102,7 +102,11 @@ def validate_tool_result(tool_name: str, result: Any) -> Any:
 
 
 def extract_project_id_from_text(text: str) -> int | None:
-    match = re.search(r'project_id["\s:]+(\d+)', text or "")
-    if not match:
-        return None
-    return int(match.group(1))
+    raw = text or ""
+    match = re.search(r'project_id["\s:]+(\d+)', raw, flags=re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"\bproject\s+#?\s*(\d+)\b", raw, flags=re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return None

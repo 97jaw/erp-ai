@@ -45,6 +45,21 @@ class MockProjectSearch:
         self.catalog = catalog or PROJECT_CATALOG
 
     async def search_projects(self, domain: list[Any], *, limit: int = 20) -> list[dict[str, Any]]:
+        if self._is_active_only_domain(domain):
+            return [
+                dict(project)
+                for project in self.catalog
+                if project.get("active", True)
+            ][:limit]
+
+        id_filter = self._extract_id_in_filter(domain)
+        if id_filter is not None:
+            return [
+                dict(project)
+                for project in self.catalog
+                if int(project.get("id") or 0) in id_filter
+            ][:limit]
+
         terms = self._extract_ilike_terms(domain)
         if not terms and domain in ([], [[]]):
             return [dict(project) for project in self.catalog[:limit]]
@@ -59,6 +74,17 @@ class MockProjectSearch:
             if self._domain_matches(terms, domain, haystacks):
                 matches.append(dict(project))
         return matches[:limit]
+
+    @staticmethod
+    def _is_active_only_domain(domain: list[Any]) -> bool:
+        return domain == [["active", "=", True]]
+
+    @staticmethod
+    def _extract_id_in_filter(domain: list[Any]) -> set[int] | None:
+        for item in domain:
+            if isinstance(item, list) and len(item) == 3 and item[0] == "id" and item[1] == "in":
+                return {int(value) for value in item[2]}
+        return None
 
     def _extract_ilike_terms(self, domain: list[Any]) -> list[str]:
         terms: list[str] = []

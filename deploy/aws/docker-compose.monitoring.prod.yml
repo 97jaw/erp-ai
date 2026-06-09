@@ -1,0 +1,158 @@
+# OOA monitoring stack — production overlay (run WITH docker-compose.prod.yml)
+#
+#   docker compose \
+#     -f deploy/aws/docker-compose.prod.yml \
+#     -f deploy/aws/docker-compose.monitoring.prod.yml \
+#     --env-file .env.production up -d
+#
+# Or: ./deploy/aws/scripts/deploy-full-stack.sh
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - ooa-net
+
+  redis_exporter:
+    image: oliver006/redis_exporter:v1.66.0
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "${OOA_REDIS_EXPORTER_PORT:-9121}:9121"
+    depends_on:
+      - redis
+    networks:
+      - ooa-net
+
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-ooa}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ooa}?sslmode=disable
+    ports:
+      - "${OOA_POSTGRES_EXPORTER_PORT:-9187}:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ooa-net
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "${OOA_CADVISOR_PORT:-8080}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - ooa-net
+
+  node_exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    ports:
+      - "${OOA_NODE_EXPORTER_PORT:-9100}:9100"
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - ooa-net
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    ports:
+      - "${OOA_ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ../../monitoring/alertmanager/alertmanager.generated.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    networks:
+      - ooa-net
+
+  loki:
+    image: grafana/loki:3.2.1
+    restart: unless-stopped
+    ports:
+      - "${OOA_LOKI_PORT:-3100}:3100"
+    volumes:
+      - ../../monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - ooa-loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - ooa-net
+
+  promtail:
+    image: grafana/promtail:3.2.1
+    restart: unless-stopped
+    volumes:
+      - ../../monitoring/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - ooa-logs:/var/log/ooa:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - ooa-net
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    ports:
+      - "${OOA_PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ../../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - ../../monitoring/prometheus/targets/gateway.ec2.json:/etc/prometheus/targets/gateway.json:ro
+      - ooa-prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    depends_on:
+      - alertmanager
+      - redis_exporter
+      - postgres_exporter
+    networks:
+      - ooa-net
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
+    ports:
+      - "${OOA_GRAFANA_PORT:-3030}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ooa-grafana-data:/var/lib/grafana
+      - ../../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - ooa-net
+
+volumes:
+  ooa-prometheus-data:
+  ooa-grafana-data:
+  ooa-loki-data:

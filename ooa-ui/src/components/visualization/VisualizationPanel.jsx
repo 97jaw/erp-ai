@@ -8,6 +8,9 @@ import BarChart from "./BarChart";
 import LineChart from "./LineChart";
 import PDFReportCard from "./PDFReportCard";
 import GroupedTable from "./GroupedTable";
+import ProjectExpenseSummary from "./project_expense/ProjectExpenseSummary";
+import ProjectExpenseBreakdown from "./project_expense/ProjectExpenseBreakdown";
+import ProjectExpenseComparison from "./project_expense/ProjectExpenseComparison";
 import DateRangeBadge from "./DateRangeBadge";
 import DisclosurePrompt from "./DisclosurePrompt";
 import {
@@ -126,6 +129,15 @@ export default function VisualizationPanel({ viz }) {
       ) : null}
 
       {resolved.visual_type === "GROUPED_TABLE" ? <GroupedTable data={resolved} /> : null}
+      {resolved.visual_type === "PROJECT_EXPENSE_SUMMARY" ? (
+        <ProjectExpenseSummary data={resolved} />
+      ) : null}
+      {resolved.visual_type === "PROJECT_EXPENSE_BREAKDOWN" ? (
+        <ProjectExpenseBreakdown data={resolved} />
+      ) : null}
+      {resolved.visual_type === "PROJECT_EXPENSE_COMPARISON" ? (
+        <ProjectExpenseComparison data={resolved} />
+      ) : null}
       {resolved.visual_type === "PDF_REPORT" ? (
         <PDFReportCard data={resolved.data} label={resolved.label} />
       ) : null}

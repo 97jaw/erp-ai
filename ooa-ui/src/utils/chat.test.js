@@ -70,4 +70,25 @@ describe("hasRenderableVisualization", () => {
     };
     expect(hasRenderableVisualization(viz)).toBe(true);
   });
+
+  it("accepts project expense summary viz", () => {
+    const viz = {
+      visual_type: "PROJECT_EXPENSE_SUMMARY",
+      kpis: {
+        wo_amount: { value: 1000, label: "W.O Amount", unit: "AED" },
+      },
+    };
+    expect(hasRenderableVisualization(viz)).toBe(true);
+  });
+
+  it("accepts project expense comparison viz", () => {
+    const viz = {
+      visual_type: "PROJECT_EXPENSE_COMPARISON",
+      projects: [
+        { id: 1, name: "A", total_expenses: 100 },
+        { id: 2, name: "B", total_expenses: 200 },
+      ],
+    };
+    expect(hasRenderableVisualization(viz)).toBe(true);
+  });
 });

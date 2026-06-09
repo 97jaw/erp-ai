@@ -1,5 +1,6 @@
 # Environment
 .env
+.env.production
 venv/
 __pycache__/
 *.pyc
@@ -31,6 +32,9 @@ monitoring/alertmanager/alertmanager.generated.yml
 reports/*.json
 reports/*.log
 !reports/.gitkeep
+
+# AWS deploy artifacts (docker save)
+deploy/aws/artifacts/*.tar.gz
 
 # Node
 ooa-ui/node_modules/

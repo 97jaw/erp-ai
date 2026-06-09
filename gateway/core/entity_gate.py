@@ -22,6 +22,40 @@ from gateway.core.project_query_utils import (
 
 logger = logging.getLogger(__name__)
 
+_TRANSIENT_ODOO_ERRORS = frozenset({"request-sent", "idle", "remotedisconnected"})
+
+# Intent often labels schools/facilities as partner; entity gate must search project.project.
+_PROJECT_ENTITY_SIGNALS = (
+    "school",
+    "zayidia",
+    "project",
+    "renovation",
+    "hospital",
+    "facility",
+    "campus",
+    "guard",
+    "building",
+)
+
+
+def _is_transient_odoo_error(exc: Exception) -> bool:
+    message = str(exc).strip().lower()
+    if message in _TRANSIENT_ODOO_ERRORS:
+        return True
+    return "timeout" in message or "connection" in message
+
+
+def _prefer_project_entity_type(value: str, message: str) -> str:
+    """Reclassify partner intents that clearly refer to Odoo projects."""
+    blob = f"{message} {value}".lower()
+    if looks_like_project_cost_query(message):
+        return "project"
+    if any(signal in blob for signal in _PROJECT_ENTITY_SIGNALS):
+        return "project"
+    if extract_project_name_hint(message):
+        return "project"
+    return "partner"
+
 EntityType = Literal["project", "partner", "account"]
 EntityGateStatus = Literal[
     "confirmed",
@@ -36,6 +70,9 @@ ENTITY_BOUND_FINANCIAL_TOOLS: frozenset[str] = frozenset(
         "get_project_expenses",
         "get_project_financial_data",
         "get_project_cost_categories",
+        "get_project_expense_summary",
+        "get_project_expense_breakdown",
+        "compare_project_expenses",
         "get_projects_by_client",
         "get_top_projects_by_metric",
         "get_projects_with_overrun",
@@ -46,6 +83,9 @@ TOOL_ENTITY_REQUIREMENTS: dict[str, list[EntityType]] = {
     "get_project_expenses": ["project"],
     "get_project_financial_data": ["project"],
     "get_project_cost_categories": ["project"],
+    "get_project_expense_summary": ["project"],
+    "get_project_expense_breakdown": ["project"],
+    "compare_project_expenses": [],
     "get_projects_by_client": ["partner"],
     "get_top_projects_by_metric": [],
     "get_projects_with_overrun": [],
@@ -196,7 +236,10 @@ class EntityGate:
 
         for entity in intent.entities:
             if entity.type in {"project", "partner", "account"}:
-                add(entity.type, entity.value)
+                entity_type = entity.type
+                if entity_type == "partner":
+                    entity_type = _prefer_project_entity_type(entity.value, message)
+                add(entity_type, entity.value)
 
         if needs_project and not any(item[0] == "project" for item in required):
             hint = extract_project_name_hint(message)
@@ -320,10 +363,24 @@ class EntityGate:
         context: ContextStack,
     ) -> tuple[list[dict[str, Any]], dict[str, Any], bool]:
         if entity_type == "project":
-            try:
-                result = await self._project_resolver.resolve_project(query, context)
-            except Exception as exc:
-                logger.warning("[EntityGate] project discovery failed: %s", exc)
+            last_error: Exception | None = None
+            for attempt in range(2):
+                try:
+                    result = await self._project_resolver.resolve_project(query, context)
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if attempt == 0 and _is_transient_odoo_error(exc):
+                        logger.warning(
+                            "[EntityGate] transient Odoo error on project discovery (retry): %s",
+                            exc,
+                        )
+                        await asyncio.sleep(0.35)
+                        continue
+                    logger.warning("[EntityGate] project discovery failed: %s", exc)
+                    return [], {"entity_discovery_count": 0, "entity_top_confidence": 0.0}, False
+            else:
+                logger.warning("[EntityGate] project discovery failed: %s", last_error)
                 return [], {"entity_discovery_count": 0, "entity_top_confidence": 0.0}, False
 
             discovery = {

@@ -479,6 +479,299 @@ def _pdf_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+
+def _normalize_top_expense_rows(top_expenses: list[Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in top_expenses or []:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("label") or item.get("name") or "Category"
+        amount = float(item.get("amount") or item.get("value") or 0)
+        pct = item.get("pct")
+        if pct is None:
+            pct = item.get("percent") or item.get("percentage")
+        rows.append(
+            {
+                "label": str(label),
+                "value": amount,
+                "pct": float(pct or 0),
+            },
+        )
+    return rows
+
+
+def _build_expense_insights(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    insights: list[dict[str, Any]] = []
+    spend_pct = float(payload.get("spend_percent_of_wo") or 0)
+    currency = payload.get("currency") or "AED"
+    wo_amount = float(payload.get("wo_amount") or 0)
+    total_expenses = float(payload.get("total_expenses") or 0)
+
+    if payload.get("is_over_budget"):
+        over_amount = total_expenses - wo_amount
+        insights.append(
+            {
+                "severity": "critical",
+                "title": "Over Budget",
+                "message": f"Over W.O by {currency} {over_amount:,.0f} ({spend_pct:.1f}%)",
+            },
+        )
+    elif spend_pct > 95:
+        insights.append(
+            {
+                "severity": "warning",
+                "title": "Near Budget Limit",
+                "message": f"Spent {spend_pct:.1f}% of W.O",
+            },
+        )
+
+    top_expenses = _normalize_top_expense_rows(payload.get("top_expenses") or [])
+    if top_expenses and top_expenses[0].get("pct", 0) > 40:
+        top = top_expenses[0]
+        insights.append(
+            {
+                "severity": "info",
+                "title": "Concentrated Spending",
+                "message": (
+                    f"{top['label']} alone is {top['pct']:.1f}% of total expenses"
+                ),
+            },
+        )
+    return insights
+
+
+def _project_expense_summary_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if payload.get("status") != "success":
+        return None
+    if payload.get("_source") != "project_expense_summary_mobile":
+        return None
+
+    currency = payload.get("currency") or "AED"
+    project_name = payload.get("project_name") or "Project"
+    wo_amount = float(payload.get("wo_amount") or 0)
+    total_expenses = float(payload.get("total_expenses") or 0)
+    spend_pct = float(payload.get("spend_percent_of_wo") or 0)
+    variance = float(payload.get("variance_amount") or (wo_amount - total_expenses))
+    top_expenses = _normalize_top_expense_rows(payload.get("top_expenses") or [])
+
+    spend_trend = "neutral"
+    spend_context = "On track"
+    if payload.get("is_over_budget"):
+        spend_trend = "down"
+        spend_context = "Over budget"
+    elif spend_pct > 95:
+        spend_trend = "down"
+        spend_context = "Near limit"
+
+    variance_trend = "up" if variance >= 0 else "down"
+    variance_context = (
+        f"{currency} {variance:,.0f} available"
+        if variance >= 0
+        else f"{currency} {abs(variance):,.0f} over W.O"
+    )
+
+    return {
+        "visual_type": "PROJECT_EXPENSE_SUMMARY",
+        "label": f"{project_name} Expenses",
+        "level": "summary",
+        "project_id": payload.get("project_id"),
+        "project_name": project_name,
+        "currency": currency,
+        "is_over_budget": bool(payload.get("is_over_budget")),
+        "spend_percent_of_wo": spend_pct,
+        "kpis": {
+            "wo_amount": {
+                "value": wo_amount,
+                "label": "W.O Amount",
+                "unit": currency,
+            },
+            "total_expenses": {
+                "value": total_expenses,
+                "label": "Total Spent",
+                "unit": currency,
+            },
+            "spend_pct": {
+                "value": spend_pct,
+                "label": "Spend %",
+                "unit": "%",
+                "trend": {"direction": spend_trend, "context": spend_context},
+            },
+            "variance": {
+                "value": variance,
+                "label": "Remaining" if variance >= 0 else "Over W.O",
+                "unit": currency,
+                "trend": {"direction": variance_trend, "context": variance_context},
+            },
+        },
+        "top_expenses": top_expenses,
+        "expense_lines": payload.get("expense_lines") or [],
+        "insights": _build_expense_insights(payload),
+        "data": {
+            "summary_chart": {
+                "visual_type": "BAR_CHART",
+                "label": "Top expense categories",
+                "data": {
+                    "rows": top_expenses,
+                },
+            },
+        },
+    }
+
+
+def _breakdown_groups_for_viz(
+    groups: list[dict[str, Any]],
+    grand_total: float,
+) -> list[dict[str, Any]]:
+    viz_groups: list[dict[str, Any]] = []
+    for index, group in enumerate(groups or []):
+        group_total = float(group.get("total") or 0)
+        subgroups: list[dict[str, Any]] = []
+        for subgroup in group.get("subgroups") or []:
+            sg_total = float(subgroup.get("total") or 0)
+            accounts = [
+                {
+                    "code": account.get("code"),
+                    "name": account.get("name"),
+                    "total": float(account.get("total") or 0),
+                }
+                for account in (subgroup.get("accounts") or [])
+            ]
+            subgroups.append(
+                {
+                    "code": subgroup.get("code"),
+                    "name": subgroup.get("name"),
+                    "total": sg_total,
+                    "pct": round((sg_total / grand_total) * 100, 1) if grand_total else 0,
+                    "expanded": False,
+                    "accounts": accounts,
+                },
+            )
+        viz_groups.append(
+            {
+                "code": group.get("code"),
+                "name": group.get("name"),
+                "total": group_total,
+                "pct": round((group_total / grand_total) * 100, 1) if grand_total else 0,
+                "expanded": index == 0,
+                "subgroups": subgroups,
+            },
+        )
+    return viz_groups
+
+
+def _project_expense_breakdown_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if payload.get("status") != "success":
+        return None
+    if payload.get("_source") != "project_expense_breakdown_mobile":
+        return None
+
+    groups = payload.get("groups") or []
+    if not groups:
+        return None
+
+    grand_total = float(payload.get("grand_total") or 0)
+    project_name = payload.get("project_name") or "Project"
+    currency = payload.get("currency") or "AED"
+
+    return {
+        "visual_type": "PROJECT_EXPENSE_BREAKDOWN",
+        "label": f"GL Breakdown: {project_name}",
+        "project_id": payload.get("project_id"),
+        "project_name": project_name,
+        "currency": currency,
+        "grand_total": grand_total,
+        "group_count": payload.get("group_count") or len(groups),
+        "groups": _breakdown_groups_for_viz(groups, grand_total),
+        "truncated": bool(payload.get("_truncated")),
+    }
+
+
+def _build_comparison_insights(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    insights: list[dict[str, Any]] = []
+    if len(projects) < 2:
+        return insights
+
+    over_budget = [project for project in projects if project.get("is_over_budget")]
+    if over_budget:
+        names = [str(project.get("project_name") or project.get("project_id")) for project in over_budget]
+        insights.append(
+            {
+                "severity": "warning",
+                "title": "Projects Over Budget",
+                "message": (
+                    f"{len(over_budget)} of {len(projects)} are over W.O: "
+                    f"{', '.join(names)}"
+                ),
+            },
+        )
+
+    spend_pcts = [float(project.get("spend_percent_of_wo") or 0) for project in projects]
+    if max(spend_pcts) - min(spend_pcts) > 30:
+        insights.append(
+            {
+                "severity": "info",
+                "title": "Wide Spend Variation",
+                "message": (
+                    f"Spend % ranges from {min(spend_pcts):.0f}% to "
+                    f"{max(spend_pcts):.0f}% across projects"
+                ),
+            },
+        )
+    return insights
+
+
+def _project_expense_comparison_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if payload.get("status") != "success":
+        return None
+    if payload.get("_source") != "compare_project_expenses":
+        return None
+
+    projects = payload.get("projects") or []
+    if len(projects) < 2:
+        return None
+
+    currency = projects[0].get("currency") or "AED"
+    comparison_projects: list[dict[str, Any]] = []
+    for index, project in enumerate(projects):
+        comparison_projects.append(
+            {
+                "id": project.get("project_id"),
+                "name": project.get("project_name"),
+                "wo_amount": float(project.get("wo_amount") or 0),
+                "total_expenses": float(project.get("total_expenses") or 0),
+                "spend_pct": float(project.get("spend_percent_of_wo") or 0),
+                "is_over_budget": bool(project.get("is_over_budget")),
+                "rank": index + 1,
+            },
+        )
+
+    totals = payload.get("totals") or {}
+    return {
+        "visual_type": "PROJECT_EXPENSE_COMPARISON",
+        "label": "Project Expense Comparison",
+        "currency": currency,
+        "projects": comparison_projects,
+        "totals": totals,
+        "ranked_by": payload.get("ranked_by") or "total_expenses",
+        "insights": _build_comparison_insights(projects),
+        "chart_type": "side_by_side_bar",
+        "data": {
+            "summary_chart": {
+                "visual_type": "BAR_CHART",
+                "label": "Spend by project",
+                "data": {
+                    "rows": [
+                        {
+                            "label": project["name"],
+                            "value": project["total_expenses"],
+                        }
+                        for project in comparison_projects
+                    ],
+                },
+            },
+        },
+    }
+
 def _visual_from_payload(
     tool_name: str,
     payload  : dict[str, Any],
@@ -509,6 +802,12 @@ def _visual_from_payload(
         return _group_aggregate_visual(payload)
     if tool_name in {"generate_pdf_report", "synthesize_pdf"}:
         return _pdf_visual(payload)
+    if tool_name == "get_project_expense_summary":
+        return _project_expense_summary_visual(payload)
+    if tool_name == "get_project_expense_breakdown":
+        return _project_expense_breakdown_visual(payload)
+    if tool_name == "compare_project_expenses":
+        return _project_expense_comparison_visual(payload)
     if tool_name in {
         "get_financial_report",
         "get_project_expenses",
@@ -523,6 +822,12 @@ def _visual_from_payload(
         return _financial_visual(payload)
     if payload.get("clients"):
         return _project_counts_by_client_visual(payload)
+    if payload.get("_source") == "project_expense_summary_mobile":
+        return _project_expense_summary_visual(payload)
+    if payload.get("_source") == "project_expense_breakdown_mobile":
+        return _project_expense_breakdown_visual(payload)
+    if payload.get("_source") == "compare_project_expenses":
+        return _project_expense_comparison_visual(payload)
     if payload.get("groups"):
         return _group_aggregate_visual(payload)
     return None
@@ -569,4 +874,13 @@ def is_renderable_visualization(visual: dict[str, Any] | None) -> bool:
         return bool(groups)
     if visual_type == "PDF_REPORT":
         return bool((visual.get("data") or {}).get("pdf_url"))
+    if visual_type == "PROJECT_EXPENSE_SUMMARY":
+        kpis = visual.get("kpis")
+        return isinstance(kpis, dict) and bool(kpis.get("wo_amount"))
+    if visual_type == "PROJECT_EXPENSE_BREAKDOWN":
+        groups = visual.get("groups") or []
+        return bool(groups)
+    if visual_type == "PROJECT_EXPENSE_COMPARISON":
+        projects = visual.get("projects") or []
+        return len(projects) >= 2
     return False

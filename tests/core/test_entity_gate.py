@@ -37,6 +37,18 @@ def test_infer_required_entities_from_cost_query() -> None:
     assert ("project", "Zayidia Boys School") in required
 
 
+def test_infer_required_entities_partner_mislabelled_as_project() -> None:
+    """Claude often types schools as partner on short follow-up queries."""
+    intent = Intent(
+        primary_action="search_entity",
+        subject_area="general",
+        specific_intent="Search for information about Zayidia Boys School entity",
+        entities=[EntityReference(type="partner", value="Zayidia Boys School", confidence=0.9)],
+    )
+    required = EntityGate.infer_required_entities("Zayidia Boys School", intent)
+    assert required == [("project", "Zayidia Boys School")]
+
+
 def test_confirmed_entity_ref_from_dict() -> None:
     parsed = ConfirmedEntityRef.from_dict({"type": "project", "id": 201, "name": "Zayidia Boys"})
     assert parsed is not None

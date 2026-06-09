@@ -45,6 +45,9 @@ _PROJECT_COST_SIGNALS = (
     "expenses",
     "spending",
     "budget",
+    "spend",
+    "spent",
+    "money",
 )
 
 _LEADING_PREFIXES = (

@@ -1,0 +1,42 @@
+# OOA production image — React UI + FastAPI gateway (single container)
+# Build: docker build -f docker/Dockerfile.prod -t ooa-gateway:latest .
+
+FROM node:20-bookworm-slim AS ui-build
+WORKDIR /ui
+COPY ooa-ui/package.json ooa-ui/package-lock.json* ./
+RUN npm ci --omit=dev 2>/dev/null || npm install
+COPY ooa-ui/ ./
+# Same-origin API when UI is served by the gateway (port 8000)
+ENV REACT_APP_API_BASE=
+RUN npm run build
+
+FROM python:3.11-slim AS runtime
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+COPY --from=ui-build /ui/build ./ooa-ui/build
+
+RUN mkdir -p logs static/reports .cache/schema \
+    && adduser --disabled-password --gecos "" ooa \
+    && chown -R ooa:ooa /app
+
+COPY docker/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+USER ooa
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -f http://127.0.0.1:8000/health || exit 1
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

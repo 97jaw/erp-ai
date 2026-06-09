@@ -67,6 +67,9 @@ TOOL_STATUS_LABELS = {
     "get_purchase_orders"     : "Looking up purchase orders...",
     "get_top_projects_by_metric": "Ranking projects...",
     "get_project_cost_categories": "Breaking down project costs...",
+    "get_project_expense_summary": "Loading project expense summary...",
+    "get_project_expense_breakdown": "Loading GL expense breakdown...",
+    "compare_project_expenses": "Comparing project expenses...",
     "get_period_comparison"   : "Comparing periods...",
     "get_projects_with_overrun": "Checking budget overruns...",
     "get_projects_by_client"  : "Finding client projects...",
@@ -217,6 +220,11 @@ from gateway.analytics_tools import (
     get_projects_by_client,
     get_projects_with_overrun,
     get_top_projects_by_metric,
+)
+from gateway.tools.project_expense import (
+    PROJECT_EXPENSE_TOOL_DEFINITIONS,
+    PROJECT_EXPENSE_TOOL_NAMES,
+    run_project_expense_tool,
 )
 from gateway.session_entities import (
     build_session_context_prompt,
@@ -1194,6 +1202,7 @@ TOOLS = [
             },
         },
     },
+    *PROJECT_EXPENSE_TOOL_DEFINITIONS,
 ]
 
 
@@ -1419,6 +1428,8 @@ def execute_tool(
             result = get_top_projects_by_metric(adapter, tool_input)
         elif tool_name == "get_project_cost_categories":
             result = get_project_cost_categories(adapter, tool_input, session_id)
+        elif tool_name in PROJECT_EXPENSE_TOOL_NAMES:
+            result = run_project_expense_tool(tool_name, tool_input, adapter)
         elif tool_name == "get_period_comparison":
             result = get_period_comparison(adapter, tool_input)
         elif tool_name == "get_projects_with_overrun":
@@ -1603,6 +1614,9 @@ DATA INTEGRITY RULES:
 - Project names must come from Odoo records returned by tools
 - For top-N project questions, use get_top_projects_by_metric instead of guessing
 - For category breakdown follow-ups on a project, use get_project_cost_categories
+- For project expense overview (KPIs, top trades, spend % of W.O), use get_project_expense_summary
+- For GL/account drill-down on project expenses, use get_project_expense_breakdown
+- To compare 2–10 projects by expense, use compare_project_expenses
 - For projects grouped by client in a year or date range, use get_project_counts_by_client or group_and_aggregate instead of sql_aggregate or search_odoo
 - If a tool returns an error payload, surface it instead of guessing
 
@@ -1712,11 +1726,14 @@ class _PromptContextRequest:
 
 def _compose_system_prompt_sections(today: str, *, context_section: str = "") -> str:
     """Assemble system prompt: core instructions, context stack, financial, quality."""
+    from gateway.core.project_expense_routing import PROJECT_EXPENSE_PROMPT_SECTION
+
     base = SYSTEM_PROMPT.replace("{today}", today)
     core, remainder = base.split(_FINANCIAL_SECTION_MARKER, 1)
     financial, quality = remainder.split(_QUALITY_SECTION_MARKER, 1)
     return (
         core
+        + PROJECT_EXPENSE_PROMPT_SECTION
         + context_section
         + _FINANCIAL_SECTION_MARKER
         + financial

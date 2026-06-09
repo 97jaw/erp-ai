@@ -1,0 +1,9 @@
+[
+  {
+    "targets": ["gateway:8000"],
+    "labels": {
+      "job": "ooa-gateway",
+      "environment": "production"
+    }
+  }
+]
