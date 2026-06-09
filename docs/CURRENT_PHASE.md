@@ -8,7 +8,7 @@
 
 **File:** `docs/CONVERSATION_INTELLIGENCE_SPRINT.md` — Conversation Intelligence Sprint (6 fixes)
 
-**Status:** Day 4 complete in code — FIX 3 ✅ (tests pass; live verify when you test)
+**Status:** All 6 fixes complete in code — **7-turn acceptance test** is the final gate (live verify when you test)
 
 ---
 
@@ -18,18 +18,27 @@
 |-----|-------------|------|-------|-------------|
 | FIX 4 | Deploy A1 breakdown unwrap | ✅ `fd4b2e6` | ✅ | ✅ |
 | FIX 5 | Number sanity (W.O=0) | ✅ `82669fb` | ✅ | ⏳ |
-| FIX 1 | Sticky context (`ActiveContext`) | ✅ `8d77ad5` | ✅ | ⏳ |
+| FIX 1 | Sticky context | ✅ `8d77ad5` | ✅ | ⏳ |
 | FIX 2 | Follow-up routing | ✅ `8d77ad5` | ✅ | ⏳ |
-| FIX 3 | Skip confirmed projects | ✅ | ✅ 2 tests | ⏳ |
-| FIX 6 | Non-financial honesty | — | — | — |
-| Final | 7-turn acceptance test | — | — | — |
+| FIX 3 | Skip confirmed projects | ✅ `58ee900` | ✅ | ⏳ |
+| FIX 6 | Non-financial honesty | ✅ | ✅ 4 tests | ⏳ |
+| Final | 7-turn acceptance test | — | — | ⏳ |
 
-**FIX 3:** Entity gate skips re-confirmation when query matches an already-confirmed active project (`_matches_active` / `_extract_entity_hint`).
+**FIX 6:** PM/deadline/status questions → `project_attribute` intent + honest deferral (no financial re-confirm, no tool calls).
 
-**Run FIX 3 tests:**
+**Run FIX 6 tests:**
 ```bash
-pytest tests/core/test_entity_gate.py::test_confirmed_project_not_reconfirmed \
-  tests/core/test_entity_gate.py::test_new_project_still_needs_confirmation -q
+pytest tests/core/test_project_attribute.py -q
+```
+
+**7-turn acceptance test** (from sprint doc — run live after deploy):
+```
+1. Villa 34 expense for this year
+2. share the expense breakdown as well
+3. breakdown of Villa Maintenance No. 34
+4. (same after confirm)
+5-6. General maintenance Al Mushrif
+7. can you name the project manager of villa 34?
 ```
 
 **Deploy:**
@@ -43,9 +52,7 @@ cd /opt/ooa && git pull && ./deploy/aws/scripts/deploy-code.sh
 
 ## ⏭ NEXT
 
-**Day 5:** FIX 6 — Non-financial honesty (project manager, attributes).
-
-**Day 6–7:** Full 7-turn acceptance test → then **Elrace Omni-Agent Final Plan**.
+Pass 7-turn live test → **Elrace Omni-Agent Final Plan**
 
 ---
 

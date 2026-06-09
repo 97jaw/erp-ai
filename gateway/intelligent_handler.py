@@ -272,6 +272,17 @@ class IntelligentQueryHandler:
                     intent=intent,
                 )
 
+            if intent.subject_area == "project_attribute":
+                return self._finalize_project_attribute_response(
+                    message=message,
+                    context=context,
+                    telemetry=telemetry,
+                    resolved_session=resolved_session,
+                    language=language,
+                    started=started,
+                    intent=intent,
+                )
+
             intent = EntityGate.infer_entity_hints(message, intent)
             from gateway.core.project_expense_routing import (
                 apply_active_follow_up_context,
@@ -928,6 +939,55 @@ class IntelligentQueryHandler:
             total_duration_ms=duration_ms,
             cache_hit=True,
             proactive_cache_keys=response.proactive_cache_keys,
+        )
+        return response
+
+    def _finalize_project_attribute_response(
+        self,
+        *,
+        message: str,
+        context: ContextStack,
+        telemetry: InteractionTelemetry,
+        resolved_session: str,
+        language: str,
+        started: float,
+        intent: Intent,
+    ) -> IntelligentQueryResponse:
+        from gateway.core.project_attribute_utils import build_project_attribute_response_text
+        from gateway.core.project_query_utils import extract_project_name_hint
+
+        active = context.working_memory.get_active_project()
+        project_ref = (
+            active.project_name
+            if active and active.project_name
+            else extract_project_name_hint(message) or "that project"
+        )
+        text = build_project_attribute_response_text(project_ref)
+        suggestions = [
+            f"Show me {project_ref} expenses",
+            f"Break down {project_ref} by account",
+        ]
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        response = IntelligentQueryResponse(
+            session_id=resolved_session,
+            text=text,
+            language=language,
+            visualization=None,
+            orchestration_log=[],
+            execution_duration_ms=duration_ms,
+            orchestration_duration_ms=0,
+            strategy_step_count=0,
+            tools_called=[],
+            execution_result=None,
+            suggestions=suggestions[:3],
+            interaction_id=telemetry.interaction_id,
+        )
+        telemetry.finalize_response(
+            response_text=response.text,
+            visualization=None,
+            suggestions=response.suggestions,
+            total_duration_ms=duration_ms,
+            intent=intent,
         )
         return response
 

@@ -186,6 +186,8 @@ class EntityGate:
     @staticmethod
     def infer_entity_hints(message: str, intent: Intent) -> Intent:
         """Add entity references inferred from natural-language hints."""
+        if intent.subject_area == "project_attribute":
+            return intent
         entities = list(intent.entities)
         if not any(entity.type == "project" for entity in entities):
             if looks_like_project_cost_query(message, subject_area=intent.subject_area):
@@ -301,6 +303,8 @@ class EntityGate:
         context: ContextStack | None = None,
     ) -> bool:
         """Return True when this turn needs entity discovery/confirmation before KPI tools."""
+        if intent.subject_area == "project_attribute":
+            return False
         if (
             context is not None
             and is_project_expense_follow_up(message)

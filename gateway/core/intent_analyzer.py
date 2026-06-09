@@ -7,10 +7,11 @@ import json
 import logging
 import os
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Protocol
 
 from gateway.core.clarification_validation import CLARIFICATION_PROMPT_RULES, validate_clarification
+from gateway.core.project_attribute_utils import is_project_attribute_query
 from gateway.session_entities import build_session_context_prompt
 
 logger = logging.getLogger(__name__)
@@ -196,6 +197,7 @@ class IntentAnalyzer:
 
         intent = self._parse_response(raw_response, query, context)
         intent = self._apply_manifest_guardrails(query, intent, context)
+        intent = self._apply_project_attribute_detection(query, intent)
         intent = validate_clarification(intent)
         logger.info(
             "[IntentAnalyzer] query=%r intent=%s",
@@ -233,7 +235,7 @@ class IntentAnalyzer:
             "{"
             '"primary_action":"fetch_data|analyze|compare|generate_report|'
             'search_entity|explain|ask_question|other",'
-            '"subject_area":"financial|project|hr|sales|inventory|general|other",'
+            '"subject_area":"financial|project|project_attribute|hr|sales|inventory|general|other",'
             '"specific_intent":"...",'
             '"entities":[{"type":"project|partner|account|period|amount",'
             '"value":"...","confidence":0.0}],'
@@ -254,6 +256,13 @@ class IntentAnalyzer:
             "when CONVERSATION CONTEXT lists a last project and the user asks for "
             "cost/expense breakdown or drill-down without naming a new project, set "
             "requires_clarification=false, subject_area=project, primary_action=analyze.\n"
+            "ATTRIBUTE vs FINANCIAL queries:\n"
+            "If the user asks about a project ATTRIBUTE (project manager, client, "
+            "deadline, status, location, team) rather than financial data "
+            "(expenses, costs, revenue, budget), set subject_area=project_attribute, "
+            "primary_action=ask_question, requires_clarification=false.\n"
+            "Examples: 'who is the PM of Villa 34' → project_attribute; "
+            "'Villa 34 expense' → financial/project.\n"
             f"{CLARIFICATION_PROMPT_RULES}"
         )
 
@@ -325,6 +334,17 @@ class IntentAnalyzer:
                 ),
             )
         return intent
+
+    def _apply_project_attribute_detection(self, query: str, intent: Intent) -> Intent:
+        if not is_project_attribute_query(query):
+            return intent
+        return replace(
+            intent,
+            subject_area="project_attribute",
+            primary_action="ask_question",
+            requires_clarification=False,
+            clarification_question=None,
+        )
 
     def _fallback_intent(self, query: str, context: ContextStack) -> Intent:
         """Return a conservative fallback when Claude JSON cannot be parsed."""
