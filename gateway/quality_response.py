@@ -9,7 +9,7 @@ from gateway.quality_formatting import (
     humanize_group_label,
 )
 from gateway.quality_intent import detect_query_intent
-from gateway.quality_narrative import generate_narrative
+from gateway.quality_narrative import generate_narrative, is_legacy_period_expense_text
 from gateway.quality_validation import validate_response_quality
 from gateway.progressive_disclosure import apply_progressive_disclosure
 from gateway.core.project_expense_routing import is_project_expense_tool_result
@@ -168,6 +168,7 @@ def polish_agent_response(
     intent = detect_query_intent(user_message)
 
     expense_visual = _prefer_project_expense_tool_visualization(tool_names, tool_results)
+    has_expense_tool = any(is_project_expense_tool_result(result) for result in tool_results)
     if expense_visual is not None:
         visualization = expense_visual
     elif visualization is None and tool_names:
@@ -183,7 +184,19 @@ def polish_agent_response(
             elif intent.get("comparison"):
                 visualization["visual_type"] = "BAR_CHART"
 
-    if not clean_text.strip():
+    should_refresh_expense_text = has_expense_tool and (
+        not clean_text.strip()
+        or is_legacy_period_expense_text(clean_text)
+        or (
+            visualization is not None
+            and visualization.get("visual_type") == "PROJECT_EXPENSE_SUMMARY"
+        )
+    )
+    if should_refresh_expense_text and visualization:
+        narrative = generate_narrative(user_message, visualization, tool_results, language)
+        if narrative:
+            clean_text = narrative
+    elif not clean_text.strip():
         clean_text = generate_narrative(user_message, visualization, tool_results, language)
 
     for result in reversed(tool_results):

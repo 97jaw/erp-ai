@@ -348,6 +348,77 @@ async def test_villa_maintenance_expense_uses_mobile_summary_after_confirm() -> 
     assert second.tools_called == ["get_project_expense_summary"]
     assert executor.calls[0][1].get("project_id") == 31034
     assert (second.visualization or {}).get("visual_type") == "PROJECT_EXPENSE_SUMMARY"
+    assert "selected period" not in second.text.lower()
+    assert "W.O" in second.text or "spend" in second.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_villa_maintenance_expense_for_this_year_uses_mobile_summary() -> None:
+    """Regression: period phrase + project expense still routes to mobile summary."""
+    query = "Villa Maintenance No. 34 expense i need for this year"
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="financial",
+        specific_intent=query,
+        entities=[
+            EntityReference(type="project", value="Villa Maintenance No. 34", confidence=0.9),
+        ],
+        estimated_complexity="simple",
+    )
+    villa_project = {
+        "id": 31034,
+        "name": "Villa Maintenance No. 34",
+        "wo_ref_no": "WO-VM-34",
+        "description": "Villa maintenance contract",
+    }
+    executor = MockToolExecutor(
+        responses={
+            ("get_project_expense_summary", 1): {
+                "status": "success",
+                "project_id": 31034,
+                "project_name": "Villa Maintenance No. 34",
+                "currency": "AED",
+                "wo_amount": 500000,
+                "total_expenses": 12120.16,
+                "spend_percent_of_wo": 2.4,
+                "top_expenses": [{"name": "Maintenance", "amount": 8000, "percent": 66.0}],
+                "expense_lines": [{"label": "Labor", "amount": 4120.16}],
+                "variance_amount": 487879.84,
+                "is_over_budget": False,
+                "_source": "project_expense_summary_mobile",
+            },
+        },
+    )
+    handler = _handler(
+        intent=intent,
+        stack=_stack_for_user(_super_admin()),
+        entity_catalog=[villa_project],
+    )
+    first = await handler.handle(
+        query,
+        _super_admin(),
+        adapter=object(),
+        executor=executor,
+    )
+    assert first.awaiting_clarification
+
+    confirmed = [
+        ConfirmedEntityRef(type="project", id=31034, name="Villa Maintenance No. 34"),
+    ]
+    second = await handler.handle(
+        query,
+        _super_admin(),
+        adapter=object(),
+        executor=executor,
+        confirmed_entities=confirmed,
+    )
+
+    assert not second.awaiting_clarification
+    assert second.tools_called == ["get_project_expense_summary"]
+    assert (second.visualization or {}).get("visual_type") == "PROJECT_EXPENSE_SUMMARY"
+    assert "selected period" not in second.text.lower()
+    assert "12,120.16" in second.text or "12120" in second.text.replace(",", "")
+    assert "calendar period" in second.text.lower() or "W.O-based" in second.text
 
 
 @pytest.mark.asyncio

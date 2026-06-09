@@ -116,7 +116,17 @@ def looks_like_project_cost_query(message: str, *, subject_area: str = "") -> bo
     has_project_subject = subject_area.lower() == "project"
     has_project_signal = any(
         token in message_blob
-        for token in ("project", "school", "boys", "girls", "zayidia", "national guard", "ngc")
+        for token in (
+            "project",
+            "school",
+            "boys",
+            "girls",
+            "zayidia",
+            "national guard",
+            "ngc",
+            "villa",
+            "maintenance",
+        )
     )
     hint = extract_project_name_hint(message)
     return has_cost_signal and (has_project_subject or has_project_signal or hint is not None)

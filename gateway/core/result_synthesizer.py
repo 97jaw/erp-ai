@@ -8,6 +8,7 @@ from typing import Any
 from gateway.core.execution_orchestrator import ExecutionResult
 from gateway.core.intent_analyzer import Intent
 from gateway.core.project_expense_routing import is_project_expense_tool_result
+from gateway.quality_narrative import narrate_project_expense_summary
 
 
 @dataclass
@@ -33,7 +34,11 @@ class ResultSynthesizer:
         if len(aggregate_tables) == 1:
             return self._from_single_aggregate(aggregate_tables[0], intent)
 
-        project_summary = self._find_project_expense_summary(execution_result.results)
+        mobile_summary = self._find_mobile_project_expense_summary(execution_result.results, intent)
+        if mobile_summary is not None:
+            return mobile_summary
+
+        project_summary = self._find_legacy_project_expense_kpi(execution_result.results)
         if project_summary is not None:
             return project_summary
 
@@ -52,7 +57,25 @@ class ResultSynthesizer:
         )
 
     @staticmethod
-    def _find_project_expense_summary(results: dict[int, Any]) -> SynthesizedResult | None:
+    def _find_mobile_project_expense_summary(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if payload.get("_source") != "project_expense_summary_mobile":
+                continue
+            text = narrate_project_expense_summary(
+                payload,
+                user_message=intent.specific_intent,
+            )
+            return SynthesizedResult(text=text, visualization=None)
+        return None
+
+    @staticmethod
+    def _find_legacy_project_expense_kpi(results: dict[int, Any]) -> SynthesizedResult | None:
         for step_number in sorted(results.keys()):
             payload = results[step_number]
             if not isinstance(payload, dict) or payload.get("error"):

@@ -1,8 +1,117 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from gateway.quality_formatting import format_currency, format_percentage, humanize_group_label
+
+_PERIOD_IN_QUERY_RE = re.compile(
+    r"\b("
+    r"this\s+year|last\s+year|ytd|year\s+to\s+date|"
+    r"this\s+month|last\s+month|"
+    r"q[1-4]|quarter|"
+    r"last\s+\d+\s+months?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_LEGACY_PERIOD_PHRASE = "for the selected period"
+
+
+def user_asked_for_calendar_period(message: str = "") -> bool:
+    """Return True when the user mentioned a date range in the query."""
+    return bool(_PERIOD_IN_QUERY_RE.search(message or ""))
+
+
+def is_legacy_period_expense_text(text: str = "") -> bool:
+    """Detect generic legacy synthesizer copy that should be replaced."""
+    lowered = (text or "").lower()
+    return _LEGACY_PERIOD_PHRASE in lowered
+
+
+def narrate_project_expense_summary(
+    payload: dict[str, Any],
+    *,
+    user_message: str = "",
+    language: str = "en",
+) -> str:
+    """Build executive summary text for mobile project expense payloads."""
+    project_name = payload.get("project_name") or "Project"
+    total = float(payload.get("total_expenses") or 0)
+    wo_amount = float(payload.get("wo_amount") or 0)
+    spend_pct = float(payload.get("spend_percent_of_wo") or 0)
+
+    if payload.get("is_over_budget"):
+        status = "over budget"
+    elif spend_pct > 95:
+        status = "near the W.O limit"
+    else:
+        status = "on track"
+
+    if language == "ar":
+        lead = (
+            f"{project_name}: إجمالي المصروف {format_currency(total)} "
+            f"({format_percentage(spend_pct)} من W.O {format_currency(wo_amount)}). "
+            f"الحالة: {status}."
+        )
+    else:
+        lead = (
+            f"{project_name}: total spend is {format_currency(total)} "
+            f"({format_percentage(spend_pct)} of W.O {format_currency(wo_amount)}). "
+            f"Status: {status}."
+        )
+
+    top_expenses = payload.get("top_expenses") or []
+    trade_bits: list[str] = []
+    for item in top_expenses[:3]:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name") or item.get("label") or "Other"
+        amount = float(item.get("amount") or 0)
+        percent = item.get("percent")
+        if percent is not None:
+            trade_bits.append(f"{name} ({format_currency(amount)}, {format_percentage(float(percent))})")
+        else:
+            trade_bits.append(f"{name} ({format_currency(amount)})")
+
+    parts = [lead]
+    if trade_bits:
+        if language == "ar":
+            parts.append(f"أبرز الفئات: {', '.join(trade_bits)}.")
+        else:
+            parts.append(f"Top trade categories: {', '.join(trade_bits)}.")
+
+    context_message = user_message or str(payload.get("project_name") or "")
+    if user_asked_for_calendar_period(context_message):
+        if language == "ar":
+            parts.append(
+                "ملاحظة: هذا ملخص مصروفات المشروع الكامل (حسب W.O) كما في تطبيق Odoo — "
+                "وليس مفلتراً حسب السنة أو الفترة."
+            )
+        else:
+            parts.append(
+                "Note: this is the full project expense summary (W.O-based), matching the Odoo "
+                "mobile view — not filtered to a calendar period."
+            )
+
+    return " ".join(parts)
+
+
+def _payload_from_expense_visualization(visualization: dict[str, Any]) -> dict[str, Any]:
+    kpis = visualization.get("kpis") or {}
+    wo = (kpis.get("wo_amount") or {}).get("value")
+    total = (kpis.get("total_expenses") or {}).get("value")
+    spend = visualization.get("spend_percent_of_wo")
+    if spend is None:
+        spend = (kpis.get("spend_pct") or {}).get("value")
+    return {
+        "project_name": visualization.get("project_name") or visualization.get("label"),
+        "wo_amount": wo,
+        "total_expenses": total,
+        "spend_percent_of_wo": spend,
+        "is_over_budget": visualization.get("is_over_budget"),
+        "top_expenses": visualization.get("top_expenses") or [],
+    }
 
 
 def _bar_chart_rows(visualization: dict[str, Any]) -> list[dict[str, Any]]:
@@ -49,6 +158,20 @@ def generate_narrative(
         return ""
 
     visual_type = visualization.get("visual_type")
+    if visual_type == "PROJECT_EXPENSE_SUMMARY":
+        for result in reversed(tool_results):
+            if isinstance(result, dict) and result.get("_source") == "project_expense_summary_mobile":
+                return narrate_project_expense_summary(
+                    result,
+                    user_message=user_message,
+                    language=language,
+                )
+        return narrate_project_expense_summary(
+            _payload_from_expense_visualization(visualization),
+            user_message=user_message,
+            language=language,
+        )
+
     if visual_type == "BAR_CHART":
         rows = _bar_chart_rows(visualization)
         rows = [row for row in rows if row["value"] > 0]
