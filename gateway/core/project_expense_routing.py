@@ -63,10 +63,23 @@ When the user asks about project expenses, use these tools in this order:
 KNOWN BUSINESS CONTEXT:
 - W.O amount = Work Order total (budget/agreement) — field wo_amount from tool
 - total_expenses = operational spend (petty + labor + LPO + bills)
-- spend_percent_of_wo = (total_expenses / wo_amount) × 100
+- spend_percent_of_wo = (total_expenses / wo_amount) × 100 — only when wo_amount > 0
+- spend_status / status_label = honest interpretation from the tool (use these in narration)
 - Above 100% means over budget
 - top_expenses = TRADE categories (civil, electrical, mechanical, etc.)
 - GL breakdown groups = ACCOUNT level (different from trade categories)
+
+PROJECT EXPENSE NARRATION RULES:
+
+When spend_status is "no_budget_assigned":
+  Say the project has recorded expenses but no W.O budget is assigned, so no spend
+  percentage or budget status is available. DO NOT say "X% of W.O" or "On track."
+
+When spend_status is "no_data":
+  Say the project was found but no expenses are recorded yet.
+
+When top_expenses show a category with AED 0 but a percentage:
+  Show only categories with non-zero amounts, OR explain the percentage base differs.
 """
 
 PROJECT_EXPENSE_TOOL_SOURCES = frozenset(

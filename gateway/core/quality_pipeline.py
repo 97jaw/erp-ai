@@ -370,6 +370,18 @@ class QualityResponseReviser:
                     "Show related projects that may match what you meant.",
                 ]
 
+        if "no_contradictions" in failed_names:
+            from gateway.quality_narrative import generate_narrative
+
+            regenerated = generate_narrative(
+                intent.specific_intent,
+                visualization,
+                tool_results,
+                language="en",
+            )
+            if regenerated:
+                text = regenerated
+
         return QualityResponse(
             text=strip_raw_syntax(text),
             visualization=visualization,

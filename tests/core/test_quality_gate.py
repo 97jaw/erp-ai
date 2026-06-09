@@ -401,3 +401,60 @@ async def test_quality_gate_retries_on_zero_data() -> None:
         check for check in final_review.checks if check.name == "not_all_zero"
     )
     assert not_all_zero.passed is True
+
+
+def _contradiction_expense_response(**overrides: Any) -> QualityResponse:
+    defaults = {
+        "text": "Villa 34: total spend is AED 12,000 (2% of W.O AED 0). Status: on track.",
+        "visualization": {
+            "visual_type": "PROJECT_EXPENSE_SUMMARY",
+            "project_name": "Villa Maintenance No. 34",
+            "kpis": {
+                "wo_amount": {"value": 0},
+                "total_expenses": {"value": 12000},
+                "spend_pct": {"value": 2},
+            },
+        },
+        "suggestions": [],
+        "tool_results": [],
+    }
+    defaults.update(overrides)
+    return QualityResponse(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_quality_catches_pct_of_zero() -> None:
+    gate = QualityGate()
+    review = await gate.review(
+        _contradiction_expense_response(),
+        _expense_intent(),
+        _make_context_stack(),
+    )
+
+    check = next(item for item in review.checks if item.name == "no_contradictions")
+    assert check.passed is False
+    assert check.issue is not None
+    assert "W.O is 0" in check.issue
+
+
+@pytest.mark.asyncio
+async def test_quality_catches_on_track_over_budget() -> None:
+    gate = QualityGate()
+    response = _contradiction_expense_response(
+        text="Villa 34: total spend is AED 15,000. Status: on track.",
+        visualization={
+            "visual_type": "PROJECT_EXPENSE_SUMMARY",
+            "project_name": "Villa Maintenance No. 34",
+            "kpis": {
+                "wo_amount": {"value": 10000},
+                "total_expenses": {"value": 15000},
+                "spend_pct": {"value": 150},
+            },
+        },
+    )
+    review = await gate.review(response, _expense_intent(), _make_context_stack())
+
+    check = next(item for item in review.checks if item.name == "no_contradictions")
+    assert check.passed is False
+    assert check.issue is not None
+    assert "on track" in check.issue.lower()

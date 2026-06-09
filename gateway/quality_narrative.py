@@ -39,27 +39,76 @@ def narrate_project_expense_summary(
     project_name = payload.get("project_name") or "Project"
     total = float(payload.get("total_expenses") or 0)
     wo_amount = float(payload.get("wo_amount") or 0)
-    spend_pct = float(payload.get("spend_percent_of_wo") or 0)
+    spend_status = payload.get("spend_status")
+    status_label = payload.get("status_label")
+    spend_pct_raw = payload.get("spend_percent_of_wo")
+    spend_pct = float(spend_pct_raw) if spend_pct_raw is not None else None
 
-    if payload.get("is_over_budget"):
-        status = "over budget"
-    elif spend_pct > 95:
+    if spend_status == "no_budget_assigned":
+        status = status_label or "no W.O budget assigned"
+        if language == "ar":
+            lead = (
+                f"{project_name}: مصروفات مسجلة بقيمة {format_currency(total)}، "
+                "لكن لا يوجد W.O معين في النظام، لذا لا يمكن عرض نسبة الإنفاق أو حالة الميزانية."
+            )
+        else:
+            lead = (
+                f"{project_name} has {format_currency(total)} in recorded expenses, "
+                "but no W.O budget is assigned in the system, so no spend percentage "
+                "or budget status is available."
+            )
+    elif spend_status == "no_data":
+        if language == "ar":
+            lead = f"وجدت {project_name} لكن لا توجد مصروفات مسجلة لها بعد."
+        else:
+            lead = f"I found {project_name} but there are no expenses recorded for it yet."
+    elif payload.get("is_over_budget") or spend_status == "over_budget":
+        status = status_label or "over budget"
+        if language == "ar":
+            lead = (
+                f"{project_name}: إجمالي المصروف {format_currency(total)} "
+                f"({format_percentage(spend_pct or 0)} من W.O {format_currency(wo_amount)}). "
+                f"الحالة: {status}."
+            )
+        else:
+            lead = (
+                f"{project_name}: total spend is {format_currency(total)} "
+                f"({format_percentage(spend_pct or 0)} of W.O {format_currency(wo_amount)}). "
+                f"Status: {status}."
+            )
+    elif spend_pct is not None and spend_pct > 95:
         status = "near the W.O limit"
+        if language == "ar":
+            lead = (
+                f"{project_name}: إجمالي المصروف {format_currency(total)} "
+                f"({format_percentage(spend_pct)} من W.O {format_currency(wo_amount)}). "
+                f"الحالة: {status}."
+            )
+        else:
+            lead = (
+                f"{project_name}: total spend is {format_currency(total)} "
+                f"({format_percentage(spend_pct)} of W.O {format_currency(wo_amount)}). "
+                f"Status: {status}."
+            )
+    elif spend_pct is not None:
+        status = status_label or "on track"
+        if language == "ar":
+            lead = (
+                f"{project_name}: إجمالي المصروف {format_currency(total)} "
+                f"({format_percentage(spend_pct)} من W.O {format_currency(wo_amount)}). "
+                f"الحالة: {status}."
+            )
+        else:
+            lead = (
+                f"{project_name}: total spend is {format_currency(total)} "
+                f"({format_percentage(spend_pct)} of W.O {format_currency(wo_amount)}). "
+                f"Status: {status}."
+            )
     else:
-        status = "on track"
-
-    if language == "ar":
-        lead = (
-            f"{project_name}: إجمالي المصروف {format_currency(total)} "
-            f"({format_percentage(spend_pct)} من W.O {format_currency(wo_amount)}). "
-            f"الحالة: {status}."
-        )
-    else:
-        lead = (
-            f"{project_name}: total spend is {format_currency(total)} "
-            f"({format_percentage(spend_pct)} of W.O {format_currency(wo_amount)}). "
-            f"Status: {status}."
-        )
+        if language == "ar":
+            lead = f"{project_name}: إجمالي المصروف {format_currency(total)}."
+        else:
+            lead = f"{project_name}: total spend is {format_currency(total)}."
 
     top_expenses = payload.get("top_expenses") or []
     trade_bits: list[str] = []

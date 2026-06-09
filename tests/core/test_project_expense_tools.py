@@ -16,6 +16,7 @@ from gateway.tools.project_expense import (
     BREAKDOWN_METHOD,
     SERVICE_MODEL,
     SUMMARY_METHOD,
+    _normalize_summary_from_mobile,
     _unwrap_odoo_payload,
     execute_compare_project_expenses,
     execute_get_project_expense_breakdown,
@@ -217,6 +218,38 @@ def test_unwrap_odoo_payload_recognizes_breakdown_envelope() -> None:
     assert isinstance(data, dict)
     assert "breakdown" in data
     assert data["wizard_id"] == 84
+
+
+def test_zero_wo_no_percentage() -> None:
+    result = _normalize_summary_from_mobile(
+        15157,
+        {
+            "project_name": "Villa Maintenance No. 34",
+            "project_count": 0,
+            "total_expenses": 12120,
+            "spend_percent_of_wo": 2.0,
+            "top_expenses": [{"name": "Civil Expense", "amount": 0, "percent": 71.6}],
+            "expense_lines": [],
+        },
+    )
+    assert result["spend_percent_of_wo"] is None
+    assert result["spend_status"] == "no_budget_assigned"
+    assert "no W.O budget" in result["status_label"]
+
+
+def test_over_budget_status() -> None:
+    result = _normalize_summary_from_mobile(
+        1,
+        {
+            "project_name": "Project A",
+            "project_count": 10000,
+            "total_expenses": 12000,
+            "top_expenses": [{"name": "Civil", "amount": 12000, "percent": 100}],
+            "expense_lines": [],
+        },
+    )
+    assert result["spend_status"] == "over_budget"
+    assert result["is_over_budget"] is True
 
 
 # 3. breakdown tool parses hierarchy correctly

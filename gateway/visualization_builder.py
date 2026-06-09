@@ -532,21 +532,39 @@ def _normalize_top_expense_rows(top_expenses: list[Any]) -> list[dict[str, Any]]
 
 def _build_expense_insights(payload: dict[str, Any]) -> list[dict[str, Any]]:
     insights: list[dict[str, Any]] = []
-    spend_pct = float(payload.get("spend_percent_of_wo") or 0)
+    spend_status = payload.get("spend_status")
+    spend_pct_raw = payload.get("spend_percent_of_wo")
+    spend_pct = float(spend_pct_raw) if spend_pct_raw is not None else None
     currency = payload.get("currency") or "AED"
     wo_amount = float(payload.get("wo_amount") or 0)
     total_expenses = float(payload.get("total_expenses") or 0)
 
-    if payload.get("is_over_budget"):
+    if spend_status == "no_budget_assigned":
+        insights.append(
+            {
+                "severity": "info",
+                "title": "No W.O Budget",
+                "message": (
+                    f"{currency} {total_expenses:,.0f} recorded with no W.O budget assigned"
+                ),
+            },
+        )
+        return insights
+
+    if spend_status == "no_data":
+        return insights
+
+    if payload.get("is_over_budget") or spend_status == "over_budget":
         over_amount = total_expenses - wo_amount
+        pct_fragment = f" ({spend_pct:.1f}%)" if spend_pct is not None else ""
         insights.append(
             {
                 "severity": "critical",
                 "title": "Over Budget",
-                "message": f"Over W.O by {currency} {over_amount:,.0f} ({spend_pct:.1f}%)",
+                "message": f"Over W.O by {currency} {over_amount:,.0f}{pct_fragment}",
             },
         )
-    elif spend_pct > 95:
+    elif spend_pct is not None and spend_pct > 95:
         insights.append(
             {
                 "severity": "warning",
@@ -589,18 +607,26 @@ def _project_expense_summary_visual(payload: dict[str, Any]) -> dict[str, Any] |
     project_name = payload.get("project_name") or "Project"
     wo_amount = float(payload.get("wo_amount") or 0)
     total_expenses = float(payload.get("total_expenses") or 0)
-    spend_pct = float(payload.get("spend_percent_of_wo") or 0)
+    spend_status = payload.get("spend_status")
+    status_label = payload.get("status_label")
+    spend_pct_raw = payload.get("spend_percent_of_wo")
+    spend_pct = float(spend_pct_raw) if spend_pct_raw is not None else None
     variance = float(payload.get("variance_amount") or (wo_amount - total_expenses))
     top_expenses = _normalize_top_expense_rows(payload.get("top_expenses") or [])
 
     spend_trend = "neutral"
-    spend_context = "On track"
-    if payload.get("is_over_budget"):
+    if spend_status == "no_budget_assigned":
+        spend_context = status_label or "No W.O budget assigned"
+    elif spend_status == "no_data":
+        spend_context = status_label or "No expense data recorded"
+    elif payload.get("is_over_budget") or spend_status == "over_budget":
         spend_trend = "down"
-        spend_context = "Over budget"
-    elif spend_pct > 95:
+        spend_context = status_label or "Over budget"
+    elif spend_pct is not None and spend_pct > 95:
         spend_trend = "down"
         spend_context = "Near limit"
+    else:
+        spend_context = status_label or "On track"
 
     variance_trend = "up" if variance >= 0 else "down"
     variance_context = (

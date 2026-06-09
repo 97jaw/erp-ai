@@ -6,42 +6,35 @@
 
 ## 🎯 ACTIVE PLAN
 
-**File:** `docs/CONVERSATION_INTEGRITY_FIX_PLAN.md` — Conversation Integrity Fix Sprint
+**File:** `docs/CONVERSATION_INTELLIGENCE_SPRINT.md` — Conversation Intelligence Sprint (6 fixes)
 
-**Status:** CODE COMPLETE — live verify on EC2 pending
+**Status:** Day 1 in progress — FIX 4 ✅ live verified; FIX 5 code + tests ✅, live verify pending
 
 ---
 
-## 📍 SPRINT SIGN-OFF
+## 📍 SPRINT PROGRESS
 
-| Phase | Description | Code | Automated tests | Live verify |
-|-------|-------------|------|-----------------|-------------|
-| F1 | Cache integrity | ✅ | ✅ | ⏳ |
-| F2 | Topic-shift + EntityGate | ✅ | ✅ | ⏳ |
-| F3 | search_entity routing | ✅ | ✅ | ⏳ |
-| F4 | Zero-data quality gate | ✅ | ✅ | ⏳ |
-| F5 | Format clarification suppress | ✅ | ✅ | ⏳ |
-| F6 | Integration replay + sign-off | ✅ | ✅ | ⏳ |
+| Fix | Description | Code | Tests | Live verify |
+|-----|-------------|------|-------|-------------|
+| FIX 4 | Deploy A1 breakdown unwrap | ✅ `fd4b2e6` | ✅ | ✅ Salary / AED 11,053 on project 15157 |
+| FIX 5 | Number sanity (W.O=0) | ✅ | ✅ 4 tests | ⏳ |
+| FIX 1 | Sticky context | — | — | — |
+| FIX 2 | Follow-up routing | — | — | — |
+| FIX 3 | Skip confirmed | — | — | — |
+| FIX 6 | Non-financial honesty | — | — | — |
+| Final | 7-turn acceptance test | — | — | — |
 
-**Run full sprint test suite:**
+**FIX 4 live result (2026-06-09):** Breakdown for Villa Maintenance No. 34 (15157) returns Salary → Labor → 55002 LABER WAGES, AED 11,053.15. Chat follow-up "share the expense breakdown" shows GL breakdown (not "No data found").
+
+**FIX 5 scope:** `spend_status` / `status_label` on summary tool; W.O=0 → no spend %; `no_contradictions` quality gate; honest narration.
+
+**Run FIX 5 tests:**
 ```bash
-python scripts/verify_conversation_integrity_sprint.py
-# or:
-pytest tests/integration/test_conversation_integrity_sprint.py \
-  tests/test_tool_cache_integrity.py tests/core/test_topic_shift.py \
-  tests/core/test_search_entity_routing.py tests/core/test_quality_gate.py \
-  tests/core/test_clarification_validation.py -q
+pytest tests/core/test_project_expense_tools.py::test_zero_wo_no_percentage \
+  tests/core/test_project_expense_tools.py::test_over_budget_status \
+  tests/core/test_quality_gate.py::test_quality_catches_pct_of_zero \
+  tests/core/test_quality_gate.py::test_quality_catches_on_track_over_budget -q
 ```
-
-**Live verify (same session, after deploy):**
-```
-1. Villa Maintenance No. 48 expense for this year
-2. General maintenance work need expense report
-3. now General maintenance work
-4. give General maintenance work need expense report
-5. General maintenance work - Al Mushrif need expense report
-```
-Plus cache spot-check: Villa 48 → Al Mushrif → Hatta Hospital (3 distinct `project_id`s).
 
 **Deploy:**
 ```bash
@@ -50,16 +43,18 @@ git push origin main
 cd /opt/ooa && git pull && ./deploy/aws/scripts/deploy-code.sh
 ```
 
-**Edge cases / deferred items:** `docs/PARKING_LOT.md`
+**Previous sprint (complete in code):** `docs/CONVERSATION_INTEGRITY_FIX_PLAN.md` F1–F6
 
 ---
 
 ## ⏭ NEXT
 
-**Unblocked after live verify:** `ELRACE_OMNI_AGENT_FINAL_PLAN.md` — Universal Odoo Access (4 tools on this foundation)
+After FIX 5 live verify: **Day 2–3** FIX 1 + FIX 2 (sticky context + follow-up).
+
+After all 6 fixes + 7-turn test: **Elrace Omni-Agent Final Plan**
 
 ---
 
 ## 🎯 NORTH STAR
 
-> Fix the five conversation-integrity bugs from the 2026-06-09 incident **before** expanding to Universal Odoo Access.
+> Make OOA behave like an AI colleague — not a search form. Honest numbers, sticky context, no double-confirmation.

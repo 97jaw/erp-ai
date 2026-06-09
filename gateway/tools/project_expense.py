@@ -198,22 +198,45 @@ def _validate_summary_payload(data: dict[str, Any]) -> bool:
     return total_expenses > 0
 
 
-def _spend_percent(wo_amount: float, total_expenses: float, explicit: Any = None) -> float:
+def _spend_percent(wo_amount: float, total_expenses: float, explicit: Any = None) -> float | None:
+    if wo_amount <= 0:
+        return None
     if explicit is not None:
         try:
             return float(explicit)
         except (TypeError, ValueError):
             pass
-    if wo_amount <= 0:
-        return 0.0
     return round((total_expenses / wo_amount) * 100, 2)
+
+
+def _interpret_spend_status(
+    wo_amount: float,
+    total_expenses: float,
+) -> tuple[float | None, str, str]:
+    """Return spend % (when meaningful), spend_status, and a user-facing status_label."""
+    if wo_amount == 0 and total_expenses == 0:
+        return None, "no_data", "No expense data recorded"
+    if wo_amount == 0 and total_expenses > 0:
+        return None, "no_budget_assigned", "Spending recorded, but no W.O budget assigned"
+    if total_expenses > wo_amount:
+        spend_pct = round((total_expenses / wo_amount) * 100, 1)
+        over_amount = total_expenses - wo_amount
+        return (
+            spend_pct,
+            "over_budget",
+            f"Over W.O budget by AED {over_amount:,.0f}",
+        )
+    spend_pct = round((total_expenses / wo_amount) * 100, 1)
+    return spend_pct, "on_track", "On track"
 
 
 def _normalize_summary_from_mobile(project_id: int, data: dict[str, Any]) -> dict[str, Any]:
     """Map Odoo mobile payload to canonical AI tool shape."""
     wo_amount = float(data.get("project_count") or data.get("wo_amount") or 0)
     total_expenses = float(data.get("total_expenses") or 0)
-    spend_pct = _spend_percent(wo_amount, total_expenses, data.get("spend_percent_of_wo"))
+    spend_pct, spend_status, status_label = _interpret_spend_status(wo_amount, total_expenses)
+    if wo_amount > 0 and data.get("spend_percent_of_wo") is not None:
+        spend_pct = _spend_percent(wo_amount, total_expenses, data.get("spend_percent_of_wo"))
     return {
         "status": "success",
         "project_id": project_id,
@@ -224,6 +247,8 @@ def _normalize_summary_from_mobile(project_id: int, data: dict[str, Any]) -> dic
         "wo_amount": wo_amount,
         "total_expenses": total_expenses,
         "spend_percent_of_wo": spend_pct,
+        "spend_status": spend_status,
+        "status_label": status_label,
         "estimation_amount": data.get("estimation_amount"),
         "top_expenses": data.get("top_expenses") or [],
         "expense_lines": data.get("expense_lines") or [],
@@ -269,7 +294,9 @@ def _normalize_summary_from_dashboard(project_id: int, dashboard: dict[str, Any]
         for row in sorted_categories
         if float(row["amount"]) > 0
     ]
-    spend_pct = _spend_percent(wo_amount, total_expenses, kpis.get("exceed_percent"))
+    spend_pct, spend_status, status_label = _interpret_spend_status(wo_amount, total_expenses)
+    if wo_amount > 0 and kpis.get("exceed_percent") is not None:
+        spend_pct = _spend_percent(wo_amount, total_expenses, kpis.get("exceed_percent"))
 
     return {
         "status": "success",
@@ -281,6 +308,8 @@ def _normalize_summary_from_dashboard(project_id: int, dashboard: dict[str, Any]
         "wo_amount": wo_amount,
         "total_expenses": total_expenses,
         "spend_percent_of_wo": spend_pct,
+        "spend_status": spend_status,
+        "status_label": status_label,
         "estimation_amount": dashboard.get("estimation_amount"),
         "top_expenses": top_expenses,
         "expense_lines": expense_lines,

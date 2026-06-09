@@ -26,6 +26,7 @@ QUALITY_CHECKS: tuple[str, ...] = (
     "right_visualization",
     "clear_language",
     "not_all_zero",
+    "no_contradictions",
 )
 
 ZERO_DATA_SUCCESS_LANGUAGE = (
@@ -274,6 +275,7 @@ class QualityGate:
             "right_visualization": self._check_right_visualization,
             "clear_language": self._check_clear_language,
             "not_all_zero": self._check_not_all_zero,
+            "no_contradictions": self._check_no_contradictions,
         }
         handler = checks.get(check_name)
         if handler is None:
@@ -666,6 +668,57 @@ class QualityGate:
             )
 
         return CheckResult(name="not_all_zero", passed=True)
+
+    def _check_no_contradictions(
+        self,
+        response: QualityResponse,
+        intent: Intent,
+        context: ContextStack,
+    ) -> CheckResult:
+        """Catch self-contradicting expense numbers in narrative or KPIs."""
+        del intent, context
+        visualization = response.visualization or {}
+        visual_type = visualization.get("visual_type")
+        if visual_type not in {None, "PROJECT_EXPENSE_SUMMARY", "KPI_CARD"}:
+            return CheckResult(name="no_contradictions", passed=True)
+
+        wo_amount = self._extract_expense_kpi_value(visualization, "wo_amount")
+        total_spent = self._extract_expense_kpi_value(
+            visualization,
+            "total_expenses",
+            "total_spent",
+            "spent",
+        )
+        spend_pct = self._extract_expense_kpi_value(
+            visualization,
+            "spend_pct",
+            "spend_percent_of_wo",
+        )
+
+        if wo_amount == 0 and spend_pct not in (None, 0):
+            return CheckResult(
+                name="no_contradictions",
+                passed=False,
+                issue=(
+                    f"Shows {spend_pct:g}% of W.O but W.O is 0. "
+                    "Cannot compute % of zero."
+                ),
+            )
+
+        text = (response.text or "").lower()
+        if (
+            "on track" in text
+            and total_spent is not None
+            and wo_amount is not None
+            and total_spent > wo_amount
+        ):
+            return CheckResult(
+                name="no_contradictions",
+                passed=False,
+                issue="Says 'on track' but spending exceeds W.O budget.",
+            )
+
+        return CheckResult(name="no_contradictions", passed=True)
 
 
 def build_zero_data_honest_message(response: QualityResponse, intent: Intent) -> str:
