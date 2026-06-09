@@ -1,0 +1,15 @@
+# Live-code overlay — mount repo from host so deploy = git pull + restart gateway.
+# Usage:
+#   docker compose -f deploy/aws/docker-compose.prod.yml \
+#     -f deploy/aws/docker-compose.live.yml \
+#     --env-file .env.production up -d gateway
+#
+# The base image (OOA_IMAGE) still supplies Python deps and OS packages.
+# Host /opt/ooa replaces /app at runtime; logs and cache stay on named volumes.
+
+services:
+  gateway:
+    volumes:
+      - ../../:/app
+      - ooa-logs:/app/logs
+      - ooa-cache:/app/.cache

@@ -24,3 +24,4 @@ monitoring/alertmanager/alertmanager.generated.yml
 docs
 *.md
 !README.md
+deploy/aws/artifacts

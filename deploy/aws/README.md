@@ -189,7 +189,58 @@ Option C — **Cloudflare** in front of EC2 (orange cloud + SSL flexible/full)
 
 ---
 
-## Updating a release
+## Fast deploy (git pull + restart — no docker build)
+
+For day-to-day **Python/gateway** changes, mount `/opt/ooa` into the container so code updates do not require rebuilding the image.
+
+### One-time setup on EC2
+
+```bash
+cd /opt/ooa
+git pull   # includes deploy/aws/docker-compose.live.yml
+
+# UI build folder is gitignored — copy it once from the running image:
+docker cp aws-gateway-1:/app/ooa-ui/build ooa-ui/build
+
+chmod +x deploy/aws/scripts/deploy-code.sh
+
+# Recreate gateway with live mount (once):
+docker compose -f deploy/aws/docker-compose.prod.yml \
+  -f deploy/aws/docker-compose.live.yml \
+  --env-file .env.production up -d gateway
+
+curl -sf http://127.0.0.1:8000/health && echo OK
+```
+
+Keep `OOA_IMAGE` pointing at your existing runtime image (e.g. `ooa-gateway:typo-handling`). That image supplies Python deps; host disk supplies live code.
+
+### Every deploy after that
+
+**Mac:**
+```bash
+git push
+```
+
+**EC2:**
+```bash
+cd /opt/ooa
+./deploy/aws/scripts/deploy-code.sh
+```
+
+Or manually: `git pull` then `docker compose -f deploy/aws/docker-compose.prod.yml -f deploy/aws/docker-compose.live.yml --env-file .env.production restart gateway`
+
+### When you still need extra steps
+
+| Change | Action |
+|--------|--------|
+| Python only (`gateway/`, `tests/`) | pull + restart (above) |
+| React UI (`ooa-ui/src/`) | on EC2: `cd ooa-ui && npm ci && npm run build`, then restart |
+| `requirements.txt` | rebuild base image once, or `docker compose exec gateway pip install -r requirements.txt` |
+| Dockerfile / OS packages | full `docker build` + recreate container |
+
+---
+
+## Updating a release (full image rebuild)
 
 Local:
 
