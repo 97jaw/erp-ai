@@ -177,6 +177,15 @@ class AuthService:
         return payload
 
     async def _persist_odoo_identity(self, user: Any, verified: dict[str, Any]) -> None:
+        # #region agent log
+        import json as _json
+        import time as _time
+        try:
+            with open("/Users/mjawad/projects/ai/odoo_ai_bridge/odoo_ai_bridge/.cursor/debug-bdd48d.log", "a") as _f:
+                _f.write(_json.dumps({"sessionId": "bdd48d", "runId": "post-fix", "hypothesisId": "A", "location": "admin/auth/service.py:_persist_odoo_identity:entry", "message": "persist_odoo_identity", "data": {"user_type": type(user).__name__, "file_id": user.get("file_id") if hasattr(user, "get") else None}, "timestamp": int(_time.time() * 1000)}) + "\n")
+        except Exception:
+            pass
+        # #endregion
         now = datetime.now(timezone.utc)
         odoo_user_id = verified.get("odoo_user_id")
         if odoo_user_id is not None:
@@ -197,10 +206,13 @@ class AuthService:
             odoo_identity_json=identity_json,
             language=verified.get("language"),
         )
-        user["odoo_user_id"] = odoo_user_id or user.get("odoo_user_id")
-        user["odoo_employee_id"] = odoo_employee_id or user.get("odoo_employee_id")
-        user["odoo_verified_at"] = now
-        user["odoo_identity_json"] = identity_json
+        # #region agent log
+        try:
+            with open("/Users/mjawad/projects/ai/odoo_ai_bridge/odoo_ai_bridge/.cursor/debug-bdd48d.log", "a") as _f:
+                _f.write(_json.dumps({"sessionId": "bdd48d", "runId": "post-fix", "hypothesisId": "A", "location": "admin/auth/service.py:_persist_odoo_identity:success", "message": "persist_odoo_identity_saved", "data": {"user_id": int(user["id"]), "odoo_user_id": odoo_user_id}, "timestamp": int(_time.time() * 1000)}) + "\n")
+        except Exception:
+            pass
+        # #endregion
 
     async def _sync_odoo_user_link(self, user: Any) -> None:
         """Keep users.odoo_user_id aligned with Odoo; skip RPC when cache is fresh."""
@@ -305,7 +317,7 @@ class AuthService:
             )
             user = await self._users.get_by_id(user_id)
             if user:
-                await self._persist_odoo_identity(dict(user), odoo_user)
+                await self._persist_odoo_identity(user, odoo_user)
                 user = await self._users.get_by_id(user_id)
             return user
 
