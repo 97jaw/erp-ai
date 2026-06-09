@@ -177,3 +177,42 @@ async def test_evaluate_with_confirmed_entities_skips_discovery() -> None:
     )
     assert result.status == "confirmed"
     assert result.confirmed["project"]["id"] == 201
+
+
+@pytest.mark.asyncio
+async def test_confirmed_project_not_reconfirmed() -> None:
+    gate = EntityGate(object())
+    context = _make_context_stack()
+    context.working_memory.set_active_project(15157, "Villa Maintenance No. 34", confirmed=True)
+    intent = Intent(
+        primary_action="analyze",
+        subject_area="project",
+        specific_intent="breakdown of Villa 34",
+        entities=[EntityReference(type="project", value="Villa 34", confidence=0.9)],
+    )
+    result = await gate.evaluate(intent, context, "breakdown of Villa 34")
+    assert result.status == "confirmed"
+    assert result.confirmed["project"]["id"] == 15157
+    assert result.status not in {"needs_confirmation", "weak_confirmation"}
+
+
+@pytest.mark.asyncio
+async def test_new_project_still_needs_confirmation() -> None:
+    from tests.core.test_entity_resolver import MockProjectSearch, PROJECT_CATALOG
+
+    gate = EntityGate(object())
+    gate._project_resolver = __import__(
+        "gateway.core.entity_resolver",
+        fromlist=["EntityResolver"],
+    ).EntityResolver(MockProjectSearch(PROJECT_CATALOG))
+    context = _make_context_stack()
+    context.working_memory.set_active_project(15157, "Villa Maintenance No. 34", confirmed=True)
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="project",
+        specific_intent="Zayidia Boys School expense",
+        entities=[EntityReference(type="project", value="Zayidia Boys School", confidence=0.9)],
+    )
+    result = await gate.evaluate(intent, context, "Zayidia Boys School expense")
+    assert result.status in {"needs_confirmation", "weak_confirmation"}
+    assert result.confirmed.get("project", {}).get("id") != 15157

@@ -20,6 +20,7 @@ from gateway.core.project_query_utils import (
     looks_like_project_cost_query,
     meaningful_project_words,
 )
+from gateway.core.working_memory import ActiveContext
 
 logger = logging.getLogger(__name__)
 
@@ -345,7 +346,45 @@ class EntityGate:
                     "name": item.name or str(item.id),
                 }
 
-        pending = [(entity_type, query) for entity_type, query in required if entity_type not in confirmed_map]
+        active = context.working_memory.get_active_project()
+        if active and active.confirmed and active.project_id:
+            project_pending = [(entity_type, query) for entity_type, query in required if entity_type == "project"]
+            entity_hint = self._extract_entity_hint(intent, message)
+            if project_pending and all(
+                self._matches_active(query, active) for _, query in project_pending
+            ) and self._matches_active(entity_hint, active):
+                logger.info(
+                    "[EntityGate] Skipping confirm — %s already confirmed this session",
+                    active.project_name,
+                )
+                confirmed_map["project"] = {
+                    "id": int(active.project_id),
+                    "name": active.project_name or str(active.project_id),
+                }
+                return EntityGateResult(
+                    status="confirmed",
+                    required_types=[item[0] for item in required],
+                    confirmed=confirmed_map,
+                )
+
+        pending: list[tuple[str, str]] = []
+        entity_hint = self._extract_entity_hint(intent, message)
+        for entity_type, query in required:
+            if entity_type not in confirmed_map:
+                pending.append((entity_type, query))
+                continue
+            if entity_type == "project":
+                confirmed_project = confirmed_map["project"]
+                confirmed_active = ActiveContext(
+                    project_id=int(confirmed_project["id"]),
+                    project_name=str(confirmed_project.get("name") or ""),
+                    confirmed=True,
+                )
+                if not self._matches_active(query, confirmed_active) or not self._matches_active(
+                    entity_hint,
+                    confirmed_active,
+                ):
+                    pending.append((entity_type, query))
         if not pending:
             return EntityGateResult(
                 status="confirmed",
@@ -493,6 +532,32 @@ class EntityGate:
             )
 
         return [], {"entity_discovery_count": 0, "entity_top_confidence": 0.0}, False
+
+    @staticmethod
+    def _extract_entity_hint(intent: Intent, message: str) -> str:
+        for entity in intent.entities:
+            if entity.type == "project":
+                return entity.value
+        hint = extract_project_name_hint(message)
+        return hint or ""
+
+    @staticmethod
+    def _matches_active(hint: str, active: ActiveContext) -> bool:
+        if not hint:
+            return True
+        hint_lower = hint.strip().lower()
+        if hint_lower == str(active.project_id):
+            return True
+        active_name = (active.project_name or "").lower()
+        if active_name and (
+            hint_lower in active_name
+            or active_name in hint_lower
+        ):
+            return True
+        hint_tokens = [token for token in hint_lower.replace("-", " ").split() if token]
+        if hint_tokens and active_name and all(token in active_name for token in hint_tokens):
+            return True
+        return False
 
     @staticmethod
     def apply_confirmed_entities(context: ContextStack, confirmed: dict[str, dict[str, Any]]) -> None:

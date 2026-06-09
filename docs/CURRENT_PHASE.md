@@ -8,7 +8,7 @@
 
 **File:** `docs/CONVERSATION_INTELLIGENCE_SPRINT.md` — Conversation Intelligence Sprint (6 fixes)
 
-**Status:** Day 2–3 complete in code — FIX 1 + FIX 2 ✅ (tests pass; live verify when you test)
+**Status:** Day 4 complete in code — FIX 3 ✅ (tests pass; live verify when you test)
 
 ---
 
@@ -17,20 +17,19 @@
 | Fix | Description | Code | Tests | Live verify |
 |-----|-------------|------|-------|-------------|
 | FIX 4 | Deploy A1 breakdown unwrap | ✅ `fd4b2e6` | ✅ | ✅ |
-| FIX 5 | Number sanity (W.O=0) | ✅ `82669fb` | ✅ 4 tests | ⏳ Odoo E2E when back |
-| FIX 1 | Sticky context (`ActiveContext`) | ✅ | ✅ 2 tests | ⏳ |
-| FIX 2 | Follow-up routing | ✅ | ✅ 3 tests | ⏳ |
-| FIX 3 | Skip confirmed | — | — | — |
+| FIX 5 | Number sanity (W.O=0) | ✅ `82669fb` | ✅ | ⏳ |
+| FIX 1 | Sticky context (`ActiveContext`) | ✅ `8d77ad5` | ✅ | ⏳ |
+| FIX 2 | Follow-up routing | ✅ `8d77ad5` | ✅ | ⏳ |
+| FIX 3 | Skip confirmed projects | ✅ | ✅ 2 tests | ⏳ |
 | FIX 6 | Non-financial honesty | — | — | — |
 | Final | 7-turn acceptance test | — | — | — |
 
-**FIX 1:** `WorkingMemory.active_context` — set after successful project expense tools; hydrated from session scope; cleared on topic shift.
+**FIX 3:** Entity gate skips re-confirmation when query matches an already-confirmed active project (`_matches_active` / `_extract_entity_hint`).
 
-**FIX 2:** `is_followup_to_active()` — follow-ups like "share the breakdown" reuse active project and skip entity gate (no re-search on `15157`, no re-confirm).
-
-**Run FIX 1+2 tests:**
+**Run FIX 3 tests:**
 ```bash
-pytest tests/core/test_active_context.py -q
+pytest tests/core/test_entity_gate.py::test_confirmed_project_not_reconfirmed \
+  tests/core/test_entity_gate.py::test_new_project_still_needs_confirmation -q
 ```
 
 **Deploy:**
@@ -44,9 +43,9 @@ cd /opt/ooa && git pull && ./deploy/aws/scripts/deploy-code.sh
 
 ## ⏭ NEXT
 
-**Day 4:** FIX 3 — Entity gate skips already-confirmed projects.
+**Day 5:** FIX 6 — Non-financial honesty (project manager, attributes).
 
-After all 6 fixes + 7-turn test: **Elrace Omni-Agent Final Plan**
+**Day 6–7:** Full 7-turn acceptance test → then **Elrace Omni-Agent Final Plan**.
 
 ---
 
