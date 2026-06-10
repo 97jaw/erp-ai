@@ -63,15 +63,41 @@ def _has_shift_marker(message: str) -> bool:
     return False
 
 
+def _is_pure_follow_up_turn(message: str, intent: Intent) -> bool:
+    """Follow-up phrasing with no real new project reference is never a topic shift."""
+    from gateway.core.project_expense_routing import FOLLOW_UP_SIGNALS, _is_real_project_reference
+
+    query_lower = message.lower()
+    has_followup_signal = any(signal in query_lower for signal in FOLLOW_UP_SIGNALS)
+    if not has_followup_signal:
+        return False
+
+    project_entities = [entity for entity in intent.entities if entity.type == "project"]
+    has_real_new_project = any(
+        _is_real_project_reference(entity.value) for entity in project_entities
+    )
+    return not has_real_new_project
+
+
 def detect_topic_shift(
     message: str,
     intent: Intent,
     *,
     last_turn: dict[str, Any] | None = None,
+    active: Any | None = None,
 ) -> bool:
     """Return True when the current turn shifts away from the previous topic/entity."""
     if not last_turn:
         return False
+
+    if _is_pure_follow_up_turn(message, intent):
+        return False
+
+    if active is not None:
+        from gateway.core.project_expense_routing import is_followup_to_active
+
+        if is_followup_to_active(message, intent, active):
+            return False
 
     if _has_shift_marker(message):
         return True

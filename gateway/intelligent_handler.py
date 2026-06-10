@@ -241,7 +241,22 @@ class IntelligentQueryHandler:
                 PipelineStage.INTENT,
                 self._intent_analyzer.analyze(message, context),
             )
-            if context.working_memory.detect_topic_shift(message, intent):
+
+            from gateway.core.project_expense_routing import (
+                apply_active_follow_up_context,
+                is_followup_to_active,
+            )
+
+            active = context.working_memory.get_active_project()
+            is_active_follow_up = is_followup_to_active(message, intent, active)
+
+            if is_active_follow_up:
+                logger.info(
+                    "[FollowUp] Gating topic-shift — keeping active project %s (id=%s)",
+                    active.project_name if active else None,
+                    active.project_id if active else None,
+                )
+            elif context.working_memory.detect_topic_shift(message, intent):
                 last_turn = context.working_memory.session_facts.get("last_turn") or {}
                 logger.info(
                     "[TopicShift] Detected. Clearing entity context. "
@@ -284,13 +299,8 @@ class IntelligentQueryHandler:
                 )
 
             intent = EntityGate.infer_entity_hints(message, intent)
-            from gateway.core.project_expense_routing import (
-                apply_active_follow_up_context,
-                is_followup_to_active,
-            )
 
-            active = context.working_memory.get_active_project()
-            if is_followup_to_active(message, intent, active):
+            if is_active_follow_up and active is not None:
                 logger.info(
                     "[FollowUp] Using active project %s (id=%s) — skipping entity resolution",
                     active.project_name,

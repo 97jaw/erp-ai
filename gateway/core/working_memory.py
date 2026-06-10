@@ -104,7 +104,12 @@ class WorkingMemory:
                 "entity_values": [entity.value for entity in previous.entities],
                 "subject_area": previous.subject_area,
             }
-        return detect_topic_shift(message, intent, last_turn=last_turn)
+        return detect_topic_shift(
+            message,
+            intent,
+            last_turn=last_turn,
+            active=self.get_active_project(),
+        )
 
     def clear_entity_context(self) -> None:
         """Wipe recent entities and session entity facts after a topic shift."""
