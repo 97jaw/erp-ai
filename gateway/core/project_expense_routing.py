@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -10,6 +11,8 @@ from gateway.core.intent_analyzer import EntityReference, Intent
 from gateway.core.project_query_utils import looks_like_project_cost_query
 from gateway.core.working_memory import ActiveContext
 from gateway.tool_validation import extract_project_id_from_text
+
+logger = logging.getLogger(__name__)
 
 PROJECT_EXPENSE_PROMPT_SECTION = """
 PROJECT EXPENSE QUERY HANDLING:
@@ -201,7 +204,14 @@ def is_followup_to_active(
     active: ActiveContext | None,
 ) -> bool:
     """Return True when the query is a follow-up about the active project."""
+    logger.info(
+        "[TRACE followup] query=%r active=%s entities=%s",
+        query,
+        active.project_id if active else None,
+        [(entity.type, entity.value) for entity in intent.entities],
+    )
     if active is None or active.project_id is None:
+        logger.info("[TRACE followup] returning False")
         return False
 
     query_lower = query.lower()
@@ -213,17 +223,22 @@ def is_followup_to_active(
         val = entity.value.strip().lower()
 
         if val == str(active.project_id):
+            logger.info("[TRACE followup] returning True")
             return True
         active_name = (active.project_name or "").lower()
         if active_name and (active_name in val or val in active_name):
+            logger.info("[TRACE followup] returning True")
             return True
 
         if _is_real_project_reference(val) and not has_followup_signal:
+            logger.info("[TRACE followup] returning False")
             return False
 
     if has_followup_signal:
+        logger.info("[TRACE followup] returning True")
         return True
 
+    logger.info("[TRACE followup] returning False")
     return False
 
 

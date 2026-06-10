@@ -729,9 +729,21 @@ class IntelligentQueryHandler:
         context: ContextStack,
     ) -> Intent:
         """Clear spurious clarification when user drills into the active project."""
+        logger.info(
+            "[TRACE apply_followup] intent.entities BEFORE=%s",
+            [(entity.type, entity.value) for entity in intent.entities],
+        )
         if not is_project_expense_follow_up(message):
+            logger.info(
+                "[TRACE apply_followup] intent.entities AFTER=%s",
+                [(entity.type, entity.value) for entity in intent.entities],
+            )
             return intent
         if not EntityGate.has_active_project_scope(context):
+            logger.info(
+                "[TRACE apply_followup] intent.entities AFTER=%s",
+                [(entity.type, entity.value) for entity in intent.entities],
+            )
             return intent
         updates: dict[str, Any] = {
             "requires_clarification": False,
@@ -741,7 +753,12 @@ class IntelligentQueryHandler:
             updates["subject_area"] = "project"
         if intent.primary_action in {"other", "ask_question", "search_entity"}:
             updates["primary_action"] = "analyze"
-        return replace(intent, **updates)
+        updated = replace(intent, **updates)
+        logger.info(
+            "[TRACE apply_followup] intent.entities AFTER=%s",
+            [(entity.type, entity.value) for entity in updated.entities],
+        )
+        return updated
 
     @staticmethod
     def _persist_execution_scope(

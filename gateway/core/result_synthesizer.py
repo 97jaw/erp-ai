@@ -123,6 +123,10 @@ class ResultSynthesizer:
         results: dict[int, Any],
         intent: Intent,
     ) -> SynthesizedResult | None:
+        import logging
+        import traceback
+
+        trace_logger = logging.getLogger(__name__)
         for step_number in sorted(results.keys()):
             payload = results[step_number]
             if not isinstance(payload, dict) or payload.get("error"):
@@ -133,6 +137,11 @@ class ResultSynthesizer:
                 continue
             candidates = payload.get("candidates") or []
             query = str(payload.get("query") or intent.specific_intent)
+            trace_logger.info(
+                "[TRACE resolve] about to search for query=%r — WHO CALLED ME",
+                query,
+            )
+            trace_logger.info(traceback.format_stack()[-3])
             if not candidates:
                 return SynthesizedResult(
                     text=f"I couldn't find any matching records for {query!r}. Try a different name or WO number.",

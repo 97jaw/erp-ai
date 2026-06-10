@@ -287,6 +287,13 @@ class EntityResolver:
         min_confidence: float = 0.6,
     ) -> ResolutionResult:
         """Find project(s) matching the query using ilike strategies then local fuzzy fallback."""
+        import traceback
+
+        logger.info(
+            "[TRACE resolve] about to search for query=%r — WHO CALLED ME",
+            query,
+        )
+        logger.info(traceback.format_stack()[-3])
         normalized_query = query.strip()
         phase_a = await self._run_ilike_strategies(normalized_query, context, min_confidence)
 
