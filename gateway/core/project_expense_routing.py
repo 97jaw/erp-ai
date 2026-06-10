@@ -159,6 +159,42 @@ FOLLOW_UP_SIGNALS = (
 )
 
 
+# Generic words the intent analyzer hallucinates as "projects"
+_PHANTOM_PROJECT_WORDS = frozenset(
+    {
+        "expense",
+        "expenses",
+        "cost",
+        "costs",
+        "breakdown",
+        "cost breakdown",
+        "report",
+        "summary",
+        "detail",
+        "details",
+        "data",
+        "info",
+        "general",
+        "maintenance",
+        "project",
+        "the project",
+        "it",
+    }
+)
+
+
+def _is_real_project_reference(val: str) -> bool:
+    """Distinguish a real project name from an intent-analyzer phantom."""
+    val = val.strip().lower()
+    if len(val) < 4:
+        return False
+    if val in _PHANTOM_PROJECT_WORDS:
+        return False
+    if all(word in _PHANTOM_PROJECT_WORDS for word in val.split()):
+        return False
+    return True
+
+
 def is_followup_to_active(
     query: str,
     intent: Intent,
@@ -168,21 +204,27 @@ def is_followup_to_active(
     if active is None or active.project_id is None:
         return False
 
-    for entity in intent.entities:
-        if entity.type != "project":
-            continue
+    query_lower = query.lower()
+    has_followup_signal = any(signal in query_lower for signal in FOLLOW_UP_SIGNALS)
+
+    project_entities = [entity for entity in intent.entities if entity.type == "project"]
+
+    for entity in project_entities:
         val = entity.value.strip().lower()
+
         if val == str(active.project_id):
             return True
         active_name = (active.project_name or "").lower()
-        if active_name and active_name in val:
+        if active_name and (active_name in val or val in active_name):
             return True
-        if active_name and val in active_name:
-            return True
-        return False
 
-    query_lower = query.lower()
-    return any(signal in query_lower for signal in FOLLOW_UP_SIGNALS)
+        if _is_real_project_reference(val) and not has_followup_signal:
+            return False
+
+    if has_followup_signal:
+        return True
+
+    return False
 
 
 def apply_active_follow_up_context(context: ContextStack, active: ActiveContext) -> None:
