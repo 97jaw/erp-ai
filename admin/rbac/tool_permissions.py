@@ -54,8 +54,19 @@ def permission_for_tool(tool_name: str, tool_input: dict[str, Any] | None = None
     if tool_name in ("query_accounting", "get_financial_report"):
         report_type = tool_input.get("report_type", "pandl")
         return REPORT_TYPE_PERMISSIONS.get(report_type)
-    if tool_name in ("search_odoo", "group_and_aggregate", "sql_aggregate"):
+    if tool_name in (
+        "search_odoo",
+        "group_and_aggregate",
+        "sql_aggregate",
+        "query_odoo",
+        "aggregate_odoo",
+    ):
         return permission_for_model(_model_from_tool_input(tool_name, tool_input))
+    if tool_name == "introspect_odoo_schema":
+        model = _model_from_tool_input(tool_name, tool_input)
+        if model:
+            return permission_for_model(model)
+        return "odoo.full_access"
     return TOOL_PERMISSIONS.get(tool_name)
 
 

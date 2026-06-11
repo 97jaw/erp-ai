@@ -227,6 +227,11 @@ from gateway.tools.project_expense import (
     PROJECT_EXPENSE_TOOL_NAMES,
     run_project_expense_tool,
 )
+from gateway.tools.universal_odoo import (
+    UNIVERSAL_ODOO_EXECUTORS,
+    UNIVERSAL_ODOO_TOOL_DEFINITIONS,
+    build_universal_context,
+)
 from gateway.session_entities import (
     build_session_context_prompt,
     enrich_tool_input,
@@ -1183,6 +1188,7 @@ TOOLS = [
         },
     },
     *PROJECT_EXPENSE_TOOL_DEFINITIONS,
+    *UNIVERSAL_ODOO_TOOL_DEFINITIONS,
     {
         "name": "search_entities",
         "description": (
@@ -1534,6 +1540,17 @@ def execute_tool(
                         limit=tool_input.get("limit", 10),
                     )
                 )
+        elif tool_name in UNIVERSAL_ODOO_EXECUTORS:
+            import asyncio
+
+            chat_user = get_request_user()
+            context = build_universal_context(
+                user_message=user_message,
+                user=chat_user,
+            )
+            result = asyncio.run(
+                UNIVERSAL_ODOO_EXECUTORS[tool_name](adapter, tool_input, context),
+            )
         else:
             result = {"error": f"Unknown tool: {tool_name}"}
 
