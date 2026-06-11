@@ -212,6 +212,95 @@ def test_entity_resolution_stage_never_maps_to_data_ambiguous() -> None:
 
 
 @pytest.mark.asyncio
+async def test_entity_gate_candidates_override_intent_clarification() -> None:
+    """Entity gate matches win over Claude's generic requires_clarification text."""
+    from gateway.core.entity_resolver import EntityResolver
+    from gateway.core.telemetry_capture import InMemoryTelemetryStore, TelemetryCapture
+    from gateway.intelligent_handler import IntelligentQueryHandler
+    from tests.core.test_entity_resolver import MockProjectSearch, PROJECT_CATALOG
+    from tests.integration.test_intelligent_handler import (
+        FixedContextStackBuilder,
+        FixedIntentAnalyzer,
+        StubProactiveIntelligence,
+        _stack_for_user,
+        _super_admin,
+    )
+
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="project",
+        specific_intent="national guard expenses",
+        entities=[EntityReference(type="project", value="national guard", confidence=0.9)],
+        requires_clarification=True,
+        clarification_question="Which project did you mean?",
+    )
+    handler = IntelligentQueryHandler(
+        context_builder=FixedContextStackBuilder(_stack_for_user(_super_admin())),
+        intent_analyzer=FixedIntentAnalyzer(intent),
+        entity_resolver=EntityResolver(MockProjectSearch(PROJECT_CATALOG)),
+        proactive_layer=StubProactiveIntelligence(),
+        telemetry_capture=TelemetryCapture(repository=InMemoryTelemetryStore()),
+    )
+    response = await handler.handle(
+        "national guard expenses",
+        _super_admin(),
+        adapter=object(),
+    )
+
+    assert response.awaiting_clarification
+    assert response.clarification is not None
+    assert response.clarification.get("reason") == "entity_confirmation"
+    assert response.clarification.get("options")
+    assert "which project did you mean" not in response.text.lower()
+    assert "couldn't find" not in response.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_entity_gate_transient_error_shows_honest_message() -> None:
+    from gateway.core.entity_resolver import EntityResolver
+    from gateway.core.telemetry_capture import InMemoryTelemetryStore, TelemetryCapture
+    from gateway.intelligent_handler import IntelligentQueryHandler
+    from tests.core.test_entity_resolver import MockProjectSearch
+    from tests.integration.test_intelligent_handler import (
+        FixedContextStackBuilder,
+        FixedIntentAnalyzer,
+        StubProactiveIntelligence,
+        _stack_for_user,
+        _super_admin,
+    )
+
+    class _FlakyResolver(EntityResolver):
+        async def resolve_project(self, query, context, min_confidence=0.6):
+            del query, context, min_confidence
+            raise ConnectionError("502 Bad Gateway")
+
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="project",
+        specific_intent="national guard expenses",
+        entities=[EntityReference(type="project", value="national guard", confidence=0.9)],
+    )
+    handler = IntelligentQueryHandler(
+        context_builder=FixedContextStackBuilder(_stack_for_user(_super_admin())),
+        intent_analyzer=FixedIntentAnalyzer(intent),
+        entity_resolver=_FlakyResolver(MockProjectSearch([])),
+        proactive_layer=StubProactiveIntelligence(),
+        telemetry_capture=TelemetryCapture(repository=InMemoryTelemetryStore()),
+    )
+    response = await handler.handle(
+        "national guard expenses",
+        _super_admin(),
+        adapter=object(),
+    )
+
+    assert response.awaiting_clarification
+    assert "trouble reaching the database" in response.text.lower()
+    assert "couldn't find" not in response.text.lower()
+    assert response.clarification is not None
+    assert response.clarification.get("reason") == "transient_error"
+
+
+@pytest.mark.asyncio
 async def test_weak_match_shown_with_caveat_not_discarded() -> None:
     """Weak confidence tier → possible-match caveat, not not_found."""
     intent = Intent(

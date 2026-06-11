@@ -7,7 +7,11 @@ from typing import Any
 import pytest
 
 from gateway.core.intent_analyzer import EntityReference, Intent
-from gateway.core.project_expense_routing import select_project_expense_tool
+from gateway.core.project_expense_routing import (
+    is_gl_project_breakdown_query,
+    is_project_expense_query,
+    select_project_expense_tool,
+)
 from tests.core.test_context_stack import _make_context_stack
 
 
@@ -268,3 +272,59 @@ async def test_strategy_planner_routes_villa_expense_with_financial_subject() ->
     strategy = planner.plan_simple(intent, context)
     assert strategy.steps[0].tool == "get_project_expense_summary"
     assert strategy.steps[0].tool_input == {"project_id": 31034}
+
+
+@pytest.mark.asyncio
+async def test_strategy_planner_routes_gl_details_for_villa_to_breakdown() -> None:
+    """P-B3: GL details + project entity → breakdown, not get_general_ledger."""
+    from gateway.core.entity_gate import EntityGate
+    from gateway.core.strategy_planner import StrategyPlanner
+
+    villa_id = 15157
+    message = "show GL details for Villa Maintenance No. 34"
+    context = _context(project_id=villa_id, project_name="Villa Maintenance No. 34")
+    context.working_memory.session_facts["confirmed_entities"] = {
+        "project": {"id": villa_id, "name": "Villa Maintenance No. 34"},
+    }
+    assert EntityGate.project_confirmed(context)
+
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="financial",
+        specific_intent="retrieve general ledger details for specific project",
+        entities=[
+            EntityReference(type="project", value="Villa Maintenance No. 34", confidence=0.95),
+        ],
+        estimated_complexity="moderate",
+    )
+    intent = EntityGate.infer_entity_hints(message, intent)
+    assert intent.subject_area == "project"
+
+    planner = StrategyPlanner(client=object())  # type: ignore[arg-type]
+    strategy = planner.plan_simple(intent, context)
+    assert strategy.steps[0].tool == "get_project_expense_breakdown"
+    assert strategy.steps[0].tool_input == {"project_id": villa_id}
+    assert "get_general_ledger" not in {step.tool for step in strategy.steps}
+
+
+def test_gl_with_project_entity_is_project_breakdown_query() -> None:
+    message = "show GL details for Villa Maintenance No. 34"
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="financial",
+        specific_intent="retrieve general ledger details for specific project",
+        entities=[
+            EntityReference(type="project", value="Villa Maintenance No. 34", confidence=0.95),
+        ],
+    )
+    context = _context(project_id=15157, project_name="Villa Maintenance No. 34")
+    assert is_gl_project_breakdown_query(message, intent, context)
+    assert is_project_expense_query(message, intent, context)
+    selected = select_project_expense_tool(message, intent, context)
+    assert selected == ("get_project_expense_breakdown", {"project_id": 15157})
+
+
+def test_gl_without_project_is_not_project_expense_query() -> None:
+    intent = _intent("show general ledger for this quarter", subject_area="financial")
+    assert not is_gl_project_breakdown_query("show general ledger for this quarter", intent)
+    assert not is_project_expense_query("show general ledger for this quarter", intent)

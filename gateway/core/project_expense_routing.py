@@ -119,6 +119,10 @@ _BREAKDOWN_SIGNALS = (
     "by account",
     "gl detail",
     "gl details",
+    "gl details for",
+    "show gl for",
+    "gl for project",
+    "general ledger for project",
     "gl breakdown",
     "where exactly",
     "where did the money",
@@ -261,18 +265,64 @@ _MATERIALS_FILTER = re.compile(r"\bmaterials?\b", re.IGNORECASE)
 _ARABIC_EXPENSE = re.compile(r"تكاليف|مصروف|تكلفة")
 
 
-def is_project_expense_query(message: str, intent: Intent) -> bool:
+def _mentions_gl(blob: str) -> bool:
+    """True when the query refers to GL / general ledger (not generic 'general' words)."""
+    if re.search(r"\bgl\b", blob):
+        return True
+    return "general ledger" in blob
+
+
+def _has_project_entity_context(
+    intent: Intent,
+    context: ContextStack | None = None,
+) -> bool:
+    """True when the turn is scoped to a specific project (entity, confirmed, or active)."""
+    for entity in intent.entities:
+        if entity.type != "project":
+            continue
+        value = entity.value.strip()
+        if not value:
+            continue
+        if value.isdigit():
+            return True
+        if _is_real_project_reference(value):
+            return True
+        if len(value) >= 4 and value.lower() not in _PHANTOM_PROJECT_WORDS:
+            return True
+    if context is not None:
+        from gateway.core.entity_gate import EntityGate
+
+        if EntityGate.has_active_project_scope(context):
+            return True
+    return False
+
+
+def is_gl_project_breakdown_query(
+    message: str,
+    intent: Intent,
+    context: ContextStack | None = None,
+) -> bool:
+    """GL details with project context → project expense breakdown, not company GL."""
+    blob = _query_blob(message, intent)
+    return _mentions_gl(blob) and _has_project_entity_context(intent, context)
+
+
+def is_project_expense_query(
+    message: str,
+    intent: Intent,
+    context: ContextStack | None = None,
+) -> bool:
     """Return True when the query is about project expense intelligence tools."""
     if intent.primary_action == "search_entity":
         return False
     blob = _query_blob(message, intent)
+    if is_gl_project_breakdown_query(message, intent, context):
+        return True
     if any(signal in blob for signal in _BREAKDOWN_SIGNALS):
         return True
     if any(signal in blob for signal in _COMPARE_SIGNALS):
         return True
     if "over budget" in blob:
-        return True
-    if re.search(r"\bgl\b", blob):
         return True
     if any(token in blob for token in ("money", "spend", "spent", "spending", "status")):
         return True
@@ -295,7 +345,7 @@ def select_project_expense_tool(
     context: ContextStack,
 ) -> tuple[str, dict[str, Any]] | None:
     """Choose summary, breakdown, or compare tool with input payload."""
-    if not is_project_expense_query(message, intent):
+    if not is_project_expense_query(message, intent, context):
         return None
 
     blob = _query_blob(message, intent)
@@ -355,6 +405,8 @@ def _is_compare_query(blob: str, intent: Intent) -> bool:
 
 
 def _is_breakdown_query(blob: str, intent: Intent, context: ContextStack) -> bool:
+    if _mentions_gl(blob) and _has_project_entity_context(intent, context):
+        return True
     if any(signal in blob for signal in _BREAKDOWN_SIGNALS):
         return True
     if any(signal in blob for signal in _FOLLOW_UP_BREAKDOWN_SIGNALS):
@@ -427,17 +479,19 @@ def _compare_project_ids(
     intent: Intent,
     context: ContextStack,
 ) -> list[int]:
+    from gateway.core.entity_gate import dedupe_project_ids
+
     facts = context.working_memory.session_facts
     explicit = facts.get("compare_project_ids") or facts.get("resolved_project_ids")
     if explicit:
-        return [int(value) for value in explicit]
+        return dedupe_project_ids([int(value) for value in explicit])[:10]
     if len(project_ids) >= 2:
-        return project_ids
+        return dedupe_project_ids(project_ids)[:10]
     if len(intent.entities) >= 2:
         default_pairs = facts.get("zayidia_compare_defaults")
         if default_pairs:
-            return [int(value) for value in default_pairs]
-    return project_ids
+            return dedupe_project_ids([int(value) for value in default_pairs])[:10]
+    return dedupe_project_ids(project_ids)
 
 
 def _require_single_project_id(project_ids: list[int], context: ContextStack) -> int:

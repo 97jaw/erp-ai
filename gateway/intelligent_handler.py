@@ -17,6 +17,7 @@ from gateway.core.entity_gate import (
     EntityGate,
     build_entity_not_found_clarification,
     build_entity_options,
+    build_entity_transient_error_clarification,
 )
 from gateway.core.project_query_utils import is_project_expense_follow_up
 from gateway.core.entity_resolver import EntityResolver, OdooProjectSearch, ResolutionStrategy
@@ -82,7 +83,10 @@ class EntityResolutionMeta:
     clarification_options: list[dict[str, Any]] = field(default_factory=list)
     clarification_reason: str = "entity_confirmation"
     not_found: bool = False
+    transient_error: bool = False
     query_label: str = ""
+    compare_pending_query: str = ""
+    compare_resolved_projects: list[dict[str, Any]] = field(default_factory=list)
     weak_matches: bool = False
     entity_discovery_count: int = 0
     entity_top_confidence: float = 0.0
@@ -852,6 +856,31 @@ class IntelligentQueryHandler:
 
         if result.status == "confirmed":
             meta.entity_confirmed_by_user = bool(confirmed_entities)
+            if result.compare_project_ids:
+                EntityGate.apply_compare_projects(
+                    context,
+                    result.compare_resolved_projects,
+                    result.compare_project_ids,
+                )
+                for proj in result.compare_resolved_projects:
+                    meta.resolved_entities.append(
+                        {
+                            "entity_type": "project",
+                            "id": proj.get("id"),
+                            "name": proj.get("name"),
+                            "project_id": proj.get("id"),
+                            "project_name": proj.get("name"),
+                            "action": "auto_confirmed" if not confirmed_entities else "user_confirmed",
+                        },
+                    )
+                if intent.requires_clarification:
+                    intent = replace(
+                        intent,
+                        requires_clarification=False,
+                        clarification_question=None,
+                    )
+                return intent, meta
+
             EntityGate.apply_confirmed_entities(context, result.confirmed)
             updated_entities: list[EntityReference] = []
             for entity in intent.entities:
@@ -887,11 +916,30 @@ class IntelligentQueryHandler:
             meta.query_label = result.query_label
             return intent, meta
 
+        if result.status == "transient_error":
+            meta.needs_clarification = True
+            meta.transient_error = True
+            meta.query_label = result.query_label
+            return intent, meta
+
         meta.needs_clarification = True
         meta.weak_matches = result.status == "weak_confirmation"
         meta.clarification_matches = result.matches
         meta.clarification_options = result.options or build_entity_options(result.matches)
         meta.query_label = result.query_label
+        meta.compare_pending_query = result.compare_pending_query
+        meta.compare_resolved_projects = list(result.compare_resolved_projects)
+        if result.compare_pending_query:
+            context.working_memory.session_facts["compare_pending_query"] = result.compare_pending_query
+            context.working_memory.session_facts["compare_resolved_projects"] = list(
+                result.compare_resolved_projects,
+            )
+        if intent.requires_clarification:
+            intent = replace(
+                intent,
+                requires_clarification=False,
+                clarification_question=None,
+            )
         return intent, meta
 
     @staticmethod
@@ -1139,7 +1187,33 @@ class IntelligentQueryHandler:
         has_candidates = bool(entity_meta.clarification_options)
         if has_candidates:
             duration_ms = int((time.perf_counter() - started) * 1000)
-            if entity_meta.weak_matches:
+            if entity_meta.compare_pending_query:
+                pending = entity_meta.compare_pending_query
+                resolved = entity_meta.compare_resolved_projects
+                if resolved:
+                    resolved_label = ", ".join(
+                        str(item.get("name") or item.get("id")) for item in resolved
+                    )
+                    question = (
+                        f"I've matched **{resolved_label}**. "
+                        f"Which project did you mean for **{pending}**?"
+                        if language != "ar"
+                        else f"طابقت **{resolved_label}**. أي مشروع تقصد لـ **{pending}**؟"
+                    )
+                elif len(entity_meta.clarification_options) == 1:
+                    label = entity_meta.clarification_options[0].get("label", "")
+                    question = (
+                        f"Compare including **{label}** — is this the project you mean for **{pending}**?"
+                        if language != "ar"
+                        else f"مقارنة تتضمن **{label}** — هل هذا المشروع المقصود لـ **{pending}**؟"
+                    )
+                else:
+                    question = (
+                        f"Which project did you mean for **{pending}**?"
+                        if language != "ar"
+                        else f"أي مشروع تقصد لـ **{pending}**؟"
+                    )
+            elif entity_meta.weak_matches:
                 if len(entity_meta.clarification_options) == 1:
                     label = entity_meta.clarification_options[0].get("label", "")
                     question = (
@@ -1167,11 +1241,17 @@ class IntelligentQueryHandler:
                     else "يرجى تأكيد السجل المطلوب قبل جلب البيانات المالية."
                 )
             clarification = {
-                "reason": "entity_confirmation",
+                "reason": "compare_entity_confirmation"
+                if entity_meta.compare_pending_query
+                else "entity_confirmation",
                 "question": question,
                 "matches": entity_meta.clarification_matches,
                 "options": entity_meta.clarification_options,
             }
+            if entity_meta.compare_pending_query:
+                clarification["compare_pending_query"] = entity_meta.compare_pending_query
+                if entity_meta.compare_resolved_projects:
+                    clarification["compare_resolved"] = entity_meta.compare_resolved_projects
             response = IntelligentQueryResponse(
                 session_id=resolved_session,
                 text=question,
@@ -1207,6 +1287,25 @@ class IntelligentQueryHandler:
                     "Search by Work Order number",
                 ],
                 failure_mode=FailureMode.NO_DATA_FOUND.value,
+                awaiting_clarification=True,
+                clarification=clarification,
+                interaction_id=telemetry.interaction_id,
+            )
+        elif entity_meta.transient_error:
+            clarification = build_entity_transient_error_clarification(language=language)
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            response = IntelligentQueryResponse(
+                session_id=resolved_session,
+                text=clarification["question"],
+                language=language,
+                visualization=None,
+                orchestration_log=[],
+                execution_duration_ms=duration_ms,
+                orchestration_duration_ms=0,
+                strategy_step_count=0,
+                tools_called=[],
+                suggestions=[],
+                failure_mode=FailureMode.SERVICE_UNAVAILABLE.value,
                 awaiting_clarification=True,
                 clarification=clarification,
                 interaction_id=telemetry.interaction_id,

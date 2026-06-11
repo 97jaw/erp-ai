@@ -10,6 +10,7 @@ from gateway.core.entity_gate import (
     EntityGate,
     build_entity_not_found_clarification,
     build_entity_options,
+    build_entity_transient_error_clarification,
 )
 from tests.core.test_context_stack import _make_context_stack
 
@@ -157,6 +158,101 @@ def test_build_entity_not_found_clarification_has_actions() -> None:
     assert "couldn't find a project" in payload["question"].lower()
     assert len(payload["options"]) == 2
     assert payload["options"][0]["action"] == "search_broader_entity"
+
+
+def test_build_entity_transient_error_clarification_honest_message() -> None:
+    payload = build_entity_transient_error_clarification()
+    assert payload["reason"] == "transient_error"
+    assert "trouble reaching the database" in payload["question"].lower()
+    assert "couldn't find" not in payload["question"].lower()
+    assert payload["options"] == []
+
+
+@pytest.mark.asyncio
+async def test_evaluate_transient_error_after_retries_exhausted() -> None:
+    from gateway.core.entity_resolver import EntityResolver
+    from tests.core.test_entity_resolver import MockProjectSearch
+
+    class _FlakyResolver(EntityResolver):
+        def __init__(self) -> None:
+            super().__init__(MockProjectSearch([]))
+            self.calls = 0
+
+        async def resolve_project(self, query, context, min_confidence=0.6):
+            del query, context, min_confidence
+            self.calls += 1
+            raise ConnectionError("502 Bad Gateway")
+
+    gate = EntityGate(object())
+    flaky = _FlakyResolver()
+    gate._project_resolver = flaky
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="project",
+        specific_intent="national guard expenses",
+        entities=[EntityReference(type="project", value="national guard", confidence=0.9)],
+    )
+    context = _make_context_stack()
+
+    result = await gate.evaluate(intent, context, "national guard expenses")
+
+    assert result.status == "transient_error"
+    assert result.status != "not_found"
+    assert flaky.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_evaluate_national_guard_returns_multiple_candidates() -> None:
+    from tests.core.test_entity_resolver import MockProjectSearch, PROJECT_CATALOG
+
+    gate = EntityGate(object())
+    gate._project_resolver = __import__(
+        "gateway.core.entity_resolver",
+        fromlist=["EntityResolver"],
+    ).EntityResolver(MockProjectSearch(PROJECT_CATALOG))
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="project",
+        specific_intent="national guard expenses",
+        entities=[EntityReference(type="project", value="national guard", confidence=0.9)],
+    )
+    context = _make_context_stack()
+    result = await gate.evaluate(intent, context, "national guard expenses")
+
+    assert result.status == "needs_confirmation"
+    assert len(result.options) >= 2
+    assert all(
+        "national guard" in str(option.get("label", "")).lower()
+        for option in result.options[:2]
+    )
+
+
+@pytest.mark.asyncio
+async def test_evaluate_transient_error_not_misreported_as_not_found() -> None:
+    from gateway.core.entity_resolver import EntityResolver
+    from tests.core.test_entity_resolver import MockProjectSearch
+
+    class _RequestSentResolver(EntityResolver):
+        async def resolve_project(self, query, context, min_confidence=0.6):
+            del query, context, min_confidence
+            raise RuntimeError("Request-sent")
+
+    gate = EntityGate(object())
+    gate._project_resolver = _RequestSentResolver(MockProjectSearch([]))
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="project",
+        specific_intent="national guard expenses",
+        entities=[EntityReference(type="project", value="national guard", confidence=0.9)],
+    )
+    result = await gate.evaluate(
+        intent,
+        _make_context_stack(),
+        "national guard expenses",
+    )
+
+    assert result.status == "transient_error"
+    assert result.query_label == "national guard"
 
 
 @pytest.mark.asyncio

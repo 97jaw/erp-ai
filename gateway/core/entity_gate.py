@@ -25,6 +25,24 @@ from gateway.core.working_memory import ActiveContext
 logger = logging.getLogger(__name__)
 
 _TRANSIENT_ODOO_ERRORS = frozenset({"request-sent", "idle", "remotedisconnected"})
+_TRANSIENT_DISCOVERY_RETRIES = 3
+_TRANSIENT_DISCOVERY_BACKOFF_S = 1.0
+_TRANSIENT_ERROR_MARKERS = (
+    "502",
+    "bad gateway",
+    "timeout",
+    "timed out",
+    "connection",
+    "connectionerror",
+    "connection reset",
+    "connection refused",
+    "request-sent",
+    "remotedisconnected",
+    "service unavailable",
+    "503",
+    "504",
+    "gateway timeout",
+)
 
 # Intent often labels schools/facilities as partner; entity gate must search project.project.
 _PROJECT_ENTITY_SIGNALS = (
@@ -43,10 +61,51 @@ _PROJECT_ENTITY_SIGNALS = (
 
 
 def _is_transient_odoo_error(exc: Exception) -> bool:
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return True
     message = str(exc).strip().lower()
     if message in _TRANSIENT_ODOO_ERRORS:
         return True
-    return "timeout" in message or "connection" in message
+    return any(marker in message for marker in _TRANSIENT_ERROR_MARKERS)
+
+
+def dedupe_project_ids(project_ids: list[int]) -> list[int]:
+    """Return project IDs in order with duplicates removed (fixes P-E1)."""
+    seen: set[int] = set()
+    deduped: list[int] = []
+    for raw in project_ids:
+        try:
+            pid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if pid <= 0 or pid in seen:
+            continue
+        seen.add(pid)
+        deduped.append(pid)
+    return deduped
+
+
+def extract_compare_project_queries(intent: Intent) -> list[str]:
+    """Distinct project entity values for a compare intent."""
+    queries: list[str] = []
+    seen: set[str] = set()
+    for entity in intent.entities:
+        if entity.type != "project":
+            continue
+        value = entity.value.strip()
+        if not value:
+            continue
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        queries.append(value)
+    return queries
+
+
+def is_compare_project_intent(intent: Intent) -> bool:
+    """True when compare mode targets two or more distinct projects."""
+    return intent.primary_action == "compare" and len(extract_compare_project_queries(intent)) >= 2
 
 
 def _prefer_project_entity_type(value: str, message: str) -> str:
@@ -67,6 +126,7 @@ EntityGateStatus = Literal[
     "weak_confirmation",
     "not_found",
     "not_required",
+    "transient_error",
 ]
 
 ENTITY_BOUND_FINANCIAL_TOOLS: frozenset[str] = frozenset(
@@ -133,6 +193,9 @@ class EntityGateResult:
     entity_top_confidence: float = 0.0
     entity_strategies_used: list[str] = field(default_factory=list)
     entity_strategy_that_matched: str | None = None
+    compare_project_ids: list[int] = field(default_factory=list)
+    compare_resolved_projects: list[dict[str, Any]] = field(default_factory=list)
+    compare_pending_query: str = ""
 
 
 class PartnerDiscoverySearch:
@@ -335,6 +398,14 @@ class EntityGate:
         confirmed_entities: list[ConfirmedEntityRef] | None = None,
     ) -> EntityGateResult:
         """Discover entities and decide whether financial tools may proceed."""
+        if is_compare_project_intent(intent):
+            return await self._evaluate_compare(
+                intent,
+                context,
+                message,
+                confirmed_entities,
+            )
+
         required = self.infer_required_entities(message, intent, context)
         if not required:
             return EntityGateResult(status="not_required")
@@ -407,7 +478,11 @@ class EntityGate:
         using_weak = False
 
         for entity_type, query in pending:
-            matches, discovery, weak = await self._discover(entity_type, query, context)
+            matches, discovery, weak, transient_failed = await self._discover(
+                entity_type,
+                query,
+                context,
+            )
             gate_telemetry["entity_discovery_count"] = max(
                 gate_telemetry["entity_discovery_count"],
                 discovery.get("entity_discovery_count", 0),
@@ -422,6 +497,13 @@ class EntityGate:
                 gate_telemetry["entity_strategy_that_matched"] = discovery[
                     "entity_strategy_that_matched"
                 ]
+            if transient_failed:
+                return EntityGateResult(
+                    status="transient_error",
+                    required_types=[item[0] for item in required],
+                    query_label=query,
+                    **gate_telemetry,
+                )
             if not matches:
                 if gate_telemetry["entity_discovery_count"] > 0:
                     logger.warning(
@@ -450,32 +532,349 @@ class EntityGate:
             **gate_telemetry,
         )
 
+    async def _evaluate_compare(
+        self,
+        intent: Intent,
+        context: ContextStack,
+        message: str,
+        confirmed_entities: list[ConfirmedEntityRef] | None,
+    ) -> EntityGateResult:
+        """Resolve two or more project entities independently for compare mode."""
+        del message
+        queries = extract_compare_project_queries(intent)
+        facts = context.working_memory.session_facts
+        resolved: list[dict[str, Any]] = list(facts.get("compare_resolved_projects") or [])
+        gate_telemetry = {
+            "entity_discovery_count": 0,
+            "entity_top_confidence": 0.0,
+            "entity_strategies_used": [],
+            "entity_strategy_that_matched": None,
+        }
+
+        project_confirms = [
+            item for item in (confirmed_entities or []) if item.type == "project"
+        ]
+        if len(project_confirms) >= 2:
+            resolved = []
+            for index, item in enumerate(project_confirms[: len(queries)]):
+                query = queries[index] if index < len(queries) else (item.name or str(item.id))
+                resolved = self._upsert_compare_resolved(
+                    resolved,
+                    query=query,
+                    entity_id=int(item.id),
+                    name=item.name or str(item.id),
+                )
+        elif len(project_confirms) == 1:
+            pending_query = str(facts.get("compare_pending_query") or "")
+            if not pending_query:
+                resolved_queries = {item["query"].lower() for item in resolved}
+                pending_query = next(
+                    (query for query in queries if query.lower() not in resolved_queries),
+                    queries[-1],
+                )
+            item = project_confirms[0]
+            resolved = self._upsert_compare_resolved(
+                resolved,
+                query=pending_query,
+                entity_id=int(item.id),
+                name=item.name or str(item.id),
+            )
+
+        resolved_by_query = {item["query"].lower(): item for item in resolved}
+        pending_matches: list[dict[str, Any]] = []
+        pending_query = ""
+        pending_weak = False
+
+        for query in queries:
+            if query.lower() in resolved_by_query:
+                continue
+
+            resolution, transient_failed = await self._resolve_project_for_compare(query, context)
+            if transient_failed:
+                return EntityGateResult(
+                    status="transient_error",
+                    required_types=["project", "project"],
+                    query_label=query,
+                    **gate_telemetry,
+                )
+            if resolution is None:
+                return EntityGateResult(
+                    status="not_found",
+                    required_types=["project", "project"],
+                    query_label=query,
+                    **gate_telemetry,
+                )
+
+            gate_telemetry["entity_discovery_count"] = max(
+                gate_telemetry["entity_discovery_count"],
+                resolution.raw_discovery_count,
+            )
+            gate_telemetry["entity_top_confidence"] = max(
+                gate_telemetry["entity_top_confidence"],
+                resolution.confidence,
+            )
+            if resolution.strategies_used:
+                gate_telemetry["entity_strategies_used"] = resolution.strategies_used
+            if resolution.winning_strategy:
+                gate_telemetry["entity_strategy_that_matched"] = resolution.winning_strategy
+
+            if resolution.raw_discovery_count == 0 and not resolution.top_match:
+                return EntityGateResult(
+                    status="not_found",
+                    required_types=["project", "project"],
+                    query_label=query,
+                    **gate_telemetry,
+                )
+
+            if self._compare_slot_is_clear(resolution):
+                top = resolution.top_match or resolution.confident_matches[0]
+                resolved = self._upsert_compare_resolved(
+                    resolved,
+                    query=query,
+                    entity_id=int(top.entity.get("id") or 0),
+                    name=str(top.entity.get("name") or query),
+                )
+                resolved_by_query = {item["query"].lower(): item for item in resolved}
+                continue
+
+            match_pool = resolution.confident_matches or resolution.weak_matches
+            if not match_pool and resolution.top_match is not None:
+                match_pool = [resolution.top_match]
+            weak = bool(
+                resolution.weak_matches
+                and not resolution.confident_matches
+            ) or resolution.ambiguity_level == "weak_matches"
+            pending_matches = [
+                _project_match_summary(
+                    match.entity,
+                    match.confidence,
+                    weak=weak or match.confidence < CONFIDENT_CONFIDENCE_MIN,
+                )
+                for match in match_pool[:5]
+            ]
+            if not pending_matches:
+                return EntityGateResult(
+                    status="not_found",
+                    required_types=["project", "project"],
+                    query_label=query,
+                    **gate_telemetry,
+                )
+
+            pending_query = query
+            pending_weak = weak
+            break
+
+        ordered_resolved = self._order_compare_resolved(resolved, queries)
+        compare_ids = dedupe_project_ids([int(item["id"]) for item in ordered_resolved])
+
+        if len(ordered_resolved) >= 2 and len(compare_ids) >= 2:
+            compare_ids = compare_ids[:2]
+            ordered_resolved = ordered_resolved[:2]
+            self.apply_compare_projects(context, ordered_resolved, compare_ids)
+            logger.info(
+                "[EntityGate] Compare mode confirmed projects %s",
+                compare_ids,
+            )
+            return EntityGateResult(
+                status="confirmed",
+                required_types=["project", "project"],
+                confirmed={"compare_projects": ordered_resolved},
+                compare_project_ids=compare_ids,
+                compare_resolved_projects=ordered_resolved,
+                query_label=queries[0],
+                **gate_telemetry,
+            )
+
+        if pending_query and pending_matches:
+            facts["compare_resolved_projects"] = ordered_resolved
+            facts["compare_pending_query"] = pending_query
+            options = build_entity_options(pending_matches)
+            resolved_names = ", ".join(
+                str(item.get("name") or item.get("id")) for item in ordered_resolved
+            )
+            if ordered_resolved:
+                logger.info(
+                    "[EntityGate] Compare mode resolved %s; awaiting confirmation for %r",
+                    resolved_names,
+                    pending_query,
+                )
+            return EntityGateResult(
+                status="weak_confirmation" if pending_weak else "needs_confirmation",
+                required_types=["project", "project"],
+                matches=pending_matches,
+                options=options,
+                compare_resolved_projects=ordered_resolved,
+                compare_pending_query=pending_query,
+                query_label=pending_query,
+                **gate_telemetry,
+            )
+
+        if len(ordered_resolved) >= 2 and len(compare_ids) < 2:
+            return EntityGateResult(
+                status="needs_confirmation",
+                required_types=["project", "project"],
+                query_label=queries[-1],
+                compare_resolved_projects=ordered_resolved,
+                compare_pending_query=queries[-1],
+                **gate_telemetry,
+            )
+
+        return EntityGateResult(
+            status="not_found",
+            required_types=["project", "project"],
+            query_label=queries[0],
+            **gate_telemetry,
+        )
+
+    async def _resolve_project_for_compare(
+        self,
+        query: str,
+        context: ContextStack,
+    ) -> tuple[Any | None, bool]:
+        """Resolve one compare slot; return (result, transient_failed)."""
+        last_exc: Exception | None = None
+        for attempt in range(_TRANSIENT_DISCOVERY_RETRIES):
+            try:
+                return await self._project_resolver.resolve_project(query, context), False
+            except Exception as exc:
+                last_exc = exc
+                if not _is_transient_odoo_error(exc):
+                    logger.warning("[EntityGate] compare project discovery failed: %s", exc)
+                    return None, False
+                if attempt < _TRANSIENT_DISCOVERY_RETRIES - 1:
+                    logger.warning(
+                        "[EntityGate] transient Odoo error on compare discovery "
+                        "(retry %d/%d): %s",
+                        attempt + 1,
+                        _TRANSIENT_DISCOVERY_RETRIES,
+                        exc,
+                    )
+                    await asyncio.sleep(_TRANSIENT_DISCOVERY_BACKOFF_S)
+                    continue
+                logger.warning(
+                    "[EntityGate] transient Odoo error on compare discovery "
+                    "(exhausted retries): %s",
+                    exc,
+                )
+                return None, True
+        logger.warning("[EntityGate] compare project discovery failed: %s", last_exc)
+        return None, False
+
+    @staticmethod
+    def _compare_slot_is_clear(resolution: Any) -> bool:
+        """True when one project clearly wins for a compare slot."""
+        if resolution.top_match is None:
+            return False
+        if resolution.ambiguity_level in {"unambiguous", "clear_winner"}:
+            return resolution.top_match.confidence >= CONFIDENT_CONFIDENCE_MIN
+        if len(resolution.confident_matches) == 1:
+            return resolution.confident_matches[0].confidence >= CONFIDENT_CONFIDENCE_MIN
+        if len(resolution.confident_matches) >= 2:
+            top = resolution.confident_matches[0]
+            second = resolution.confident_matches[1]
+            return (
+                top.confidence >= CONFIDENT_CONFIDENCE_MIN
+                and top.confidence - second.confidence >= 0.2
+            )
+        return False
+
+    @staticmethod
+    def _upsert_compare_resolved(
+        resolved: list[dict[str, Any]],
+        *,
+        query: str,
+        entity_id: int,
+        name: str,
+    ) -> list[dict[str, Any]]:
+        updated = [
+            item for item in resolved if str(item.get("query", "")).lower() != query.lower()
+        ]
+        updated.append({"query": query, "id": entity_id, "name": name})
+        return updated
+
+    @staticmethod
+    def _order_compare_resolved(
+        resolved: list[dict[str, Any]],
+        queries: list[str],
+    ) -> list[dict[str, Any]]:
+        by_query = {item["query"].lower(): item for item in resolved}
+        ordered: list[dict[str, Any]] = []
+        for query in queries:
+            item = by_query.get(query.lower())
+            if item is not None:
+                ordered.append(item)
+        for item in resolved:
+            if item not in ordered:
+                ordered.append(item)
+        return ordered
+
+    @staticmethod
+    def apply_compare_projects(
+        context: ContextStack,
+        resolved_projects: list[dict[str, Any]],
+        project_ids: list[int],
+    ) -> None:
+        """Persist two distinct project IDs for compare_project_expenses."""
+        compare_ids = dedupe_project_ids(project_ids)
+        facts = context.working_memory.session_facts
+        facts["compare_resolved_projects"] = list(resolved_projects)
+        facts["compare_project_ids"] = compare_ids
+        facts["resolved_project_ids"] = compare_ids
+        facts.pop("compare_pending_query", None)
+        facts["confirmed_entities"] = {
+            "compare_projects": [
+                {"id": item["id"], "name": item.get("name")}
+                for item in resolved_projects[:2]
+            ],
+        }
+        if compare_ids:
+            first = resolved_projects[0] if resolved_projects else {"id": compare_ids[0]}
+            facts["resolved_project_id"] = int(compare_ids[0])
+            context.working_memory.remember_entity(
+                "project",
+                {"id": first.get("id"), "name": first.get("name")},
+            )
+
     async def _discover(
         self,
         entity_type: str,
         query: str,
         context: ContextStack,
-    ) -> tuple[list[dict[str, Any]], dict[str, Any], bool]:
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], bool, bool]:
+        empty_discovery: dict[str, Any] = {
+            "entity_discovery_count": 0,
+            "entity_top_confidence": 0.0,
+        }
+
         if entity_type == "project":
-            last_error: Exception | None = None
-            for attempt in range(2):
+            result = None
+            for attempt in range(_TRANSIENT_DISCOVERY_RETRIES):
                 try:
                     result = await self._project_resolver.resolve_project(query, context)
                     break
                 except Exception as exc:
-                    last_error = exc
-                    if attempt == 0 and _is_transient_odoo_error(exc):
+                    if not _is_transient_odoo_error(exc):
+                        logger.warning("[EntityGate] project discovery failed: %s", exc)
+                        return [], empty_discovery, False, False
+                    if attempt < _TRANSIENT_DISCOVERY_RETRIES - 1:
                         logger.warning(
-                            "[EntityGate] transient Odoo error on project discovery (retry): %s",
+                            "[EntityGate] transient Odoo error on project discovery "
+                            "(retry %d/%d): %s",
+                            attempt + 1,
+                            _TRANSIENT_DISCOVERY_RETRIES,
                             exc,
                         )
-                        await asyncio.sleep(0.35)
+                        await asyncio.sleep(_TRANSIENT_DISCOVERY_BACKOFF_S)
                         continue
-                    logger.warning("[EntityGate] project discovery failed: %s", exc)
-                    return [], {"entity_discovery_count": 0, "entity_top_confidence": 0.0}, False
-            else:
-                logger.warning("[EntityGate] project discovery failed: %s", last_error)
-                return [], {"entity_discovery_count": 0, "entity_top_confidence": 0.0}, False
+                    logger.warning(
+                        "[EntityGate] transient Odoo error on project discovery "
+                        "(exhausted retries): %s",
+                        exc,
+                    )
+                    return [], empty_discovery, False, True
+
+            if result is None:
+                return [], empty_discovery, False, True
 
             discovery = {
                 "entity_discovery_count": result.raw_discovery_count,
@@ -505,14 +904,37 @@ class EntityGate:
                     continue
                 seen_ids.add(entity_id)
                 summaries.append(_project_match_summary(entity, match.confidence, weak=weak))
-            return summaries, discovery, weak
+            return summaries, discovery, weak, False
 
         if entity_type == "partner":
-            try:
-                partners = await self._partner_search.search_partners(query)
-            except Exception as exc:
-                logger.warning("[EntityGate] partner discovery failed: %s", exc)
-                return [], {"entity_discovery_count": 0, "entity_top_confidence": 0.0}, False
+            partners: list[dict[str, Any]] | None = None
+            for attempt in range(_TRANSIENT_DISCOVERY_RETRIES):
+                try:
+                    partners = await self._partner_search.search_partners(query)
+                    break
+                except Exception as exc:
+                    if not _is_transient_odoo_error(exc):
+                        logger.warning("[EntityGate] partner discovery failed: %s", exc)
+                        return [], empty_discovery, False, False
+                    if attempt < _TRANSIENT_DISCOVERY_RETRIES - 1:
+                        logger.warning(
+                            "[EntityGate] transient Odoo error on partner discovery "
+                            "(retry %d/%d): %s",
+                            attempt + 1,
+                            _TRANSIENT_DISCOVERY_RETRIES,
+                            exc,
+                        )
+                        await asyncio.sleep(_TRANSIENT_DISCOVERY_BACKOFF_S)
+                        continue
+                    logger.warning(
+                        "[EntityGate] transient Odoo error on partner discovery "
+                        "(exhausted retries): %s",
+                        exc,
+                    )
+                    return [], empty_discovery, False, True
+
+            if partners is None:
+                return [], empty_discovery, False, True
             summaries = [
                 {
                     "id": int(partner.get("id") or 0),
@@ -533,9 +955,10 @@ class EntityGate:
                     "entity_strategy_that_matched": "partner_name_search" if summaries else None,
                 },
                 False,
+                False,
             )
 
-        return [], {"entity_discovery_count": 0, "entity_top_confidence": 0.0}, False
+        return [], empty_discovery, False, False
 
     @staticmethod
     def _extract_entity_hint(intent: Intent, message: str) -> str:
@@ -581,6 +1004,13 @@ class EntityGate:
                 "partner",
                 {"id": partner["id"], "name": partner.get("name")},
             )
+
+    @staticmethod
+    def compare_projects_confirmed(context: ContextStack) -> bool:
+        """True when compare mode has two distinct resolved project IDs."""
+        facts = context.working_memory.session_facts
+        compare_ids = facts.get("compare_project_ids") or []
+        return len(dedupe_project_ids([int(value) for value in compare_ids])) >= 2
 
     @staticmethod
     def project_confirmed(context: ContextStack) -> bool:
@@ -651,6 +1081,29 @@ def format_entity_confirm_label(match: dict[str, Any]) -> str:
     if parts:
         return f"{name} ({', '.join(parts)})"
     return name
+
+
+def build_entity_transient_error_clarification(
+    *,
+    language: str = "en",
+) -> dict[str, Any]:
+    """Structured clarification when Odoo discovery fails due to transient infra errors."""
+    if language == "ar":
+        question = (
+            "أواجه صعوبة في الوصول إلى قاعدة البيانات الآن. "
+            "يرجى المحاولة مرة أخرى بعد لحظة."
+        )
+    else:
+        question = (
+            "I'm having trouble reaching the database right now. "
+            "Please try again in a moment."
+        )
+    return {
+        "reason": "transient_error",
+        "question": question,
+        "matches": [],
+        "options": [],
+    }
 
 
 def build_entity_not_found_clarification(

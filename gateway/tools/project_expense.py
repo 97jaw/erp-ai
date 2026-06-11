@@ -468,7 +468,15 @@ async def execute_compare_project_expenses(
     context: ContextStack | None,
 ) -> dict[str, Any]:
     """Compare expense summaries across multiple projects in parallel."""
-    project_ids = [int(pid) for pid in tool_input["project_ids"]]
+    from gateway.core.entity_gate import dedupe_project_ids
+
+    project_ids = dedupe_project_ids([int(pid) for pid in tool_input["project_ids"]])
+    if len(project_ids) < 2:
+        return {
+            "status": "error",
+            "error_code": "need_two_projects",
+            "message": "Compare requires at least two distinct project IDs",
+        }
     rank_by = tool_input.get("rank_by", "total_expenses")
     rank_field = RANK_FIELD_MAP.get(rank_by, "total_expenses")
 

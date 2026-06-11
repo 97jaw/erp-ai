@@ -193,15 +193,18 @@ class StrategyPlanner:
     @staticmethod
     def _needs_project_entity_search(intent: Intent, context: ContextStack) -> bool:
         """Route to search_entities when the user names a project that is not in scope."""
-        from gateway.core.entity_gate import EntityGate
+        from gateway.core.entity_gate import EntityGate, is_compare_project_intent
         from gateway.core.project_expense_routing import is_project_expense_query
+
+        if is_compare_project_intent(intent) and EntityGate.compare_projects_confirmed(context):
+            return False
 
         hints = StrategyPlanner._project_entity_hints(intent)
         if not hints:
             return False
 
         blob = f"{intent.specific_intent} {intent.primary_action} {intent.subject_area}"
-        expense_like = is_project_expense_query(blob, intent) or looks_like_project_cost_query(
+        expense_like = is_project_expense_query(blob, intent, context) or looks_like_project_cost_query(
             blob,
             subject_area=intent.subject_area,
         )
@@ -441,7 +444,7 @@ class StrategyPlanner:
         from gateway.core.entity_gate import EntityGate
         from gateway.core.project_expense_routing import is_project_expense_query
 
-        if is_project_expense_query(intent.specific_intent, intent):
+        if is_project_expense_query(intent.specific_intent, intent, context):
             facts = context.working_memory.session_facts
             if intent.primary_action == "compare":
                 compare_ids = facts.get("compare_project_ids") or facts.get("resolved_project_ids") or []
@@ -479,7 +482,7 @@ class StrategyPlanner:
 
         if intent.primary_action not in {"fetch_data", "analyze", "compare", "generate_report"}:
             return None
-        if not is_project_expense_query(intent.specific_intent, intent):
+        if not is_project_expense_query(intent.specific_intent, intent, context):
             return None
 
         if intent.primary_action == "compare":
@@ -525,7 +528,7 @@ class StrategyPlanner:
             from gateway.core.entity_gate import EntityGate
             from gateway.core.project_expense_routing import is_project_expense_query
 
-            if is_project_expense_query(intent.specific_intent, intent):
+            if is_project_expense_query(intent.specific_intent, intent, context):
                 raise StrategyException(
                     "Project expense query requires a confirmed project before expense tools",
                 )
