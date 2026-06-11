@@ -331,7 +331,40 @@ class IntelligentQueryHandler:
             intent = validate_clarification(intent)
             telemetry.intent_extracted = intent
 
-            if intent.out_of_scope:
+            from gateway.core.project_profile_routing import (
+                derive_profile_focus,
+                is_project_profile_query,
+            )
+            from gateway.core.project_records_routing import (
+                derive_record_type,
+                is_project_records_query,
+                records_disqualified,
+            )
+
+            has_active_project = bool(active and active.project_id)
+            record_type = derive_record_type(message)
+            # Records lane fires on explicit "<type> of/for <project>" phrasing
+            # OR when a record-type keyword appears in a follow-up to an active
+            # project (e.g. the "Show <project> purchase orders" chip, where the
+            # type trails the project name). Records take precedence over the
+            # profile lane: an explicit record-type keyword (invoices, PO,
+            # timesheets, staff, ...) must not be swallowed by an LLM
+            # "project_attribute"/"hr" classification.
+            records_query = (
+                record_type is not None
+                and not records_disqualified(message)
+                and (
+                    is_project_records_query(message, intent)
+                    or is_active_follow_up
+                    or has_active_project
+                )
+            )
+            profile_query = not records_query and is_project_profile_query(message, intent)
+
+            # Project profile/record lanes are served by direct ORM reads — an
+            # LLM "out of scope" verdict (e.g. mistaking timesheets/staff for
+            # unavailable HR data) must not pre-empt them.
+            if intent.out_of_scope and not profile_query and not records_query:
                 return self._finalize_failure(
                     failure=self._failure_responder.failure_from_intent(intent, message),
                     context=context,
@@ -341,18 +374,6 @@ class IntelligentQueryHandler:
                     started=started,
                     intent=intent,
                 )
-
-            from gateway.core.project_profile_routing import (
-                derive_profile_focus,
-                is_project_profile_query,
-            )
-            from gateway.core.project_records_routing import (
-                derive_record_type,
-                is_project_records_query,
-            )
-
-            profile_query = is_project_profile_query(message, intent)
-            records_query = not profile_query and is_project_records_query(message, intent)
 
             if intent.subject_area == "project_attribute" and not records_query:
                 profile_intent = self._prepare_profile_intent(message, intent, context)
@@ -1455,6 +1476,7 @@ class IntelligentQueryHandler:
             subject_area="project",
             primary_action="fetch_data",
             entities=entities,
+            out_of_scope=False,
             requires_clarification=False,
             clarification_question=None,
         )
@@ -1473,13 +1495,17 @@ class IntelligentQueryHandler:
         """
         from gateway.core.project_records_routing import extract_records_project_hint
 
-        entities = list(intent.entities)
-        has_project = any(entity.type == "project" for entity in entities)
-        if not has_project:
-            hint = extract_records_project_hint(message)
-            if hint:
-                entities.append(EntityReference(type="project", value=hint, confidence=0.85))
-                has_project = True
+        hint = extract_records_project_hint(message)
+        if hint:
+            # The stripped hint ("invoices of <X>" -> "<X>") is more reliable
+            # than the LLM entity, which often grabs the record keyword itself
+            # (e.g. project="petty cash"). Replace any project entities with it.
+            entities = [e for e in intent.entities if e.type != "project"]
+            entities.append(EntityReference(type="project", value=hint, confidence=0.9))
+            has_project = True
+        else:
+            entities = list(intent.entities)
+            has_project = any(entity.type == "project" for entity in entities)
         if not has_project:
             active = context.working_memory.get_active_project()
             if not (active and active.project_id):
@@ -1489,6 +1515,7 @@ class IntelligentQueryHandler:
             subject_area="project",
             primary_action="fetch_data",
             entities=entities,
+            out_of_scope=False,
             requires_clarification=False,
             clarification_question=None,
         )

@@ -85,6 +85,11 @@ def derive_record_type(message: str) -> str | None:
     return None
 
 
+def records_disqualified(message: str) -> bool:
+    """True when analysis/aggregation wording should keep the query off this lane."""
+    return bool(_ANALYSIS_DISQUALIFIER_RE.search(message or ""))
+
+
 def is_project_records_text(message: str) -> bool:
     """Text-only record-list detection — used by the Deep Think carve-out
     and the handler routing."""

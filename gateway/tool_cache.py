@@ -79,7 +79,35 @@ def build_tool_cache_key(
         if entity_hint
         else "noent"
     )
-    return f"{user_id}:{tool_name}:{entity_id or 'noid'}:{hint_hash}"
+    base = f"{user_id}:{tool_name}:{entity_id or 'noid'}:{hint_hash}"
+
+    # Variant discriminators: fields that change WHICH records/metrics are
+    # returned for the same entity. Without these, e.g. get_project_records for
+    # one project would collide across record_type (invoices vs purchase_orders
+    # vs petty_cash) and serve the first cached type for every later query.
+    variant_fields = (
+        "record_type",
+        "move_type",
+        "report_type",
+        "metric",
+        "period",
+        "group_by",
+        "date_from",
+        "date_to",
+        "limit",
+        "offset",
+    )
+    variant = {
+        field: payload[field]
+        for field in variant_fields
+        if payload.get(field) is not None
+    }
+    if not variant:
+        return base
+    variant_hash = hashlib.md5(
+        repr(sorted(variant.items())).encode("utf-8")
+    ).hexdigest()[:8]
+    return f"{base}:{variant_hash}"
 
 
 class ToolResultCache:
