@@ -6,9 +6,35 @@
 
 ## 🎯 ACTIVE PLAN
 
+**File:** Project Model — Phase 1: Project Profile lane (no Deep Think)
+
+**Status:** Code complete + tested — ready to deploy
+
+| Piece | Description | Code | Tests |
+|-------|-------------|------|-------|
+| Live field map | `scripts/introspect_project_profile.py` ran against live Odoo; exact value match with UI: Civil=`project_eng_amount`, Electrical=`electrical_eng_amount`, Mechanical=`mechanical_eng_amount`, ICT=`it_eng_amount`; W.O=`wo_amount` | ✅ | — |
+| Adapter read | `connector.read_project_profile(project_id)` — 66 curated fields, single-record read (multi-record full reads crash on Elrace `pending_days` compute bug); m2o names come free as `[id, name]` | ✅ | ✅ |
+| Tool | `gateway/tools/project_profile.py` `get_project_profile(project_id, focus)` → sections: identity, client_contract, location, schedule, amounts (distribution/rollups), team, status, progress, audit; registered in TOOLS + execute_tool | ✅ | ✅ |
+| Routing | `project_profile_routing.py` (detection + focus); Deep Think carve-out in `is_deep_think_eligible`; handler: project_attribute deferral replaced by profile lane (falls back when no project ref); profile bypasses normal-mode gate; follow-up + post-entity-gate forced `get_project_profile` | ✅ | ✅ |
+| Synthesis | `narrate_project_profile` (focused section only, exact decimals, honest "not set in Odoo"); `result_synthesizer` dispatch; DATA_TABLE profile card | ✅ | ✅ |
+
+**Behavior contract:**
+- "engineers amount of project national guard" → entity confirm → header read → Civil/Electrical/Mechanical/ICT amounts (NOT the expense report)
+- "who is the PM of Villa 48" → answered from header (old deferral only when no project reference)
+- Profile queries never light up the Deep Think button; expenses/P&L/breakdown still do
+- Unset amounts → "not set in Odoo", never fabricated zeros
+
+**Tests:** `tests/core/test_project_profile.py` (18) + reworked `test_project_attribute.py` (5). Full suite: 805+ passed; 9 failures all verified pre-existing on clean worktree (2x quality_gate, 2x villa auto-confirm, conversation integrity, phase10 concurrent, 3x live Odoo auth — server-side `could not serialize access` race in `base_user_role_company`).
+
+**Live verify (manual):** "tell me engineers amount of project national guard" → select project → distribution amounts table; "who is the project manager of Villa Maintenance 48"; "show me expenses for Villa 48" still routes to Deep Think expense flow.
+
+---
+
+## 📜 PREVIOUS PLAN (0)
+
 **File:** Conversational fixes + Deep Think resume (post-live-test feedback round)
 
-**Status:** Code complete + tested — deployed, pending live verification
+**Status:** Deployed `97a3693` — live verified
 
 | Fix | Description | Code | Tests |
 |-----|-------------|------|-------|

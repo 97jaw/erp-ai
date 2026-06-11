@@ -837,6 +837,76 @@ def _project_expense_comparison_visual(payload: dict[str, Any]) -> dict[str, Any
         },
     }
 
+def _profile_rows_amounts(payload: dict[str, Any]) -> list[list[Any]]:
+    amounts = payload.get("amounts") or {}
+    distribution = amounts.get("distribution") or {}
+    labels = {
+        "civil": "Civil Amount", "electrical": "Electrical Amount",
+        "mechanical": "Mechanical Amount", "ict": "ICT Amount",
+        "plumbing": "Plumbing Amount",
+    }
+    rows: list[list[Any]] = []
+    if amounts.get("wo_amount") is not None:
+        rows.append(["W.O Amount", round(float(amounts["wo_amount"]), 2)])
+    if amounts.get("estimation_amount") is not None:
+        rows.append(["Estimation Amount", round(float(amounts["estimation_amount"]), 2)])
+    for key, label in labels.items():
+        value = distribution.get(key)
+        rows.append([label, round(float(value), 2) if value is not None else "Not set"])
+    for key, label in (
+        ("branch_manager", "Branch Manager Amount"),
+        ("project_manager", "Project Manager Amount"),
+    ):
+        value = (amounts.get("role_allocations") or {}).get(key)
+        if value is not None:
+            rows.append([label, round(float(value), 2)])
+    return rows
+
+
+def _profile_rows_section(section: dict[str, Any]) -> list[list[Any]]:
+    rows: list[list[Any]] = []
+    for key, value in section.items():
+        if isinstance(value, dict):
+            value = value.get("name")
+        if value is None or value == "":
+            continue
+        rows.append([key.replace("_", " ").title(), value])
+    return rows
+
+
+def _project_profile_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if payload.get("status") != "success":
+        return None
+    focus = str(payload.get("focus") or "all")
+    if focus == "amounts":
+        rows = _profile_rows_amounts(payload)
+        title = f"{payload.get('project_name')} — W.O Amount Distribution (AED)"
+    elif focus in {"team", "schedule", "identity"}:
+        section_key = {"team": "team", "schedule": "schedule", "identity": "identity"}[focus]
+        rows = _profile_rows_section(payload.get(section_key) or {})
+        title = f"{payload.get('project_name')} — {focus.title()}"
+    elif focus == "status":
+        rows = _profile_rows_section(payload.get("project_status") or {})
+        rows += _profile_rows_section(payload.get("progress") or {})
+        title = f"{payload.get('project_name')} — Status & Progress"
+    else:
+        rows = _profile_rows_amounts(payload)
+        rows += _profile_rows_section(payload.get("team") or {})
+        rows += _profile_rows_section(payload.get("schedule") or {})
+        title = f"{payload.get('project_name')} — Project Profile"
+    if not rows:
+        return None
+    return {
+        "visual_type": "DATA_TABLE",
+        "label": title,
+        "data": {
+            "headers": ["Field", "Value"],
+            "rows": rows,
+        },
+        "suggestions": [],
+    }
+
+
 def _visual_from_payload(
     tool_name: str,
     payload  : dict[str, Any],
@@ -867,6 +937,8 @@ def _visual_from_payload(
         return _group_aggregate_visual(payload)
     if tool_name in {"generate_pdf_report", "synthesize_pdf"}:
         return _pdf_visual(payload)
+    if tool_name == "get_project_profile" or payload.get("_source") == "project_profile":
+        return _project_profile_visual(payload)
     if tool_name == "get_project_expense_summary":
         return _project_expense_summary_visual(payload)
     if tool_name == "get_project_expense_breakdown":

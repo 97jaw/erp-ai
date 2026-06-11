@@ -133,6 +133,10 @@ def has_meaningful_tool_data(tool_results: list[Any]) -> bool:
             continue
         if payload.get("_source") == "search_entities" and payload.get("status") == "success":
             return True
+        # Project profile reads are meaningful even when amounts are unset —
+        # "not set in Odoo" is itself the honest answer.
+        if payload.get("_source") == "project_profile" and payload.get("status") == "success":
+            return True
         if payload.get("candidates"):
             return True
         for key in scalar_keys:

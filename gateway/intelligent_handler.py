@@ -342,16 +342,28 @@ class IntelligentQueryHandler:
                     intent=intent,
                 )
 
+            from gateway.core.project_profile_routing import (
+                derive_profile_focus,
+                is_project_profile_query,
+            )
+
+            profile_query = is_project_profile_query(message, intent)
+
             if intent.subject_area == "project_attribute":
-                return self._finalize_project_attribute_response(
-                    message=message,
-                    context=context,
-                    telemetry=telemetry,
-                    resolved_session=resolved_session,
-                    language=language,
-                    started=started,
-                    intent=intent,
-                )
+                profile_intent = self._prepare_profile_intent(message, intent, context)
+                if profile_intent is None:
+                    # No project reference anywhere — keep the honest deferral.
+                    return self._finalize_project_attribute_response(
+                        message=message,
+                        context=context,
+                        telemetry=telemetry,
+                        resolved_session=resolved_session,
+                        language=language,
+                        started=started,
+                        intent=intent,
+                    )
+                intent = profile_intent
+                profile_query = True
 
             intent = EntityGate.infer_entity_hints(message, intent)
 
@@ -359,8 +371,10 @@ class IntelligentQueryHandler:
             # interprets, narrows scope, and offers Deep Think for actual figures.
             # Predefined Odoo methods only run when deep_think is active.
             # Follow-ups to an active Deep Think project keep their tool flow.
+            # Project profile queries bypass this: header reads need no Deep Think.
             if (
                 not deep_think
+                and not profile_query
                 and not is_active_follow_up
                 and effective_strategy_override is None
                 and self._requires_deep_think(message, intent)
@@ -396,25 +410,40 @@ class IntelligentQueryHandler:
                         },
                     ],
                 )
-                forced = select_project_expense_tool(message, intent, context)
-                if forced:
-                    tool_name, tool_input = forced
-                    tool_input = {
-                        **tool_input,
-                        "project_id": active.project_id,
-                        "project_name": active.project_name,
-                    }
+                if profile_query:
                     effective_strategy_override = build_single_tool_strategy(
-                        tool=tool_name,
-                        tool_input=tool_input,
-                        description=f"Follow-up: {message}",
-                        expected_output=intent.expected_output or "table",
+                        tool="get_project_profile",
+                        tool_input={
+                            "project_id": active.project_id,
+                            "focus": derive_profile_focus(message),
+                        },
+                        description=f"Profile follow-up: {message}",
+                        expected_output=intent.expected_output or "summary",
                     )
                     logger.info(
-                        "[FollowUp] Forcing tool %s with project_id=%s",
-                        tool_name,
+                        "[FollowUp] Forcing get_project_profile with project_id=%s",
                         active.project_id,
                     )
+                else:
+                    forced = select_project_expense_tool(message, intent, context)
+                    if forced:
+                        tool_name, tool_input = forced
+                        tool_input = {
+                            **tool_input,
+                            "project_id": active.project_id,
+                            "project_name": active.project_name,
+                        }
+                        effective_strategy_override = build_single_tool_strategy(
+                            tool=tool_name,
+                            tool_input=tool_input,
+                            description=f"Follow-up: {message}",
+                            expected_output=intent.expected_output or "table",
+                        )
+                        logger.info(
+                            "[FollowUp] Forcing tool %s with project_id=%s",
+                            tool_name,
+                            active.project_id,
+                        )
             else:
                 intent, entity_meta = await self._run_stage(
                     PipelineStage.ENTITY_RESOLUTION,
@@ -475,6 +504,24 @@ class IntelligentQueryHandler:
                     started=started,
                     intent=intent,
                 )
+
+            if profile_query and effective_strategy_override is None:
+                profile_project_id = self._resolved_project_id(context, entity_meta)
+                if profile_project_id is not None:
+                    effective_strategy_override = build_single_tool_strategy(
+                        tool="get_project_profile",
+                        tool_input={
+                            "project_id": profile_project_id,
+                            "focus": derive_profile_focus(message),
+                        },
+                        description=f"Project profile: {message}",
+                        expected_output=intent.expected_output or "summary",
+                    )
+                    logger.info(
+                        "[ProjectProfile] Forcing get_project_profile project_id=%s focus=%s",
+                        profile_project_id,
+                        derive_profile_focus(message),
+                    )
 
             pipeline = await self._run_pipeline_orchestration(
                 message=message,
@@ -1328,6 +1375,63 @@ class IntelligentQueryHandler:
             intent=intent,
         )
         return response
+
+    @staticmethod
+    def _prepare_profile_intent(
+        message: str,
+        intent: Intent,
+        context: ContextStack,
+    ) -> Intent | None:
+        """Reclassify a project_attribute intent for the profile lane.
+
+        Returns None when no project reference exists anywhere (message hint,
+        intent entities, active project) — caller keeps the honest deferral.
+        """
+        from gateway.core.project_profile_routing import has_project_context
+        from gateway.core.project_query_utils import extract_project_name_hint
+
+        entities = list(intent.entities)
+        has_project = any(entity.type == "project" for entity in entities)
+        if not has_project and has_project_context(message):
+            hint = extract_project_name_hint(message)
+            if hint:
+                entities.append(EntityReference(type="project", value=hint, confidence=0.85))
+                has_project = True
+        if not has_project:
+            active = context.working_memory.get_active_project()
+            if not (active and active.project_id):
+                return None
+        return replace(
+            intent,
+            subject_area="project",
+            primary_action="fetch_data",
+            entities=entities,
+            requires_clarification=False,
+            clarification_question=None,
+        )
+
+    @staticmethod
+    def _resolved_project_id(
+        context: ContextStack,
+        entity_meta: EntityResolutionMeta,
+    ) -> int | None:
+        """Project id confirmed this turn or active in session, if any."""
+        for item in entity_meta.resolved_entities:
+            pid = item.get("project_id") or (
+                item.get("id") if item.get("entity_type") == "project" else None
+            )
+            if pid:
+                return int(pid)
+        facts = context.working_memory.session_facts
+        confirmed = (facts.get("confirmed_entities") or {}).get("project") or {}
+        if confirmed.get("id"):
+            return int(confirmed["id"])
+        if facts.get("resolved_project_id"):
+            return int(facts["resolved_project_id"])
+        active = context.working_memory.get_active_project()
+        if active and active.project_id:
+            return int(active.project_id)
+        return None
 
     def _finalize_project_attribute_response(
         self,

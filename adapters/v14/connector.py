@@ -371,6 +371,73 @@ class OdooV14Adapter(BaseOdooAdapter):
             return []
         return self._execute(model, "read", [ids], {"fields": fields})
 
+    # Curated project.project header fields (Project Model Phase 1).
+    # Verified against live Elrace schema 2026-06-11 — exact value matches with
+    # the Odoo UI: "Civil Amount" = project_eng_amount (label: 'Civil Engineer
+    # Amount'), ICT = it_eng_amount. Do NOT read all fields: the custom
+    # computed field pending_days crashes multi-record reads (singleton bug in
+    # pandora_project_contracting_views).
+    PROJECT_PROFILE_FIELDS: tuple[str, ...] = (
+        # identity
+        "id", "name", "project_name_arabic", "wo_ref_no", "project_code",
+        "project_number", "contract_no",
+        # client / contract
+        "partner_id", "client_shortname", "partner_email", "partner_phone",
+        "agreement_id",
+        # location
+        "city_id", "city", "state_id", "country_id", "operating_unit_id",
+        "latitude", "longitude",
+        # schedule
+        "date_start", "date", "estimated_duration", "compliation_date",
+        "pending_days", "last_extend_date", "extend_duration",
+        # amounts — W.O / estimation / extensions
+        "wo_amount", "estimation_amount", "extended_amount",
+        "extension_total_amount",
+        # amounts — W.O distribution + role allocations
+        "project_eng_amount", "mechanical_eng_amount", "electrical_eng_amount",
+        "it_eng_amount", "plumber_amount", "branch_manager_amount",
+        "project_manager_amount",
+        # amounts — maintained rollups
+        "invoice_total_amount", "total_client_invoice", "purchase_total_amount",
+        "total_cost", "project_cost", "profit",
+        # team
+        "user_id", "projects_manager", "branch_manager_id", "project_eng_id",
+        "mechanical_eng_id", "electrical_eng_id", "it_eng_id", "plumber_id",
+        "architect", "document_controller",
+        # status
+        "state", "project_status", "project_status_compute", "wo_type",
+        "active",
+        # progress
+        "progress_overall_percent", "progress_last_update",
+        "progress_delayed_weeks", "progress_on_time_weeks",
+        # audit
+        "create_uid", "create_date", "write_uid", "write_date",
+    )
+
+    def read_project_profile(self, project_id: int) -> dict[str, Any] | None:
+        """Read the curated project header profile for one project.
+
+        Direct single-record read by id — the id is already gate-confirmed,
+        works for archived projects, and avoids the broken search_read
+        override. many2one values arrive as [id, display_name] pairs, so
+        engineer/manager/client names need no extra RPC.
+        """
+        try:
+            records = self._execute(
+                "project.project",
+                "read",
+                [[int(project_id)]],
+                {"fields": list(self.PROJECT_PROFILE_FIELDS)},
+            )
+        except xmlrpc.client.Fault as exc:
+            logger.warning(
+                "[V14Adapter] read_project_profile failed for id=%s: %s",
+                project_id,
+                exc.faultString[:200] if exc.faultString else exc,
+            )
+            return None
+        return records[0] if records else None
+
     def read_group(
         self,
         model   : str,

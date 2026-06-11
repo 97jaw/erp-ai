@@ -192,6 +192,208 @@ def narrate_project_expense_breakdown(
     return " ".join(parts)
 
 
+_PROFILE_LABELS = {
+    "en": {
+        "civil": "Civil", "electrical": "Electrical", "mechanical": "Mechanical",
+        "ict": "ICT", "plumbing": "Plumbing",
+        "wo_amount": "W.O Amount", "estimation": "Estimation Amount",
+        "distribution": "W.O amount distribution",
+        "not_set": "not set in Odoo",
+        "project_manager": "Project Manager", "projects_manager": "Projects Manager",
+        "branch_manager": "Branch Manager", "civil_engineer": "Civil Engineer",
+        "mechanical_engineer": "Mechanical Engineer",
+        "electrical_engineer": "Electrical Engineer", "ict_engineer": "ICT Engineer",
+        "plumber": "Plumber", "architect": "Architect",
+        "document_controller": "Document Controller",
+        "start": "Start date", "end": "End date", "duration": "Duration",
+        "completion": "Completion date", "days": "days",
+        "status": "Status", "progress": "Overall progress",
+        "client": "Client", "agreement": "Contract/Agreement",
+        "wo_ref": "W.O / Ref", "code": "Project code", "city": "City",
+        "operating_unit": "Operating unit", "last_updated": "Last updated",
+        "created": "Created", "by": "by",
+    },
+    "ar": {
+        "civil": "مدني", "electrical": "كهربائي", "mechanical": "ميكانيكي",
+        "ict": "تقنية المعلومات", "plumbing": "سباكة",
+        "wo_amount": "قيمة أمر العمل", "estimation": "قيمة التقدير",
+        "distribution": "توزيع قيمة أمر العمل",
+        "not_set": "غير محدد في أودو",
+        "project_manager": "مدير المشروع", "projects_manager": "مدير المشاريع",
+        "branch_manager": "مدير الفرع", "civil_engineer": "مهندس مدني",
+        "mechanical_engineer": "مهندس ميكانيكي",
+        "electrical_engineer": "مهندس كهربائي", "ict_engineer": "مهندس تقنية المعلومات",
+        "plumber": "سباك", "architect": "مهندس معماري",
+        "document_controller": "مراقب المستندات",
+        "start": "تاريخ البدء", "end": "تاريخ الانتهاء", "duration": "المدة",
+        "completion": "تاريخ الإكمال", "days": "يوم",
+        "status": "الحالة", "progress": "نسبة الإنجاز",
+        "client": "العميل", "agreement": "العقد/الاتفاقية",
+        "wo_ref": "أمر العمل/المرجع", "code": "رمز المشروع", "city": "المدينة",
+        "operating_unit": "الوحدة التشغيلية", "last_updated": "آخر تحديث",
+        "created": "تاريخ الإنشاء", "by": "بواسطة",
+    },
+}
+
+
+def _profile_amount(value: float) -> str:
+    """Exact decimals — header allocations must match the Odoo UI digits."""
+    return f"AED {float(value):,.2f}"
+
+
+def _profile_amount_lines(amounts: dict[str, Any], labels: dict[str, str]) -> list[str]:
+    lines: list[str] = []
+    wo_amount = amounts.get("wo_amount")
+    estimation = amounts.get("estimation_amount")
+    if wo_amount is not None:
+        lead = f"{labels['wo_amount']}: {_profile_amount(wo_amount)}"
+        if estimation is not None and abs(float(estimation) - float(wo_amount)) >= 0.01:
+            lead += f" ({labels['estimation']}: {_profile_amount(estimation)})"
+        lines.append(lead + ".")
+
+    distribution = amounts.get("distribution") or {}
+    set_items = [
+        (key, value) for key, value in distribution.items() if value is not None
+    ]
+    if set_items:
+        bits = [
+            f"{labels.get(key, key.title())} {_profile_amount(value)}"
+            for key, value in set_items
+        ]
+        lines.append(f"{labels['distribution']}: " + ", ".join(bits) + ".")
+    else:
+        lines.append(
+            f"{labels['distribution']} (Civil/Electrical/Mechanical/ICT): "
+            f"{labels['not_set']}."
+        )
+    role_allocations = amounts.get("role_allocations") or {}
+    role_bits = [
+        f"{labels.get(key, key.replace('_', ' ').title())} {_profile_amount(value)}"
+        for key, value in role_allocations.items()
+        if value is not None
+    ]
+    if role_bits:
+        lines.append(", ".join(role_bits) + ".")
+    return lines
+
+
+def _profile_team_lines(team: dict[str, Any], labels: dict[str, str]) -> list[str]:
+    bits = [
+        f"{labels.get(key, key.replace('_', ' ').title())}: {person['name']}"
+        for key, person in team.items()
+        if isinstance(person, dict) and person.get("name")
+    ]
+    if not bits:
+        return [f"Team assignments: {labels['not_set']}."]
+    return ["; ".join(bits) + "."]
+
+
+def _profile_schedule_lines(schedule: dict[str, Any], labels: dict[str, str]) -> list[str]:
+    bits: list[str] = []
+    if schedule.get("start_date"):
+        bits.append(f"{labels['start']}: {schedule['start_date']}")
+    if schedule.get("end_date"):
+        bits.append(f"{labels['end']}: {schedule['end_date']}")
+    if schedule.get("estimated_duration_days") is not None:
+        bits.append(
+            f"{labels['duration']}: {schedule['estimated_duration_days']:.0f} {labels['days']}",
+        )
+    if schedule.get("completion_date"):
+        bits.append(f"{labels['completion']}: {schedule['completion_date']}")
+    if not bits:
+        return [f"Schedule: {labels['not_set']}."]
+    return ["; ".join(bits) + "."]
+
+
+def _profile_status_lines(payload: dict[str, Any], labels: dict[str, str]) -> list[str]:
+    status_section = payload.get("project_status") or {}
+    progress = payload.get("progress") or {}
+    bits: list[str] = []
+    status_name = (status_section.get("status") or {}).get("name") if isinstance(
+        status_section.get("status"), dict,
+    ) else None
+    state = status_name or status_section.get("state")
+    if state:
+        bits.append(f"{labels['status']}: {state}")
+    if progress.get("overall_percent") is not None:
+        line = f"{labels['progress']}: {progress['overall_percent']:.2f}%"
+        if progress.get("last_update"):
+            line += f" ({labels['last_updated']} {progress['last_update']})"
+        bits.append(line)
+    if not bits:
+        return [f"{labels['status']}: {labels['not_set']}."]
+    return ["; ".join(bits) + "."]
+
+
+def _profile_identity_lines(payload: dict[str, Any], labels: dict[str, str]) -> list[str]:
+    identity = payload.get("identity") or {}
+    client_contract = payload.get("client_contract") or {}
+    location = payload.get("location") or {}
+    audit = payload.get("audit") or {}
+    bits: list[str] = []
+    if identity.get("wo_ref_no"):
+        bits.append(f"{labels['wo_ref']}: {identity['wo_ref_no']}")
+    if identity.get("project_code"):
+        bits.append(f"{labels['code']}: {identity['project_code']}")
+    client = client_contract.get("client") or {}
+    if client.get("name"):
+        bits.append(f"{labels['client']}: {client['name']}")
+    agreement = client_contract.get("agreement") or {}
+    if agreement.get("name"):
+        bits.append(f"{labels['agreement']}: {agreement['name']}")
+    city = location.get("city") or {}
+    if city.get("name"):
+        bits.append(f"{labels['city']}: {city['name']}")
+    operating_unit = location.get("operating_unit") or {}
+    if operating_unit.get("name"):
+        bits.append(f"{labels['operating_unit']}: {operating_unit['name']}")
+    updated_by = audit.get("last_updated_by") or {}
+    if audit.get("last_updated_on"):
+        line = f"{labels['last_updated']}: {audit['last_updated_on']}"
+        if updated_by.get("name"):
+            line += f" {labels['by']} {updated_by['name']}"
+        bits.append(line)
+    if not bits:
+        return [f"Details: {labels['not_set']}."]
+    return ["; ".join(bits) + "."]
+
+
+def narrate_project_profile(
+    payload: dict[str, Any],
+    *,
+    user_message: str = "",
+    language: str = "en",
+) -> str:
+    """Narrate the project header profile, scoped to the asked focus section."""
+    del user_message
+    labels = _PROFILE_LABELS["ar" if language == "ar" else "en"]
+    project_name = payload.get("project_name") or "Project"
+    focus = str(payload.get("focus") or "all")
+    amounts = payload.get("amounts") or {}
+    team = payload.get("team") or {}
+    schedule = payload.get("schedule") or {}
+
+    sections: list[str] = []
+    if focus == "amounts":
+        sections += _profile_amount_lines(amounts, labels)
+    elif focus == "team":
+        sections += _profile_team_lines(team, labels)
+    elif focus == "schedule":
+        sections += _profile_schedule_lines(schedule, labels)
+    elif focus == "status":
+        sections += _profile_status_lines(payload, labels)
+    elif focus == "identity":
+        sections += _profile_identity_lines(payload, labels)
+    else:
+        sections += _profile_identity_lines(payload, labels)
+        sections += _profile_amount_lines(amounts, labels)
+        sections += _profile_team_lines(team, labels)
+        sections += _profile_schedule_lines(schedule, labels)
+        sections += _profile_status_lines(payload, labels)
+
+    return f"{project_name} — " + " ".join(sections)
+
+
 def _payload_from_expense_visualization(visualization: dict[str, Any]) -> dict[str, Any]:
     kpis = visualization.get("kpis") or {}
     wo = (kpis.get("wo_amount") or {}).get("value")

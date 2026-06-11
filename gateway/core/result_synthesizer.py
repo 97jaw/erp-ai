@@ -11,8 +11,10 @@ from gateway.core.project_expense_routing import is_project_expense_tool_result
 from gateway.quality_narrative import (
     narrate_project_expense_breakdown,
     narrate_project_expense_summary,
+    narrate_project_profile,
 )
 from gateway.tools.project_expense import PROJECT_EXPENSE_TOOL_NAMES, SUMMARY_SOURCES
+from gateway.tools.project_profile import PROFILE_SOURCE
 
 BREAKDOWN_SOURCE = "project_expense_breakdown_mobile"
 
@@ -30,6 +32,10 @@ class ResultSynthesizer:
 
     def synthesize(self, execution_result: ExecutionResult, intent: Intent) -> SynthesizedResult:
         """Build narrative text and visualization payload from execution results."""
+        profile = self._find_project_profile(execution_result.results, intent)
+        if profile is not None:
+            return profile
+
         composed = self._find_composed_report(execution_result.results)
         if composed is not None:
             return self._from_composed_report(composed, intent)
@@ -77,6 +83,26 @@ class ResultSynthesizer:
             if step.tool in PROJECT_EXPENSE_TOOL_NAMES:
                 return True
         return False
+
+    @staticmethod
+    def _find_project_profile(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if payload.get("_source") != PROFILE_SOURCE:
+                continue
+            if payload.get("status") != "success":
+                continue
+            text = narrate_project_profile(
+                payload,
+                user_message=intent.specific_intent,
+            )
+            return SynthesizedResult(text=text, visualization=None)
+        return None
 
     @staticmethod
     def _find_project_expense_breakdown(

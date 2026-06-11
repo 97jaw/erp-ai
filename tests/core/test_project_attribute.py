@@ -43,8 +43,23 @@ def test_expense_question_is_not_attribute() -> None:
     assert not is_project_attribute_query("Villa 34 expense for this year")
 
 
+class _ProfileStubAdapter:
+    """Adapter exposing only the project profile read used by the new lane."""
+
+    def read_project_profile(self, project_id: int) -> dict:
+        assert project_id == 15157
+        return {
+            "id": 15157,
+            "name": "Villa Maintenance No. 34",
+            "user_id": [1060, "Mohammed W E Abuyousef"],
+            "projects_manager": [881, "Hassan Mohamed M Abuebeid"],
+        }
+
+
 @pytest.mark.asyncio
-async def test_attribute_question_honest_response() -> None:
+async def test_attribute_question_served_by_profile_lane() -> None:
+    """Project Model Phase 1: PM questions are now answered from the project
+    header (no Deep Think) instead of the old honest deferral."""
     stack = _make_context_stack()
     stack.working_memory.set_active_project(15157, "Villa Maintenance No. 34", confirmed=True)
     intent = Intent(
@@ -63,13 +78,41 @@ async def test_attribute_question_honest_response() -> None:
     response = await handler.handle(
         "who is the PM of Villa 34",
         _super_admin(),
-        adapter=object(),
+        adapter=_ProfileStubAdapter(),
         session_id="attr-test",
     )
 
     lowered = response.text.lower()
-    assert "manager" in lowered
-    assert "odoo" in lowered or "coming soon" in lowered
-    assert "financial data for" not in lowered
+    assert "mohammed w e abuyousef" in lowered
+    assert "don't have access" not in lowered
     assert not response.awaiting_clarification
+    assert response.tools_called == ["get_project_profile"]
+
+
+@pytest.mark.asyncio
+async def test_attribute_question_without_project_keeps_deferral() -> None:
+    """No project reference anywhere — the honest deferral remains."""
+    stack = _make_context_stack()
+    intent = Intent(
+        primary_action="ask_question",
+        subject_area="project_attribute",
+        specific_intent="who is the manager",
+        entities=[],
+    )
+    handler = IntelligentQueryHandler(
+        context_builder=FixedContextStackBuilder(stack),
+        intent_analyzer=FixedIntentAnalyzer(intent),
+        proactive_layer=StubProactiveIntelligence(),
+        telemetry_capture=TelemetryCapture(repository=InMemoryTelemetryStore()),
+    )
+
+    response = await handler.handle(
+        "who is the manager",
+        _super_admin(),
+        adapter=object(),
+        session_id="attr-test-2",
+    )
+
+    lowered = response.text.lower()
+    assert "don't have access" in lowered
     assert response.tools_called == []
