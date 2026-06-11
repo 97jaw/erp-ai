@@ -11,7 +11,13 @@ from difflib import SequenceMatcher
 from typing import Any, Literal, Protocol
 
 from gateway.core.context_stack import ContextStack
-from gateway.core.project_query_utils import extract_project_name_hint, meaningful_project_words
+from gateway.core.project_query_utils import (
+    extract_project_name_hint,
+    extract_project_number_hint,
+    meaningful_project_words,
+    normalize_project_search_tokens,
+    project_record_matches_number,
+)
 from gateway.core.strategy_planner import ExecutionStep
 
 logger = logging.getLogger(__name__)
@@ -225,6 +231,22 @@ PROJECT_SEARCH_FIELDS = (
 )
 
 
+def _villa_number_ilike_domain(number: str) -> list[Any]:
+    """Odoo OR domain for villa/project number patterns (incl. Elrace 'No . N' spacing)."""
+    clauses: list[Any] = [
+        ["name", "ilike", f"No. {number}"],
+        ["name", "ilike", f"No {number}"],
+        ["name", "ilike", f"No . {number}"],
+        ["name", "ilike", f"Maintenance No . {number}"],
+        ["name", "ilike", f"Maintenance No. {number}"],
+        ["name", "ilike", f"Villa Maintenance%{number}"],
+        ["name", "ilike", f"Villa {number}"],
+    ]
+    if len(clauses) == 1:
+        return clauses
+    return ["|"] * (len(clauses) - 1) + clauses
+
+
 class ProjectSearchClient(Protocol):
     """Minimal Odoo project search interface for resolver strategies."""
 
@@ -345,6 +367,7 @@ class EntityResolver:
 
         fast_strategies = (
             self._exact_phrase_match,
+            self._villa_number_match,
             self._all_words_match,
             self._any_word_match,
             self._acronym_match,
@@ -595,8 +618,15 @@ class EntityResolver:
             strategy="exact_phrase_match",
         )
 
+    async def _villa_number_match(self, query: str, context: ContextStack) -> list[dict[str, Any]]:
+        number = extract_project_number_hint(query)
+        if not number:
+            return []
+        domain = _villa_number_ilike_domain(number)
+        return await self._search_with_strategy(query, domain, strategy="villa_number_match")
+
     async def _all_words_match(self, query: str, context: ContextStack) -> list[dict[str, Any]]:
-        words = meaningful_project_words(query)
+        words = normalize_project_search_tokens(query)
         if not words:
             return []
         domain: list[Any] = [["name", "ilike", word] for word in words]
@@ -605,10 +635,25 @@ class EntityResolver:
         return await self._search_with_strategy(query, domain, strategy="all_words_match")
 
     async def _any_word_match(self, query: str, context: ContextStack) -> list[dict[str, Any]]:
-        words = meaningful_project_words(query)
+        number = extract_project_number_hint(query)
+        words = normalize_project_search_tokens(query)
         if not words:
             return []
-        domain: list[Any] = [["name", "ilike", word] for word in words]
+        if number and len(words) >= 2:
+            other_words = [word for word in words if word != number]
+            if other_words:
+                word_domain: list[Any] = [["name", "ilike", word] for word in other_words]
+                if len(other_words) > 1:
+                    word_domain = ["&"] * (len(other_words) - 1) + word_domain
+                number_domain = _villa_number_ilike_domain(number)
+                number_domain = ["|", ["name", "ilike", number], *number_domain]
+                domain = ["&", *word_domain, *number_domain]
+                return await self._search_with_strategy(
+                    query,
+                    domain,
+                    strategy="any_word_match+number",
+                )
+        domain = [["name", "ilike", word] for word in words]
         if len(words) > 1:
             domain = ["|"] * (len(words) - 1) + domain
         return await self._search_with_strategy(query, domain, strategy="any_word_match")
@@ -816,6 +861,10 @@ class EntityResolver:
             field_score = self._score_name_field(name_lower, query_lower, query_words)
             ratio = SequenceMatcher(None, query_lower, name_lower).ratio()
             best = max(best, field_score, ratio)
+
+        number_hint = extract_project_number_hint(query)
+        if number_hint and project_record_matches_number(project, number_hint):
+            best = max(best, 0.92)
         return best
 
     @staticmethod

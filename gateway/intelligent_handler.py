@@ -828,6 +828,36 @@ class IntelligentQueryHandler:
             if step.tool == "get_project_expense_summary":
                 context.working_memory.session_facts["last_expense_summary_project_id"] = pid
 
+    @staticmethod
+    def _try_repeat_query_entity_confirm(
+        message: str,
+        context: ContextStack,
+        confirmed_entities: list[ConfirmedEntityRef] | None,
+    ) -> list[ConfirmedEntityRef] | None:
+        """When the user re-sends the same query, apply the prior default clarification option."""
+        if confirmed_entities:
+            return confirmed_entities
+        pending = context.working_memory.session_facts.get("pending_entity_clarification")
+        if not isinstance(pending, dict):
+            return None
+        prior_query = str(pending.get("query") or "").strip().lower()
+        if prior_query != message.strip().lower():
+            return None
+        options = pending.get("options") or []
+        defaults = [option for option in options if option.get("is_default")]
+        if len(defaults) != 1:
+            return None
+        option = defaults[0]
+        if option.get("action") != "confirm_entity" or not option.get("entity_id"):
+            return None
+        return [
+            ConfirmedEntityRef(
+                type=str(option.get("entity_type") or "project"),
+                id=int(option["entity_id"]),
+                name=str(option.get("label") or option["entity_id"]),
+            ),
+        ]
+
     async def _run_entity_gate(
         self,
         intent: Intent,
@@ -842,6 +872,11 @@ class IntelligentQueryHandler:
             meta.entity_gate_status = "skipped"
             return intent, meta
 
+        confirmed_entities = self._try_repeat_query_entity_confirm(
+            message,
+            context,
+            confirmed_entities,
+        )
         gate = EntityGate(adapter, project_resolver=self._resolve_entity_resolver(adapter))
         result = await gate.evaluate(intent, context, message, confirmed_entities)
         meta.entity_discovery_count = result.entity_discovery_count
@@ -855,7 +890,9 @@ class IntelligentQueryHandler:
             return intent, meta
 
         if result.status == "confirmed":
+            context.working_memory.session_facts.pop("pending_entity_clarification", None)
             meta.entity_confirmed_by_user = bool(confirmed_entities)
+            meta.entity_auto_confirmed = not bool(confirmed_entities)
             if result.compare_project_ids:
                 EntityGate.apply_compare_projects(
                     context,
@@ -895,6 +932,7 @@ class IntelligentQueryHandler:
                     )
                 else:
                     updated_entities.append(entity)
+            confirm_action = "user_confirmed" if confirmed_entities else "auto_confirmed"
             for entity_type, confirmed in result.confirmed.items():
                 meta.resolved_entities.append(
                     {
@@ -905,7 +943,7 @@ class IntelligentQueryHandler:
                         "project_name": confirmed.get("name") if entity_type == "project" else None,
                         "partner_id": confirmed.get("id") if entity_type == "partner" else None,
                         "partner_name": confirmed.get("name") if entity_type == "partner" else None,
-                        "action": "user_confirmed",
+                        "action": confirm_action,
                     },
                 )
             return replace(intent, entities=updated_entities or intent.entities), meta
@@ -927,6 +965,10 @@ class IntelligentQueryHandler:
         meta.clarification_matches = result.matches
         meta.clarification_options = result.options or build_entity_options(result.matches)
         meta.query_label = result.query_label
+        context.working_memory.session_facts["pending_entity_clarification"] = {
+            "query": message,
+            "options": meta.clarification_options,
+        }
         meta.compare_pending_query = result.compare_pending_query
         meta.compare_resolved_projects = list(result.compare_resolved_projects)
         if result.compare_pending_query:

@@ -16,9 +16,12 @@ from gateway.core.entity_resolver import (
 from gateway.core.intent_analyzer import EntityReference, Intent
 from gateway.core.project_query_utils import (
     extract_project_name_hint,
+    extract_project_number_hint,
     is_project_expense_follow_up,
     looks_like_project_cost_query,
     meaningful_project_words,
+    project_record_matches_number,
+    query_mentions_maintenance,
 )
 from gateway.core.working_memory import ActiveContext
 
@@ -106,6 +109,30 @@ def extract_compare_project_queries(intent: Intent) -> list[str]:
 def is_compare_project_intent(intent: Intent) -> bool:
     """True when compare mode targets two or more distinct projects."""
     return intent.primary_action == "compare" and len(extract_compare_project_queries(intent)) >= 2
+
+
+def _project_discovery_query(message: str, entity_value: str) -> str:
+    """Use the message hint when it supplies a project number missing from the LLM entity."""
+    hint = (extract_project_name_hint(message) or "").strip()
+    value = (entity_value or "").strip()
+    if not hint:
+        return value
+    if not value:
+        return hint
+    num_hint = extract_project_number_hint(hint)
+    num_value = extract_project_number_hint(value)
+    if num_hint and not num_value:
+        return hint
+    return value
+
+
+def _number_hint_from_query_and_message(query: str, message: str) -> str | None:
+    """Extract villa/project number from discovery query or full user message."""
+    number = extract_project_number_hint(query)
+    if number:
+        return number
+    message_hint = extract_project_name_hint(message) or ""
+    return extract_project_number_hint(message_hint)
 
 
 def _prefer_project_entity_type(value: str, message: str) -> str:
@@ -326,7 +353,10 @@ class EntityGate:
                 entity_type = entity.type
                 if entity_type == "partner":
                     entity_type = _prefer_project_entity_type(entity.value, message)
-                add(entity_type, entity.value)
+                value = entity.value
+                if entity_type == "project":
+                    value = _project_discovery_query(message, entity.value)
+                add(entity_type, value)
 
         if needs_project and not any(item[0] == "project" for item in required):
             hint = extract_project_name_hint(message)
@@ -342,7 +372,7 @@ class EntityGate:
         if not required and intent.subject_area == "project" and intent.entities:
             for entity in intent.entities:
                 if entity.type == "project":
-                    add("project", entity.value)
+                    add("project", _project_discovery_query(message, entity.value))
 
         return required
 
@@ -482,6 +512,7 @@ class EntityGate:
                 entity_type,
                 query,
                 context,
+                message=message,
             )
             gate_telemetry["entity_discovery_count"] = max(
                 gate_telemetry["entity_discovery_count"],
@@ -521,6 +552,31 @@ class EntityGate:
             if weak:
                 using_weak = True
             all_matches.extend(matches)
+
+        auto_confirmed = self._auto_confirm_project_match(
+            all_matches,
+            message=message,
+            context=context,
+            using_weak=using_weak,
+        )
+        if auto_confirmed is not None:
+            confirmed_map["project"] = {
+                "id": int(auto_confirmed.get("id") or 0),
+                "name": str(auto_confirmed.get("name") or auto_confirmed.get("id")),
+            }
+            logger.info(
+                "[EntityGate] Auto-confirmed project %s (id=%s) for query %r",
+                confirmed_map["project"]["name"],
+                confirmed_map["project"]["id"],
+                query_label,
+            )
+            return EntityGateResult(
+                status="confirmed",
+                required_types=[item[0] for item in required],
+                confirmed=confirmed_map,
+                query_label=query_label,
+                **gate_telemetry,
+            )
 
         options = build_entity_options(all_matches)
         return EntityGateResult(
@@ -835,11 +891,53 @@ class EntityGate:
                 {"id": first.get("id"), "name": first.get("name")},
             )
 
+    @staticmethod
+    def _auto_confirm_project_match(
+        matches: list[dict[str, Any]],
+        *,
+        message: str,
+        context: ContextStack,
+        using_weak: bool,
+    ) -> dict[str, Any] | None:
+        """Return the project summary to auto-confirm for numbered villa/project queries."""
+        if using_weak or not matches:
+            return None
+
+        number_hint = _number_hint_from_query_and_message(message, message)
+        if not number_hint:
+            return None
+
+        numbered = [
+            match
+            for match in matches
+            if project_record_matches_number(match, number_hint)
+        ]
+        if len(numbered) == 1:
+            top = numbered[0]
+            if float(top.get("confidence") or 0.0) >= CONFIDENT_CONFIDENCE_MIN:
+                return top
+
+        if context.user.assumption_level() == "aggressive" and len(matches) >= 2:
+            top = matches[0]
+            second = matches[1]
+            top_conf = float(top.get("confidence") or 0.0)
+            second_conf = float(second.get("confidence") or 0.0)
+            if (
+                top_conf >= 0.92
+                and top_conf - second_conf >= 0.2
+                and project_record_matches_number(top, number_hint)
+            ):
+                return top
+
+        return None
+
     async def _discover(
         self,
         entity_type: str,
         query: str,
         context: ContextStack,
+        *,
+        message: str = "",
     ) -> tuple[list[dict[str, Any]], dict[str, Any], bool, bool]:
         empty_discovery: dict[str, Any] = {
             "entity_discovery_count": 0,
@@ -894,6 +992,40 @@ class EntityGate:
                 elif result.confident_matches or result.weak_matches:
                     match_pool = list(result.confident_matches or result.weak_matches)
                     weak = bool(result.weak_matches and not result.confident_matches)
+
+            number_hint = _number_hint_from_query_and_message(query, message)
+            if number_hint and match_pool:
+                numbered_matches = [
+                    match
+                    for match in match_pool
+                    if project_record_matches_number(match.entity, number_hint)
+                ]
+                if query_mentions_maintenance(query) or query_mentions_maintenance(message):
+                    maintenance_numbered = [
+                        match
+                        for match in numbered_matches
+                        if "maintenance" in str(match.entity.get("name") or "").lower()
+                    ]
+                    if maintenance_numbered:
+                        numbered_matches = maintenance_numbered
+                    elif numbered_matches:
+                        logger.info(
+                            "[EntityGate] Query %r requested maintenance number %s "
+                            "but no maintenance project name contains it — not_found",
+                            query,
+                            number_hint,
+                        )
+                        return [], discovery, False, False
+                if numbered_matches:
+                    match_pool = numbered_matches
+                else:
+                    logger.info(
+                        "[EntityGate] Query %r requested villa/project number %s "
+                        "but no discovery match contains it — not_found",
+                        query,
+                        number_hint,
+                    )
+                    return [], discovery, False, False
 
             summaries: list[dict[str, Any]] = []
             seen_ids: set[int] = set()

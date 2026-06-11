@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 PROJECT_STOP_WORDS = frozenset(
     {
@@ -107,6 +108,70 @@ def meaningful_project_words(query: str) -> list[str]:
         for word in query.split()
         if word and word.lower() not in PROJECT_STOP_WORDS and len(word) > 1
     ]
+
+
+_MAINTENANCE_TYPO_FORMS = frozenset(
+    {"maintanence", "maintanance", "maintainance", "maintenence", "maintainence"},
+)
+
+
+def normalize_project_search_tokens(query: str) -> list[str]:
+    """Expand typo variants (e.g. maintanence→maintenance) for Odoo ilike search."""
+    tokens: list[str] = []
+    for word in meaningful_project_words(query):
+        tokens.append(word)
+        if word.lower() in _MAINTENANCE_TYPO_FORMS:
+            tokens.append("maintenance")
+    return list(dict.fromkeys(tokens))
+
+
+def extract_project_number_hint(query: str) -> str | None:
+    """Extract a villa/project number like 37 from 'villa maintenance 37'."""
+    text = (query or "").strip()
+    if not text:
+        return None
+
+    match = re.search(
+        r"\bvilla\s+(?:maint\w*\s+)?(\d{1,3})\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return match.group(1)
+
+    match = re.search(r"\bno\.?\s*(\d{1,3})\b", text, flags=re.IGNORECASE)
+    if match:
+        return match.group(1)
+
+    words = meaningful_project_words(text)
+    if words and words[-1].isdigit():
+        return words[-1]
+    return None
+
+
+def project_record_matches_number(record: dict[str, Any], number: str) -> bool:
+    """True when project name or WO ref contains the requested villa/project number."""
+    if not number:
+        return False
+    name = str(record.get("name") or "").lower()
+    wo_ref = str(record.get("wo_ref_no") or "").lower()
+    if re.search(rf"\bno\.?\s*{re.escape(number)}\b", name):
+        return True
+    if re.search(rf"\bno\s*\.\s*{re.escape(number)}\b", name):
+        return True
+    if re.search(rf"\bvilla\s+{re.escape(number)}\b", name):
+        return True
+    if re.search(rf"maintenance\s+no\.?\s*{re.escape(number)}\b", name):
+        return True
+    if re.search(rf"maintenance\s+no\s*\.\s*{re.escape(number)}\b", name):
+        return True
+    return False
+
+
+def query_mentions_maintenance(query: str) -> bool:
+    """True when the user query refers to maintenance work (incl. common typos)."""
+    blob = (query or "").lower()
+    return "maintenance" in blob or "maint" in blob
 
 
 _EXPENSE_FOLLOW_UP_SIGNALS = (
