@@ -206,6 +206,7 @@ class IntelligentQueryHandler:
         capture = self._resolve_telemetry()
         context: ContextStack | None = None
         intent: Intent | None = None
+        effective_strategy_override = strategy_override
         strategy_used: Strategy | None = strategy_override
         quality_review: QualityReview | None = None
         retries_needed = 0
@@ -245,7 +246,9 @@ class IntelligentQueryHandler:
             from gateway.core.project_expense_routing import (
                 apply_active_follow_up_context,
                 is_followup_to_active,
+                select_project_expense_tool,
             )
+            from gateway.core.strategy_fixtures import build_single_tool_strategy
 
             active = context.working_memory.get_active_project()
             is_active_follow_up = is_followup_to_active(message, intent, active)
@@ -320,6 +323,25 @@ class IntelligentQueryHandler:
                         },
                     ],
                 )
+                forced = select_project_expense_tool(message, intent, context)
+                if forced:
+                    tool_name, tool_input = forced
+                    tool_input = {
+                        **tool_input,
+                        "project_id": active.project_id,
+                        "project_name": active.project_name,
+                    }
+                    effective_strategy_override = build_single_tool_strategy(
+                        tool=tool_name,
+                        tool_input=tool_input,
+                        description=f"Follow-up: {message}",
+                        expected_output=intent.expected_output or "table",
+                    )
+                    logger.info(
+                        "[FollowUp] Forcing tool %s with project_id=%s",
+                        tool_name,
+                        active.project_id,
+                    )
             else:
                 intent, entity_meta = await self._run_stage(
                     PipelineStage.ENTITY_RESOLUTION,
@@ -388,7 +410,7 @@ class IntelligentQueryHandler:
                 intent=intent,
                 language=language,
                 session_id=session_id,
-                strategy_override=strategy_override,
+                strategy_override=effective_strategy_override,
                 executor=executor,
             )
             self._persist_execution_scope(

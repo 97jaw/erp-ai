@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from gateway.core.context_stack import ContextStack
@@ -69,6 +70,36 @@ async def execute_search_entities(
             "status": "error",
             "error": "unsupported_entity_type",
             "message": f"Entity type {entity_type!r} is not supported yet.",
+        }
+
+    if query.isdigit():
+        project_id = int(query)
+        records = await asyncio.to_thread(
+            adapter.safe_search_read,
+            "project.project",
+            [["id", "=", project_id]],
+            ["id", "name", "wo_ref_no", "description", "partner_id"],
+            limit=1,
+        )
+        if records:
+            candidate = _project_match_summary(records[0], confidence=1.0)
+            return {
+                "status": "success",
+                "_source": "search_entities",
+                "entity_type": entity_type,
+                "query": query,
+                "total_matches": 1,
+                "candidates": [candidate],
+                "top_confidence": 1.0,
+            }
+        return {
+            "status": "success",
+            "_source": "search_entities",
+            "entity_type": entity_type,
+            "query": query,
+            "total_matches": 0,
+            "candidates": [],
+            "message": f"No project with id {project_id}.",
         }
 
     resolver = project_resolver or EntityResolver(OdooProjectSearch(adapter))

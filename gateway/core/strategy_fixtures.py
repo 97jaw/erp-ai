@@ -2,7 +2,41 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from gateway.core.strategy_planner import ExecutionStep, Strategy
+
+
+def build_single_tool_strategy(
+    *,
+    tool: str,
+    tool_input: dict[str, Any],
+    description: str = "",
+    expected_output: str = "summary",
+) -> Strategy:
+    """Single-step strategy for forced tool execution (e.g. active follow-up)."""
+    return Strategy(
+        steps=[
+            ExecutionStep(
+                step_number=1,
+                description=description or f"Execute {tool}",
+                tool=tool,
+                tool_input=tool_input,
+                depends_on=[],
+                parallel_with=[],
+                expected_output=expected_output,
+                fallback_if_fails=f"Retry {tool} with resolved project scope",
+            ),
+        ],
+        synthesis_approach=(
+            "Return the single tool result directly with a concise executive summary"
+        ),
+        quality_checks=[
+            "Verify numeric values are present in the tool result",
+            "Confirm project scope matches active follow-up context",
+        ],
+        estimated_duration_ms=3000,
+    )
 
 
 def _revenue_by_client_step(
