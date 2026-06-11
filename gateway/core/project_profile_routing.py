@@ -59,11 +59,19 @@ _WO_AMOUNT_RE = re.compile(
 # "estimation amount" on its own -> just the estimation figure.
 _ESTIMATION_AMOUNT_RE = re.compile(r"estimation\s+amounts?", re.IGNORECASE)
 
+# Require a role/team keyword — bare "who is …" matches general knowledge (e.g. UAE leadership).
+_TEAM_ROLE = (
+    r"project\s+manager|projects\s+manager|branch\s+manager|"
+    r"civil(?:\s+engineer)?|mechanical(?:\s+engineer)?|"
+    r"electrical(?:\s+engineer)?|ict(?:\s+engineer)?|it(?:\s+engineer)?|"
+    r"plumber|architect|document\s+controller|supervisors?|\bpm\b"
+)
 _TEAM_SIGNAL_RE = re.compile(
-    r"\bwho\s+is\b|\bwho'?s\b|project\s+manager|projects\s+manager|"
-    r"branch\s+manager|civil\s+engineer|mechanical\s+engineer|"
-    r"electrical\s+engineer|ict\s+engineer|it\s+engineer|plumber|architect|"
-    r"document\s+controller|supervisors?\b|team\s+(of|for|on)|assigned\s+to",
+    rf"\bwho\s+is\s+(?:the\s+)?(?:{_TEAM_ROLE})|"
+    rf"\bwho'?s\s+(?:the\s+)?(?:{_TEAM_ROLE})|"
+    rf"\bwho\s+manages\b|"
+    rf"{_TEAM_ROLE}|"
+    r"team\s+(of|for|on)|assigned\s+to",
     re.IGNORECASE,
 )
 
@@ -126,9 +134,14 @@ def is_project_profile_text(message: str) -> bool:
 
 def is_project_profile_query(message: str, intent) -> bool:
     """Profile detection with intent context."""
+    if getattr(intent, "out_of_scope", False):
+        return False
+    if is_project_profile_text(message):
+        return True
+    # Follow-ups like "who manages it" — active project supplies context.
     if getattr(intent, "subject_area", "") == "project_attribute":
         return True
-    return is_project_profile_text(message)
+    return False
 
 
 def derive_profile_focus(message: str) -> str:

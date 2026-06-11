@@ -139,6 +139,11 @@ def extract_project_name_hint(message: str) -> str | None:
     words = [word for word in text.split() if word.lower() not in PROJECT_STOP_WORDS]
     if not words:
         return None
+
+    from gateway.core.project_profile_routing import has_project_context
+
+    if not has_project_context(message):
+        return None
     return " ".join(words)
 
 

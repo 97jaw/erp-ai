@@ -185,6 +185,24 @@ def test_project_attribute_intent_counts_as_profile() -> None:
     assert is_project_profile_query("who manages it", intent)
 
 
+def test_out_of_scope_general_knowledge_is_not_profile() -> None:
+    from dataclasses import replace
+
+    intent = replace(
+        _profile_intent("who is the King of UAE right now", subject_area="project_attribute"),
+        out_of_scope=True,
+        out_of_scope_reason="General knowledge outside ERP scope",
+    )
+    assert not is_project_profile_query("who is the King of UAE right now", intent)
+    assert not is_project_profile_text("who is the King of UAE right now")
+
+
+def test_extract_project_name_hint_requires_project_context() -> None:
+    from gateway.core.project_query_utils import extract_project_name_hint
+
+    assert extract_project_name_hint("who is the King of UAE right now") is None
+
+
 # ---------------------------------------------------------------------------
 # Deep Think carve-out
 # ---------------------------------------------------------------------------

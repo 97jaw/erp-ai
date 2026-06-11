@@ -393,21 +393,22 @@ class IntelligentQueryHandler:
                     intent=intent,
                 )
 
-            if intent.subject_area == "project_attribute" and not records_query and not activity_query:
+            if profile_query and not records_query and not activity_query:
                 profile_intent = self._prepare_profile_intent(message, intent, context)
                 if profile_intent is None:
-                    # No project reference anywhere — keep the honest deferral.
-                    return self._finalize_project_attribute_response(
-                        message=message,
-                        context=context,
-                        telemetry=telemetry,
-                        resolved_session=resolved_session,
-                        language=language,
-                        started=started,
-                        intent=intent,
-                    )
-                intent = profile_intent
-                profile_query = True
+                    if intent.subject_area == "project_attribute":
+                        return self._finalize_project_attribute_response(
+                            message=message,
+                            context=context,
+                            telemetry=telemetry,
+                            resolved_session=resolved_session,
+                            language=language,
+                            started=started,
+                            intent=intent,
+                        )
+                    profile_query = False
+                else:
+                    intent = profile_intent
 
             if records_query:
                 records_intent = self._prepare_records_intent(message, intent, context)
@@ -1538,11 +1539,14 @@ class IntelligentQueryHandler:
         intent: Intent,
         context: ContextStack,
     ) -> Intent | None:
-        """Reclassify a project_attribute intent for the profile lane.
+        """Reclassify a profile intent for the profile lane.
 
         Returns None when no project reference exists anywhere (message hint,
         intent entities, active project) — caller keeps the honest deferral.
         """
+        if intent.out_of_scope:
+            return None
+
         from gateway.core.project_query_utils import extract_project_name_hint
 
         hint = extract_project_name_hint(message)

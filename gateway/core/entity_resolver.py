@@ -254,6 +254,9 @@ class ProjectSearchClient(Protocol):
         """Search project.project records with an Odoo domain."""
 
 
+_ODOO_PROJECT_SEARCH_TIMEOUT_S = 25.0
+
+
 class OdooProjectSearch:
     """Adapter-backed project search for live entity resolution."""
 
@@ -272,7 +275,19 @@ class OdooProjectSearch:
                     limit=limit,
                 )
 
-            return await asyncio.to_thread(_call)
+            try:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(_call),
+                    timeout=_ODOO_PROJECT_SEARCH_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[OdooProjectSearch] timed out after %.0fs domain=%r limit=%s",
+                    _ODOO_PROJECT_SEARCH_TIMEOUT_S,
+                    domain,
+                    limit,
+                )
+                return []
 
 
 class EntityResolver:
