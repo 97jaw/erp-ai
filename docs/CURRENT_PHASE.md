@@ -6,9 +6,27 @@
 
 ## 🎯 ACTIVE PLAN
 
+**File:** Project Model — Phase 2.1: records lane post-deploy fixes
+
+**Status:** Deployed `a3b68305` — live
+
+| Fix | Description | Code | Tests |
+|-----|-------------|------|-------|
+| Per-type cache key | `tool_cache.build_tool_cache_key` now folds `record_type` / `move_type` / date window / `limit` into the key. Was `user:tool:project:hint` only, so one project's first-fetched type was served for every later type (invoices→PO→LPO→petty cash→staff→timesheets all returned the first result). Also fixes latent date-range collisions on expense tools. | ✅ | ✅ |
+| out_of_scope bypass | Records (and profile) lanes are computed BEFORE the `out_of_scope` short-circuit and bypass it — "staff list" / "timesheets" were refused as unavailable HR data | ✅ | ✅ |
+| Records > profile precedence | An explicit record-type keyword wins over an LLM `project_attribute`/`hr` tag — "staff list" / "supervisors" no longer fall into the profile header lane | ✅ | ✅ |
+| Trailing-type follow-ups | Detection fires on active-project follow-ups even when the type trails the name ("Show <project> purchase orders" chip) | ✅ | ✅ |
+| Entity hint override | `_prepare_records_intent` replaces a wrong LLM project entity with the stripped hint and clears `out_of_scope` — "petty cash of X" no longer searches project "petty cash" | ✅ | ✅ |
+
+**Live verify (NG Al Nouf, sequential session):** PO 122 (AED 3.19M), LPO 112 (AED 2.93M), petty cash 546 (AED 143.6K), staff 27, timesheets 6,344 (61,342 hrs) — each distinct and correct.
+
+---
+
+## 📜 PREVIOUS PLAN (2)
+
 **File:** Project Model — Phase 2: Project Records lanes (no Deep Think)
 
-**Status:** Code complete + tested — deploying
+**Status:** Deployed `74714b91`
 
 | Piece | Description | Code | Tests |
 |-------|-------------|------|-------|
