@@ -137,6 +137,10 @@ def has_meaningful_tool_data(tool_results: list[Any]) -> bool:
         # "not set in Odoo" is itself the honest answer.
         if payload.get("_source") == "project_profile" and payload.get("status") == "success":
             return True
+        # Same for record lists: zero matching records is an honest answer,
+        # not a failure ("no timesheets recorded for this period").
+        if payload.get("_source") == "project_records" and payload.get("status") == "success":
+            return True
         if payload.get("candidates"):
             return True
         for key in scalar_keys:

@@ -435,6 +435,109 @@ def narrate_project_profile(
     return f"{project_name} — " + " ".join(sections)
 
 
+_RECORDS_LABELS = {
+    "en": {
+        "invoices": ("invoice", "invoices"),
+        "client_invoices": ("client invoice", "client invoices"),
+        "lpo_invoices": ("LPO invoice", "LPO invoices"),
+        "purchase_orders": ("purchase order", "purchase orders"),
+        "timesheets": ("timesheet entry", "timesheet entries"),
+        "petty_cash": ("petty cash expense", "petty cash expenses"),
+        "petty_cash_sheets": ("petty cash sheet", "petty cash sheets"),
+        "staff": ("staff member", "staff members"),
+        "supervisors": ("supervisor", "supervisors"),
+    },
+    "ar": {
+        "invoices": ("فاتورة", "فواتير"),
+        "client_invoices": ("فاتورة عميل", "فواتير العملاء"),
+        "lpo_invoices": ("فاتورة مورد", "فواتير الموردين"),
+        "purchase_orders": ("أمر شراء", "أوامر شراء"),
+        "timesheets": ("سجل دوام", "سجلات دوام"),
+        "petty_cash": ("مصروف نثرية", "مصاريف نثرية"),
+        "petty_cash_sheets": ("كشف نثرية", "كشوف نثرية"),
+        "staff": ("موظف", "موظفين"),
+        "supervisors": ("مشرف", "مشرفين"),
+    },
+}
+
+_UNDATED_RECORD_TYPES = frozenset({"staff", "supervisors"})
+
+
+def narrate_project_records(
+    payload: dict[str, Any],
+    *,
+    user_message: str = "",
+    language: str = "en",
+) -> str:
+    """Narrate a project record list: count, total, period, shown rows."""
+    del user_message
+    lang = "ar" if language == "ar" else "en"
+    record_type = str(payload.get("record_type") or "invoices")
+    singular, plural = _RECORDS_LABELS[lang].get(
+        record_type, _RECORDS_LABELS[lang]["invoices"],
+    )
+    project_name = payload.get("project_name") or "the project"
+    total = int(payload.get("total_count") or 0)
+    shown = int(payload.get("returned_count") or 0)
+    period = payload.get("period") or {}
+    date_from = period.get("date_from")
+    date_to = period.get("date_to")
+
+    if payload.get("missing_analytic"):
+        if lang == "ar":
+            return (
+                f"{project_name} — لا يوجد حساب تحليلي مرتبط بهذا المشروع في Odoo، "
+                f"لذا لا يمكن جلب {plural}."
+            )
+        return (
+            f"{project_name} — this project has no analytic account linked in Odoo, "
+            f"so its {plural} cannot be listed."
+        )
+
+    period_bit = ""
+    if record_type not in _UNDATED_RECORD_TYPES and date_from and date_to:
+        if lang == "ar":
+            period_bit = f" بين {date_from} و {date_to}"
+            if period.get("defaulted"):
+                period_bit += " (آخر ٣ أشهر افتراضياً)"
+        else:
+            period_bit = f" between {date_from} and {date_to}"
+            if period.get("defaulted"):
+                period_bit += " (last 3 months by default)"
+
+    if total == 0:
+        if lang == "ar":
+            return f"{project_name} — لا توجد {plural}{period_bit}."
+        return f"{project_name} — no {plural} recorded{period_bit}."
+
+    noun = singular if total == 1 else plural
+    total_amount = payload.get("total_amount")
+    if record_type == "timesheets":
+        amount_bit = (
+            f" totalling {float(total_amount):,.1f} hours" if total_amount is not None else ""
+        )
+        if lang == "ar":
+            amount_bit = (
+                f" بمجموع {float(total_amount):,.1f} ساعة" if total_amount is not None else ""
+            )
+    elif total_amount is not None:
+        amount_bit = f" totalling AED {float(total_amount):,.2f}"
+        if lang == "ar":
+            amount_bit = f" بمجموع {float(total_amount):,.2f} درهم"
+    else:
+        amount_bit = ""
+
+    if lang == "ar":
+        text = f"{project_name} — {total:,} {noun}{amount_bit}{period_bit}."
+        if shown < total:
+            text += f" يعرض أحدث {shown}."
+        return text
+    text = f"{project_name} — {total:,} {noun}{amount_bit}{period_bit}."
+    if shown < total:
+        text += f" Showing the latest {shown}."
+    return text
+
+
 def _payload_from_expense_visualization(visualization: dict[str, Any]) -> dict[str, Any]:
     kpis = visualization.get("kpis") or {}
     wo = (kpis.get("wo_amount") or {}).get("value")

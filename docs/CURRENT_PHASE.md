@@ -6,9 +6,36 @@
 
 ## 🎯 ACTIVE PLAN
 
-**File:** Project Model — Phase 1.2: W.O-only focus + trade-word entity hint fix
+**File:** Project Model — Phase 2: Project Records lanes (no Deep Think)
 
 **Status:** Code complete + tested — deploying
+
+| Piece | Description | Code | Tests |
+|-------|-------------|------|-------|
+| Live model map | `scripts/introspect_project_records.py`: petty cash = `hr.expense` (lines, 53,958 project-linked) + `hr.expense.sheet` (headers); staff = `staff.list` (42k), supervisors = `project.supervisor` (3.9k); invoices/POs link via the project's ANALYTIC account (`account.move.project_id` / `purchase.order.project_id` → `account.analytic.account`); timesheets = `account.analytic.line` → project.project | ✅ | — |
+| Adapter | `connector.read_project_records(record_type, project_id, dates, limit)` — `PROJECT_RECORD_SPECS` for 9 types, analytic resolution, `safe_search_read` + `search_count` + `read_group` totals; curated fields (full reads crash on `hr.expense.sheet._compute_owner_expense_line`) | ✅ | ✅ |
+| Tool | `gateway/tools/project_records.py` `get_project_records` — types: invoices, client_invoices, lpo_invoices, purchase_orders, timesheets, petty_cash, petty_cash_sheets, staff, supervisors; default last-3-months for dated types; normalized rows | ✅ | ✅ |
+| Routing | `project_records_routing.py` detection + record_type; analysis disqualifier (breakdown/P&L/compare stays Deep Think); Deep Think carve-out; `extract_records_project_hint` strips record keyword | ✅ | ✅ |
+| Handler | Records lane mirrors profile lane: `_prepare_records_intent`, neutral confirm wording, forced `get_project_records` post-confirm + follow-ups; entity gate requires project | ✅ | ✅ |
+| Synthesis | `narrate_project_records` (count + AED/hours total + period + honest zero-state); per-type DATA_TABLE columns; records suggestion chips (sibling types, date widen, expenses handoff); meaningful-data | ✅ | ✅ |
+
+**Behavior contract:**
+- "invoices / LPO invoices / client invoices / purchase orders / timesheets / petty cash / staff list / supervisors of project X" → confirm → direct ORM list, latest 20, true total in narration — NO Deep Think
+- Client = out_invoice, LPO = in_invoice; generic "invoices" = both with Kind column
+- "expenses / breakdown / P&L / compare" still Deep Think
+- Deviation (documented): records cards are `disclosure_exempt` — the tool already pages (latest N) and narration carries the true total; the disclosure layer would replace the table with a summary chart and offer a misleading "See all N"
+
+**Live smoke (NG Al Nouf, project 14458):** client invoices 2 (AED 3.45M), LPO invoices 112 (AED 2.93M), POs 122 (AED 3.19M), timesheets 6,291 (60,795 hrs), petty cash 546 (AED 143.6K), staff 27, supervisors 9 — all via direct reads.
+
+**Tests:** `tests/core/test_project_records.py` (19). Full suite: 840 passed; 6 failures pre-existing (+3 transient live Odoo auth race, pass on retry).
+
+---
+
+## 📜 PREVIOUS PLAN (1.2)
+
+**File:** Project Model — Phase 1.2: W.O-only focus + trade-word entity hint fix
+
+**Status:** Deployed `d06d0520`
 
 | Fix | Description | Code | Tests |
 |-----|-------------|------|-------|

@@ -438,6 +438,203 @@ class OdooV14Adapter(BaseOdooAdapter):
             return None
         return records[0] if records else None
 
+    # ------------------------------------------------------------------
+    # Project Records (Project Model Phase 2) — lists of records linked to
+    # one project. Verified against live Elrace schema 2026-06-11:
+    # - account.move.project_id and purchase.order.project_id relate to the
+    #   project's ANALYTIC ACCOUNT (project.project.analytic_account_id).
+    # - hr.expense / staff.list / project.supervisor /
+    #   account.analytic.line relate to project.project directly.
+    # - hr.expense.sheet full reads crash on a broken compute
+    #   (_compute_owner_expense_line) — curated fields only.
+    # ------------------------------------------------------------------
+    PROJECT_RECORD_SPECS: dict[str, dict[str, Any]] = {
+        "invoices": {
+            "model": "account.move",
+            "link": "analytic",
+            "extra_domain": [
+                ["move_type", "in", ["out_invoice", "in_invoice"]],
+                ["state", "!=", "cancel"],
+            ],
+            "date_field": "invoice_date",
+            "amount_field": "amount_total",
+            "fields": [
+                "name", "move_type", "invoice_date", "partner_id", "amount_total",
+                "amount_residual", "payment_state", "state", "ref", "invoice_origin",
+            ],
+        },
+        "client_invoices": {
+            "model": "account.move",
+            "link": "analytic",
+            "extra_domain": [
+                ["move_type", "=", "out_invoice"],
+                ["state", "!=", "cancel"],
+            ],
+            "date_field": "invoice_date",
+            "amount_field": "amount_total",
+            "fields": [
+                "name", "invoice_date", "partner_id", "amount_total",
+                "amount_residual", "payment_state", "state", "ref", "invoice_origin",
+            ],
+        },
+        "lpo_invoices": {
+            "model": "account.move",
+            "link": "analytic",
+            "extra_domain": [
+                ["move_type", "=", "in_invoice"],
+                ["state", "!=", "cancel"],
+            ],
+            "date_field": "invoice_date",
+            "amount_field": "amount_total",
+            "fields": [
+                "name", "invoice_date", "partner_id", "amount_total",
+                "amount_residual", "payment_state", "state", "ref", "invoice_origin",
+            ],
+        },
+        "purchase_orders": {
+            "model": "purchase.order",
+            "link": "analytic",
+            "extra_domain": [["state", "not in", ["cancel"]]],
+            "date_field": "date_order",
+            "amount_field": "amount_total",
+            "fields": [
+                "name", "date_order", "partner_id", "amount_total", "state",
+                "invoice_status", "reception_status",
+            ],
+        },
+        "timesheets": {
+            "model": "account.analytic.line",
+            "link": "project",
+            "extra_domain": [],
+            "date_field": "date",
+            "amount_field": "unit_amount",  # hours, not money
+            "fields": [
+                "date", "employee_id", "name", "unit_amount", "task_id",
+                "department_id",
+            ],
+        },
+        "petty_cash": {
+            "model": "hr.expense",
+            "link": "project",
+            "extra_domain": [],
+            "date_field": "date",
+            "amount_field": "total_amount",
+            "fields": [
+                "seq_no", "name", "date", "employee_id", "total_amount",
+                "state", "sheet_id",
+            ],
+        },
+        "petty_cash_sheets": {
+            "model": "hr.expense.sheet",
+            "link": "project",
+            "extra_domain": [],
+            "date_field": "date",
+            "amount_field": "total_amount",
+            "fields": [
+                "seq_no", "name", "date", "employee_id", "total_amount",
+                "state", "voucher_date", "operating_unit_id",
+            ],
+        },
+        "staff": {
+            "model": "staff.list",
+            "link": "project",
+            "extra_domain": [],
+            "date_field": None,
+            "amount_field": None,
+            "fields": [
+                "emp_code", "emp_name", "job_id", "status", "access", "write_date",
+            ],
+        },
+        "supervisors": {
+            "model": "project.supervisor",
+            "link": "project",
+            "extra_domain": [],
+            "date_field": None,
+            "amount_field": None,
+            "fields": [
+                "emp_code", "emp_name", "job_id", "status", "write_date",
+            ],
+        },
+    }
+
+    def _project_analytic_id(self, project_id: int) -> int | None:
+        """analytic_account_id of a project (invoices/POs link through it)."""
+        records = self._execute(
+            "project.project",
+            "read",
+            [[int(project_id)]],
+            {"fields": ["analytic_account_id"]},
+        )
+        if not records:
+            return None
+        value = records[0].get("analytic_account_id")
+        if isinstance(value, (list, tuple)) and value:
+            return int(value[0])
+        return None
+
+    def read_project_records(
+        self,
+        record_type: str,
+        project_id: int,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List records of one type linked to a project, newest first.
+
+        Returns {"rows", "total_count", "total_amount"} — total_amount summed
+        over ALL matching records via read_group (None for undated/people
+        types or when read_group fails on a custom model).
+        """
+        spec = self.PROJECT_RECORD_SPECS.get(record_type)
+        if spec is None:
+            raise ValueError(f"unknown record_type: {record_type}")
+
+        if spec["link"] == "analytic":
+            analytic_id = self._project_analytic_id(project_id)
+            if analytic_id is None:
+                return {"rows": [], "total_count": 0, "total_amount": None,
+                        "missing_analytic": True}
+            domain: list[Any] = [["project_id", "=", analytic_id]]
+        else:
+            domain = [["project_id", "=", int(project_id)]]
+        domain += [list(item) for item in spec["extra_domain"]]
+
+        date_field = spec["date_field"]
+        if date_field:
+            if date_from:
+                domain.append([date_field, ">=", date_from])
+            if date_to:
+                domain.append([date_field, "<=", date_to])
+
+        order = f"{date_field} desc, id desc" if date_field else "id desc"
+        rows = self.safe_search_read(
+            spec["model"],
+            domain,
+            list(spec["fields"]),
+            limit=limit,
+            offset=offset,
+            order=order,
+        )
+        total_count = self.search_count(spec["model"], domain)
+
+        total_amount: float | None = None
+        amount_field = spec["amount_field"]
+        if amount_field and total_count:
+            try:
+                groups = self.read_group(
+                    spec["model"], domain, [amount_field], [], lazy=False,
+                )
+                if groups:
+                    total_amount = float(groups[0].get(amount_field) or 0.0)
+            except Exception as exc:  # noqa: BLE001 - custom models may break read_group
+                logger.warning(
+                    "[V14Adapter] read_group total failed for %s: %s",
+                    spec["model"], exc,
+                )
+        return {"rows": rows, "total_count": total_count, "total_amount": total_amount}
+
     def read_group(
         self,
         model   : str,

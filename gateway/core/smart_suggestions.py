@@ -70,6 +70,8 @@ class SmartSuggestionsGenerator:
         # drill/compare/table pool (those imply Deep Think flows).
         if "get_project_profile" in tool_names:
             return self._project_profile_suggestions(context, tool_results)
+        if "get_project_records" in tool_names:
+            return self._project_records_suggestions(context, tool_results)
 
         candidates: list[Suggestion] = []
         candidates.extend(
@@ -145,6 +147,55 @@ class SmartSuggestionsGenerator:
                 category="action",
                 priority=3,
             ),
+        )
+        return [item for item in suggestions if len(item.text) <= MAX_SUGGESTION_LENGTH]
+
+    @staticmethod
+    def _project_records_suggestions(
+        context: ContextStack,
+        tool_results: list[Any],
+    ) -> list[Suggestion]:
+        """Record-list follow-ups: sibling record types + date widen + expenses."""
+        project_name = None
+        record_type = ""
+        period_defaulted = False
+        for payload in tool_results:
+            if isinstance(payload, dict) and payload.get("_source") == "project_records":
+                project_name = payload.get("project_name")
+                record_type = str(payload.get("record_type") or "")
+                period_defaulted = bool((payload.get("period") or {}).get("defaulted"))
+                break
+        if not project_name:
+            active = context.working_memory.get_active_project()
+            project_name = active.project_name if active is not None else "the project"
+
+        # Staff <-> supervisors cross-suggest; documents cross-suggest each other.
+        sibling_by_type = {
+            "invoices": [("Show {p} purchase orders", "drill")],
+            "client_invoices": [("Show {p} LPO invoices", "drill")],
+            "lpo_invoices": [("Show {p} client invoices", "drill")],
+            "purchase_orders": [("Show {p} LPO invoices", "drill")],
+            "timesheets": [("Show {p} staff list", "drill")],
+            "petty_cash": [("Show {p} petty cash sheets", "drill")],
+            "petty_cash_sheets": [("Show {p} petty cash expenses", "drill")],
+            "staff": [("Show {p} supervisors", "drill")],
+            "supervisors": [("Show {p} staff list", "drill")],
+        }
+        suggestions: list[Suggestion] = []
+        for template, category in sibling_by_type.get(record_type, []):
+            suggestions.append(
+                Suggestion(text=template.format(p=project_name), category=category, priority=5),
+            )
+        if period_defaulted:
+            suggestions.append(
+                Suggestion(
+                    text=f"Show {project_name} {record_type.replace('_', ' ')} for this year",
+                    category="time",
+                    priority=4,
+                ),
+            )
+        suggestions.append(
+            Suggestion(text=f"Show {project_name} expenses", category="action", priority=3),
         )
         return [item for item in suggestions if len(item.text) <= MAX_SUGGESTION_LENGTH]
 

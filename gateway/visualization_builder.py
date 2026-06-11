@@ -948,6 +948,82 @@ def _project_profile_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+_RECORDS_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "invoices": [
+        ("number", "Invoice"), ("kind", "Kind"), ("date", "Date"),
+        ("partner", "Partner"), ("total", "Total (AED)"),
+        ("due", "Due (AED)"), ("payment_state", "Payment"),
+    ],
+    "client_invoices": [
+        ("number", "Invoice"), ("date", "Date"), ("partner", "Client"),
+        ("total", "Total (AED)"), ("due", "Due (AED)"), ("payment_state", "Payment"),
+    ],
+    "lpo_invoices": [
+        ("number", "Bill"), ("date", "Date"), ("partner", "Vendor"),
+        ("total", "Total (AED)"), ("due", "Due (AED)"), ("payment_state", "Payment"),
+    ],
+    "purchase_orders": [
+        ("number", "PO"), ("date", "Date"), ("vendor", "Vendor"),
+        ("total", "Total (AED)"), ("state", "Status"), ("billing", "Billing"),
+    ],
+    "timesheets": [
+        ("date", "Date"), ("employee", "Employee"), ("description", "Description"),
+        ("hours", "Hours"), ("task", "Task"),
+    ],
+    "petty_cash": [
+        ("number", "Ref"), ("date", "Date"), ("employee", "Employee"),
+        ("description", "Description"), ("total", "Total (AED)"), ("state", "Status"),
+    ],
+    "petty_cash_sheets": [
+        ("number", "Ref"), ("date", "Date"), ("employee", "Employee"),
+        ("description", "Description"), ("total", "Total (AED)"), ("state", "Status"),
+    ],
+    "staff": [
+        ("code", "Code"), ("name", "Name"), ("job", "Job"),
+        ("status", "Status"), ("access", "Access"),
+    ],
+    "supervisors": [
+        ("code", "Code"), ("name", "Name"), ("job", "Job"), ("status", "Status"),
+    ],
+}
+
+
+def _project_records_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if payload.get("status") != "success":
+        return None
+    record_type = str(payload.get("record_type") or "")
+    columns = _RECORDS_COLUMNS.get(record_type)
+    if not columns:
+        return None
+    rows: list[list[Any]] = []
+    for row in payload.get("rows") or []:
+        rows.append([
+            row.get(key) if row.get(key) is not None else "—"
+            for key, _label in columns
+        ])
+    if not rows:
+        return None
+    label = str(payload.get("record_label") or record_type).title()
+    title = f"{payload.get('project_name')} — {label}"
+    total = int(payload.get("total_count") or 0)
+    shown = int(payload.get("returned_count") or 0)
+    if total > shown:
+        title += f" (latest {shown} of {total})"
+    return {
+        "visual_type": "DATA_TABLE",
+        "label": title,
+        # Complete answer card: the tool already pages (latest N) and the
+        # narration carries the true total — disclosure must not replace the
+        # table with a summary chart or offer a misleading "See all".
+        "disclosure_exempt": True,
+        "data": {
+            "headers": [label_ for _key, label_ in columns],
+            "rows": rows,
+        },
+        "suggestions": [],
+    }
+
+
 def _visual_from_payload(
     tool_name: str,
     payload  : dict[str, Any],
@@ -980,6 +1056,8 @@ def _visual_from_payload(
         return _pdf_visual(payload)
     if tool_name == "get_project_profile" or payload.get("_source") == "project_profile":
         return _project_profile_visual(payload)
+    if tool_name == "get_project_records" or payload.get("_source") == "project_records":
+        return _project_records_visual(payload)
     if tool_name == "get_project_expense_summary":
         return _project_expense_summary_visual(payload)
     if tool_name == "get_project_expense_breakdown":

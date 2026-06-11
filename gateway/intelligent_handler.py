@@ -346,10 +346,15 @@ class IntelligentQueryHandler:
                 derive_profile_focus,
                 is_project_profile_query,
             )
+            from gateway.core.project_records_routing import (
+                derive_record_type,
+                is_project_records_query,
+            )
 
             profile_query = is_project_profile_query(message, intent)
+            records_query = not profile_query and is_project_records_query(message, intent)
 
-            if intent.subject_area == "project_attribute":
+            if intent.subject_area == "project_attribute" and not records_query:
                 profile_intent = self._prepare_profile_intent(message, intent, context)
                 if profile_intent is None:
                     # No project reference anywhere — keep the honest deferral.
@@ -365,6 +370,15 @@ class IntelligentQueryHandler:
                 intent = profile_intent
                 profile_query = True
 
+            if records_query:
+                records_intent = self._prepare_records_intent(message, intent, context)
+                if records_intent is None:
+                    # No project reference anywhere — let the normal pipeline
+                    # handle it (global record queries are not this lane).
+                    records_query = False
+                else:
+                    intent = records_intent
+
             intent = EntityGate.infer_entity_hints(message, intent)
 
             # Normal mode (Deep Think OFF): the AI prepares the answer itself —
@@ -375,6 +389,7 @@ class IntelligentQueryHandler:
             if (
                 not deep_think
                 and not profile_query
+                and not records_query
                 and not is_active_follow_up
                 and effective_strategy_override is None
                 and self._requires_deep_think(message, intent)
@@ -422,6 +437,20 @@ class IntelligentQueryHandler:
                     )
                     logger.info(
                         "[FollowUp] Forcing get_project_profile with project_id=%s",
+                        active.project_id,
+                    )
+                elif records_query:
+                    effective_strategy_override = build_single_tool_strategy(
+                        tool="get_project_records",
+                        tool_input={
+                            "project_id": active.project_id,
+                            "record_type": derive_record_type(message) or "invoices",
+                        },
+                        description=f"Records follow-up: {message}",
+                        expected_output=intent.expected_output or "table",
+                    )
+                    logger.info(
+                        "[FollowUp] Forcing get_project_records with project_id=%s",
                         active.project_id,
                     )
                 else:
@@ -485,7 +514,7 @@ class IntelligentQueryHandler:
                     message=message,
                     started=started,
                     intent=intent,
-                    profile_query=profile_query,
+                    profile_query=profile_query or records_query,
                 )
 
             clarification = self._check_clarification_needed(
@@ -522,6 +551,25 @@ class IntelligentQueryHandler:
                         "[ProjectProfile] Forcing get_project_profile project_id=%s focus=%s",
                         profile_project_id,
                         derive_profile_focus(message),
+                    )
+
+            if records_query and effective_strategy_override is None:
+                records_project_id = self._resolved_project_id(context, entity_meta)
+                if records_project_id is not None:
+                    record_type = derive_record_type(message) or "invoices"
+                    effective_strategy_override = build_single_tool_strategy(
+                        tool="get_project_records",
+                        tool_input={
+                            "project_id": records_project_id,
+                            "record_type": record_type,
+                        },
+                        description=f"Project records: {message}",
+                        expected_output=intent.expected_output or "table",
+                    )
+                    logger.info(
+                        "[ProjectRecords] Forcing get_project_records project_id=%s type=%s",
+                        records_project_id,
+                        record_type,
                     )
 
             pipeline = await self._run_pipeline_orchestration(
@@ -1395,6 +1443,40 @@ class IntelligentQueryHandler:
         has_project = any(entity.type == "project" for entity in entities)
         if not has_project and has_project_context(message):
             hint = extract_project_name_hint(message)
+            if hint:
+                entities.append(EntityReference(type="project", value=hint, confidence=0.85))
+                has_project = True
+        if not has_project:
+            active = context.working_memory.get_active_project()
+            if not (active and active.project_id):
+                return None
+        return replace(
+            intent,
+            subject_area="project",
+            primary_action="fetch_data",
+            entities=entities,
+            requires_clarification=False,
+            clarification_question=None,
+        )
+
+    @staticmethod
+    def _prepare_records_intent(
+        message: str,
+        intent: Intent,
+        context: ContextStack,
+    ) -> Intent | None:
+        """Steer a record-list query into the records lane.
+
+        Returns None when no project reference exists anywhere (message hint,
+        intent entities, active project) — the caller falls back to the
+        normal pipeline.
+        """
+        from gateway.core.project_records_routing import extract_records_project_hint
+
+        entities = list(intent.entities)
+        has_project = any(entity.type == "project" for entity in entities)
+        if not has_project:
+            hint = extract_records_project_hint(message)
             if hint:
                 entities.append(EntityReference(type="project", value=hint, confidence=0.85))
                 has_project = True
