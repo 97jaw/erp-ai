@@ -944,52 +944,86 @@ class EntityGate:
         query: str,
         message: str,
         context: ContextStack,
+        *,
+        pool_matches: list[Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Token-based broad search when exact entity match fails."""
         del context
         hint = extract_project_name_hint(message) or ""
         token_source = f"{query} {hint}".strip()
         tokens = extract_suggestion_tokens(token_source)
+        maintenance_query = query_mentions_maintenance(query) or query_mentions_maintenance(message)
+
+        if pool_matches:
+            pool_entities = [
+                match.entity if hasattr(match, "entity") else match for match in pool_matches
+            ]
+            if maintenance_query:
+                maintenance_entities = [
+                    entity
+                    for entity in pool_entities
+                    if "maintenance" in str(entity.get("name") or "").lower()
+                ]
+                pool_entities = maintenance_entities
+            summaries = _rank_related_summaries(
+                pool_entities,
+                tokens,
+                maintenance_query=maintenance_query,
+            )
+            if summaries:
+                return summaries
+
         if not tokens:
             return []
 
-        maintenance_query = query_mentions_maintenance(query) or query_mentions_maintenance(message)
         search = self._project_resolver._search
         candidates_by_id: dict[int, dict[str, Any]] = {}
 
-        for token in tokens:
+        if maintenance_query and "villa" in tokens:
             try:
-                results = await search.search_projects([["name", "ilike", token]], limit=30)
+                results = await search.search_projects(
+                    [["name", "ilike", "Villa Maintenance"]],
+                    limit=30,
+                )
             except Exception as exc:
-                logger.warning("[EntityGate] related project search failed for %r: %s", token, exc)
-                continue
-            for project in results:
-                project_id = int(project.get("id") or 0)
-                if project_id <= 0:
-                    continue
-                candidates_by_id[project_id] = project
+                logger.warning(
+                    "[EntityGate] villa maintenance fast-path search failed: %s",
+                    exc,
+                )
+            else:
+                for project in results:
+                    project_id = int(project.get("id") or 0)
+                    if project_id > 0:
+                        candidates_by_id[project_id] = project
+        else:
+            search_tokens = tokens[:2]
+            if len(search_tokens) >= 2:
+                domain: list[Any] = [["name", "ilike", token] for token in search_tokens]
+                domain = ["&"] + domain
+            else:
+                domain = [["name", "ilike", search_tokens[0]]]
+            try:
+                results = await search.search_projects(domain, limit=30)
+            except Exception as exc:
+                logger.warning(
+                    "[EntityGate] related project AND search failed for %r: %s",
+                    search_tokens,
+                    exc,
+                )
+            else:
+                for project in results:
+                    project_id = int(project.get("id") or 0)
+                    if project_id > 0:
+                        candidates_by_id[project_id] = project
 
         if not candidates_by_id:
             return []
 
-        ranked = sorted(
-            candidates_by_id.values(),
-            key=lambda project: (
-                -rank_related_project(project, tokens, maintenance_query=maintenance_query),
-                str(project.get("name") or "").lower(),
-            ),
+        return _rank_related_summaries(
+            list(candidates_by_id.values()),
+            tokens,
+            maintenance_query=maintenance_query,
         )
-        summaries: list[dict[str, Any]] = []
-        for project in ranked:
-            score = rank_related_project(project, tokens, maintenance_query=maintenance_query)
-            if score < 0:
-                continue
-            summaries.append(
-                _project_match_summary(project, min(0.55, 0.35 + score * 0.1), weak=True),
-            )
-            if len(summaries) >= 5:
-                break
-        return summaries
 
     async def _try_related_project_fallback(
         self,
@@ -997,9 +1031,16 @@ class EntityGate:
         message: str,
         context: ContextStack,
         discovery: dict[str, Any],
+        *,
+        pool_matches: list[Any] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any], bool, bool] | None:
         """Return related-project summaries when exact discovery finds nothing."""
-        related = await self._discover_related_projects(query, message, context)
+        related = await self._discover_related_projects(
+            query,
+            message,
+            context,
+            pool_matches=pool_matches,
+        )
         if not related:
             return None
         updated_discovery = dict(discovery)
@@ -1077,6 +1118,8 @@ class EntityGate:
                     match_pool = list(result.confident_matches or result.weak_matches)
                     weak = bool(result.weak_matches and not result.confident_matches)
 
+            pre_filter_pool = list(match_pool)
+
             number_hint = _number_hint_from_query_and_message(query, message)
             if number_hint and match_pool:
                 numbered_matches = [
@@ -1104,6 +1147,7 @@ class EntityGate:
                             message,
                             context,
                             discovery,
+                            pool_matches=pre_filter_pool,
                         )
                         if fallback is not None:
                             return fallback
@@ -1122,6 +1166,7 @@ class EntityGate:
                         message,
                         context,
                         discovery,
+                        pool_matches=pre_filter_pool,
                     )
                     if fallback is not None:
                         return fallback
@@ -1143,6 +1188,7 @@ class EntityGate:
                     message,
                     context,
                     discovery,
+                    pool_matches=pre_filter_pool,
                 )
                 if fallback is not None:
                     return fallback
@@ -1290,6 +1336,33 @@ def _partner_label(entity: dict[str, Any]) -> str | None:
     if isinstance(partner, (list, tuple)) and len(partner) >= 2:
         return str(partner[1])
     return None
+
+
+def _rank_related_summaries(
+    entities: list[dict[str, Any]],
+    tokens: list[str],
+    *,
+    maintenance_query: bool,
+) -> list[dict[str, Any]]:
+    """Rank resolver or search candidates locally without extra Odoo calls."""
+    ranked = sorted(
+        entities,
+        key=lambda project: (
+            -rank_related_project(project, tokens, maintenance_query=maintenance_query),
+            str(project.get("name") or "").lower(),
+        ),
+    )
+    summaries: list[dict[str, Any]] = []
+    for project in ranked:
+        score = rank_related_project(project, tokens, maintenance_query=maintenance_query)
+        if score < 0:
+            continue
+        summaries.append(
+            _project_match_summary(project, min(0.55, 0.35 + score * 0.1), weak=True),
+        )
+        if len(summaries) >= 5:
+            break
+    return summaries
 
 
 def _project_match_summary(

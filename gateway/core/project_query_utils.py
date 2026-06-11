@@ -177,8 +177,10 @@ def query_mentions_maintenance(query: str) -> bool:
 _SUGGESTION_TOKEN_STOP = frozenset({"no"})
 
 
-def extract_suggestion_tokens(query: str, *, min_len: int = 3) -> list[str]:
-    """Meaningful name tokens (3+ chars) for broad related-project search."""
+def extract_suggestion_tokens(query: str, *, min_len: int = 3, max_tokens: int = 2) -> list[str]:
+    """Meaningful name tokens (3+ chars) for broad related-project search (max 2 words)."""
+    from gateway.core.entity_resolver import GENERIC_BROAD_WORDS
+
     expanded = normalize_project_search_tokens(query)
     tokens: list[str] = []
     for word in expanded:
@@ -189,8 +191,14 @@ def extract_suggestion_tokens(query: str, *, min_len: int = 3) -> list[str]:
             continue
         if len(cleaned) < min_len:
             continue
+        if cleaned in GENERIC_BROAD_WORDS:
+            continue
         tokens.append(cleaned)
-    return list(dict.fromkeys(tokens))
+
+    if "maintenance" in tokens:
+        tokens = [token for token in tokens if token not in _MAINTENANCE_TYPO_FORMS]
+
+    return list(dict.fromkeys(tokens))[:max_tokens]
 
 
 def rank_related_project(

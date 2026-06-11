@@ -200,6 +200,45 @@ async def test_villa_maintenance_number_suggests_maintenance_sibling() -> None:
     assert result.options[0].get("entity_id") == 15157
 
 
+class _NearMissCallCounter(MockProjectSearch):
+    """Tracks Odoo search_projects calls during entity gate evaluation."""
+
+    def __init__(self, catalog: list) -> None:
+        super().__init__(catalog)
+        self.call_count = 0
+
+    async def search_projects(self, domain: list, *, limit: int = 20) -> list:
+        self.call_count += 1
+        return await super().search_projects(domain, limit=limit)
+
+
+@pytest.mark.asyncio
+async def test_villa_37_missing_suggests_from_resolver_pool() -> None:
+    """Near-miss reuses Phase A pool without additional Odoo search_projects calls."""
+    catalog_without_37 = [p for p in VILLA_CATALOG if p["id"] != 15158]
+    maintenance_pool = [
+        type("M", (), {"entity": project})()
+        for project in catalog_without_37
+        if "Maintenance" in project["name"]
+    ]
+    search = _NearMissCallCounter(catalog_without_37)
+    gate = EntityGate(object())
+    gate._project_resolver = EntityResolver(search)
+    message = "expense for villa maintanence No. 37"
+    baseline = search.call_count
+    related = await gate._discover_related_projects(
+        "villa maintanence 37",
+        message,
+        _make_context_stack(),
+        pool_matches=maintenance_pool,
+    )
+    assert search.call_count == baseline
+    assert len(related) >= 2
+    labels = " ".join(str(item.get("name", "")) for item in related)
+    assert "34" in labels
+    assert "48" in labels
+
+
 @pytest.mark.asyncio
 async def test_villa_37_missing_suggests_maintenance_siblings() -> None:
     catalog_without_37 = [p for p in VILLA_CATALOG if p["id"] != 15158]
