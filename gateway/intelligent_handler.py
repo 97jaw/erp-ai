@@ -485,6 +485,7 @@ class IntelligentQueryHandler:
                     message=message,
                     started=started,
                     intent=intent,
+                    profile_query=profile_query,
                 )
 
             clarification = self._check_clarification_needed(
@@ -1577,7 +1578,21 @@ class IntelligentQueryHandler:
         message: str,
         started: float,
         intent: Intent | None,
+        profile_query: bool = False,
     ) -> IntelligentQueryResponse:
+        # Profile questions are not financial — don't promise "financial data".
+        if profile_query:
+            generic_question = (
+                "Please confirm which project you mean."
+                if language != "ar"
+                else "يرجى تأكيد المشروع المقصود."
+            )
+        else:
+            generic_question = (
+                "Please confirm which record you mean before I fetch financial data."
+                if language != "ar"
+                else "يرجى تأكيد السجل المطلوب قبل جلب البيانات المالية."
+            )
         has_candidates = bool(entity_meta.clarification_options)
         if has_candidates:
             duration_ms = int((time.perf_counter() - started) * 1000)
@@ -1652,11 +1667,18 @@ class IntelligentQueryHandler:
                 }
             elif len(entity_meta.clarification_options) == 1:
                 label = entity_meta.clarification_options[0].get("label", "")
-                question = (
-                    f"I found **{label}**. Is this the one you want financial data for?"
-                    if language != "ar"
-                    else f"هل تقصد **{label}**؟"
-                )
+                if profile_query:
+                    question = (
+                        f"I found **{label}**. Is this the project you mean?"
+                        if language != "ar"
+                        else f"هل تقصد **{label}**؟"
+                    )
+                else:
+                    question = (
+                        f"I found **{label}**. Is this the one you want financial data for?"
+                        if language != "ar"
+                        else f"هل تقصد **{label}**؟"
+                    )
                 clarification = {
                     "reason": "entity_confirmation",
                     "question": question,
@@ -1664,11 +1686,7 @@ class IntelligentQueryHandler:
                     "options": entity_meta.clarification_options,
                 }
             else:
-                question = (
-                    "Please confirm which record you mean before I fetch financial data."
-                    if language != "ar"
-                    else "يرجى تأكيد السجل المطلوب قبل جلب البيانات المالية."
-                )
+                question = generic_question
                 clarification = {
                     "reason": "entity_confirmation",
                     "question": question,
@@ -1735,11 +1753,7 @@ class IntelligentQueryHandler:
             )
         else:
             duration_ms = int((time.perf_counter() - started) * 1000)
-            question = (
-                "Please confirm which record you mean before I fetch financial data."
-                if language != "ar"
-                else "يرجى تأكيد السجل المطلوب قبل جلب البيانات المالية."
-            )
+            question = generic_question
             clarification = {
                 "reason": "entity_confirmation",
                 "question": question,

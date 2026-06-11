@@ -33,6 +33,20 @@ _AMOUNT_SIGNAL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Single named engineering trade + "amount" -> answer just that discipline.
+_SINGLE_TRADE_RES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("civil", re.compile(r"\bcivil\s+(eng\w*\s+)?amounts?\b", re.IGNORECASE)),
+    ("electrical", re.compile(r"\belectrical\s+(eng\w*\s+)?amounts?\b", re.IGNORECASE)),
+    ("mechanical", re.compile(r"\bmechanical\s+(eng\w*\s+)?amounts?\b", re.IGNORECASE)),
+    ("ict", re.compile(r"\b(ict|it)\s+(eng\w*\s+)?amounts?\b", re.IGNORECASE)),
+)
+
+# Generic "engineer(s)/engineering amount" -> the four disciplines only.
+_ENGINEERS_AMOUNT_RE = re.compile(
+    r"\beng(ineer(s|ing)?)?\s*('?s)?\s+amounts?\b",
+    re.IGNORECASE,
+)
+
 _TEAM_SIGNAL_RE = re.compile(
     r"\bwho\s+is\b|\bwho'?s\b|project\s+manager|projects\s+manager|"
     r"branch\s+manager|civil\s+engineer|mechanical\s+engineer|"
@@ -108,6 +122,11 @@ def is_project_profile_query(message: str, intent) -> bool:
 def derive_profile_focus(message: str) -> str:
     """Map the question wording to the profile section it asks about."""
     text = (message or "")
+    for trade, pattern in _SINGLE_TRADE_RES:
+        if pattern.search(text):
+            return trade
+    if _ENGINEERS_AMOUNT_RE.search(text):
+        return "engineers"
     if _AMOUNT_SIGNAL_RE.search(text):
         return "amounts"
     if _TEAM_SIGNAL_RE.search(text):

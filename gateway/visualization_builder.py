@@ -837,6 +837,29 @@ def _project_expense_comparison_visual(payload: dict[str, Any]) -> dict[str, Any
         },
     }
 
+_ENGINEER_DISCIPLINE_LABELS = (
+    ("civil", "Civil Amount"),
+    ("electrical", "Electrical Amount"),
+    ("mechanical", "Mechanical Amount"),
+    ("ict", "ICT Amount"),
+)
+
+
+def _profile_rows_engineers(
+    payload: dict[str, Any],
+    disciplines: tuple[str, ...] | None = None,
+) -> list[list[Any]]:
+    """Rows for engineer discipline allocations only."""
+    distribution = (payload.get("amounts") or {}).get("distribution") or {}
+    rows: list[list[Any]] = []
+    for key, label in _ENGINEER_DISCIPLINE_LABELS:
+        if disciplines is not None and key not in disciplines:
+            continue
+        value = distribution.get(key)
+        rows.append([label, round(float(value), 2) if value is not None else "Not set"])
+    return rows
+
+
 def _profile_rows_amounts(payload: dict[str, Any]) -> list[list[Any]]:
     amounts = payload.get("amounts") or {}
     distribution = amounts.get("distribution") or {}
@@ -878,7 +901,15 @@ def _project_profile_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
     if payload.get("status") != "success":
         return None
     focus = str(payload.get("focus") or "all")
-    if focus == "amounts":
+    engineer_disciplines = {key for key, _ in _ENGINEER_DISCIPLINE_LABELS}
+    if focus == "engineers":
+        rows = _profile_rows_engineers(payload)
+        title = f"{payload.get('project_name')} — Engineer Amounts (AED)"
+    elif focus in engineer_disciplines:
+        rows = _profile_rows_engineers(payload, disciplines=(focus,))
+        trade_label = dict(_ENGINEER_DISCIPLINE_LABELS)[focus]
+        title = f"{payload.get('project_name')} — {trade_label} (AED)"
+    elif focus == "amounts":
         rows = _profile_rows_amounts(payload)
         title = f"{payload.get('project_name')} — W.O Amount Distribution (AED)"
     elif focus in {"team", "schedule", "identity"}:
@@ -899,6 +930,7 @@ def _project_profile_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "visual_type": "DATA_TABLE",
         "label": title,
+        "disclosure_exempt": True,
         "data": {
             "headers": ["Field", "Value"],
             "rows": rows,

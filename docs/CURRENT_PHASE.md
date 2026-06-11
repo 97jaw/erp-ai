@@ -6,9 +6,36 @@
 
 ## 🎯 ACTIVE PLAN
 
+**File:** Project Model — Phase 1.1: engineer focus, clean suggestions, correct wording
+
+**Status:** Code complete + tested — deploying
+
+| Piece | Description | Code | Tests |
+|-------|-------------|------|-------|
+| Focus routing | `project_profile_routing.derive_profile_focus`: single named trade ("civil amount") → `civil`/`electrical`/`mechanical`/`ict`; generic "engineer(s) amount" → `engineers` (4 disciplines only); W.O/estimation/distribution stays `amounts`. Tool enum extended | ✅ | ✅ |
+| Narration | `narrate_project_profile`: `engineers` focus = the 4 discipline amounts only (no W.O/Estimation/Plumbing/role rows); single-trade focus = just that trade; all-unset → "not set in Odoo" | ✅ | ✅ |
+| Visual card | `_project_profile_visual`: engineers → 4 rows; single trade → 1 row; profile cards carry `disclosure_exempt` | ✅ | ✅ |
+| Disclosure exempt | `apply_progressive_disclosure` skips `disclosure_exempt` cards — no more summary-chart stripping / "Would you like the detailed breakdown?" / "See all 9 records" on profile answers | ✅ | ✅ |
+| Suggestions | `SmartSuggestionsGenerator`: `get_project_profile` in tool_names → profile chips only (schedule, PM, engineer amounts, expenses-as-Deep-Think-handoff); never export/compare/filter chips | ✅ | ✅ |
+| Confirm wording | `profile_query` threaded into `_finalize_entity_clarification` → "Please confirm which project you mean." (no "financial data" promise) | ✅ | ✅ |
+
+**Behavior contract:**
+- "engineers amount of project X" → confirm project → Civil/Electrical/Mechanical/ICT amounts ONLY
+- "civil amount of project X" → that one trade only
+- Profile confirm card never says "financial data"
+- Profile answers never show expense/export/compare chips or disclosure prompts
+
+**Tests:** `tests/core/test_project_profile.py` (27) + `test_project_attribute.py` (5). Full suite: 819 passed; 6 failures pre-existing (2x quality_gate, 2x villa auto-confirm, conversation integrity, phase10 concurrent).
+
+**Live verify (manual):** "tell me engineers amount of project national guard" → confirm → 4-row engineer table, profile chips; "civil amount of Villa Maintenance 48" → single row; confirm wording check.
+
+---
+
+## 📜 PREVIOUS PLAN (-1)
+
 **File:** Project Model — Phase 1: Project Profile lane (no Deep Think)
 
-**Status:** Code complete + tested — ready to deploy
+**Status:** Deployed `f5dd4f8`
 
 | Piece | Description | Code | Tests |
 |-------|-------------|------|-------|

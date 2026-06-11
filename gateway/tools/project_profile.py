@@ -25,7 +25,22 @@ PROFILE_SOURCE = "project_profile"
 
 PROJECT_PROFILE_TOOL_NAMES = frozenset({"get_project_profile"})
 
-PROFILE_FOCUS_VALUES = ("amounts", "team", "schedule", "identity", "status", "all")
+PROFILE_FOCUS_VALUES = (
+    "amounts",
+    "engineers",
+    "civil",
+    "electrical",
+    "mechanical",
+    "ict",
+    "team",
+    "schedule",
+    "identity",
+    "status",
+    "all",
+)
+
+# Focuses that narrow the answer to engineering discipline allocations only.
+ENGINEER_TRADE_FOCUSES = frozenset({"civil", "electrical", "mechanical", "ict"})
 
 PROJECT_PROFILE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {

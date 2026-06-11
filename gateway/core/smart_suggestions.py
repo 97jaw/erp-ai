@@ -66,6 +66,11 @@ class SmartSuggestionsGenerator:
         tool_results: list[Any],
         predicted_actions: list[PredictedAction],
     ) -> list[Suggestion]:
+        # Project profile answers get profile chips only — never the expense
+        # drill/compare/table pool (those imply Deep Think flows).
+        if "get_project_profile" in tool_names:
+            return self._project_profile_suggestions(context, tool_results)
+
         candidates: list[Suggestion] = []
         candidates.extend(
             Suggestion(text=item.text, category=item.category, priority=item.priority)
@@ -91,6 +96,57 @@ class SmartSuggestionsGenerator:
             )
 
         return candidates
+
+    @staticmethod
+    def _project_profile_suggestions(
+        context: ContextStack,
+        tool_results: list[Any],
+    ) -> list[Suggestion]:
+        """Profile-appropriate follow-ups; expenses is the one Deep Think handoff."""
+        project_name = None
+        focus = "all"
+        for payload in tool_results:
+            if isinstance(payload, dict) and payload.get("_source") == "project_profile":
+                project_name = payload.get("project_name")
+                focus = str(payload.get("focus") or "all")
+                break
+        if not project_name:
+            active = context.working_memory.get_active_project()
+            project_name = active.project_name if active is not None else "the project"
+
+        suggestions: list[Suggestion] = []
+        if focus not in {"schedule", "all"}:
+            suggestions.append(
+                Suggestion(
+                    text=f"Show {project_name} schedule and duration",
+                    category="drill",
+                    priority=5,
+                ),
+            )
+        if focus != "team":
+            suggestions.append(
+                Suggestion(
+                    text=f"Who is the project manager of {project_name}?",
+                    category="drill",
+                    priority=4,
+                ),
+            )
+        if focus in {"team", "schedule"}:
+            suggestions.append(
+                Suggestion(
+                    text=f"Show {project_name} engineer amounts",
+                    category="drill",
+                    priority=4,
+                ),
+            )
+        suggestions.append(
+            Suggestion(
+                text=f"Show {project_name} expenses",
+                category="action",
+                priority=3,
+            ),
+        )
+        return [item for item in suggestions if len(item.text) <= MAX_SUGGESTION_LENGTH]
 
     @staticmethod
     def _context_interpolated_suggestions(

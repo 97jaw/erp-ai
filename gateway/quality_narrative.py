@@ -277,6 +277,31 @@ def _profile_amount_lines(amounts: dict[str, Any], labels: dict[str, str]) -> li
     return lines
 
 
+_ENGINEER_DISCIPLINES = ("civil", "electrical", "mechanical", "ict")
+
+
+def _profile_engineer_lines(
+    amounts: dict[str, Any],
+    labels: dict[str, str],
+    disciplines: tuple[str, ...] = _ENGINEER_DISCIPLINES,
+) -> list[str]:
+    """Engineer discipline amounts only — no W.O/estimation/role allocations."""
+    distribution = amounts.get("distribution") or {}
+    set_items = [
+        (key, distribution.get(key))
+        for key in disciplines
+        if distribution.get(key) is not None
+    ]
+    if not set_items:
+        asked = "/".join(labels.get(key, key.title()) for key in disciplines)
+        return [f"{asked} amounts: {labels['not_set']}."]
+    bits = [
+        f"{labels.get(key, key.title())} {_profile_amount(value)}"
+        for key, value in set_items
+    ]
+    return [", ".join(bits) + "."]
+
+
 def _profile_team_lines(team: dict[str, Any], labels: dict[str, str]) -> list[str]:
     bits = [
         f"{labels.get(key, key.replace('_', ' ').title())}: {person['name']}"
@@ -376,6 +401,10 @@ def narrate_project_profile(
     sections: list[str] = []
     if focus == "amounts":
         sections += _profile_amount_lines(amounts, labels)
+    elif focus == "engineers":
+        sections += _profile_engineer_lines(amounts, labels)
+    elif focus in _ENGINEER_DISCIPLINES:
+        sections += _profile_engineer_lines(amounts, labels, disciplines=(focus,))
     elif focus == "team":
         sections += _profile_team_lines(team, labels)
     elif focus == "schedule":

@@ -127,15 +127,21 @@ def _profile_intent(message: str, subject_area: str = "project") -> Intent:
 def test_engineers_amount_query_is_profile() -> None:
     message = "tell me engineers amount of project national guard"
     assert is_project_profile_text(message)
-    assert derive_profile_focus(message) == "amounts"
+    assert derive_profile_focus(message) == "engineers"
 
 
-def test_trade_amount_variants_are_profile_amounts() -> None:
+def test_single_trade_amount_focus() -> None:
+    assert derive_profile_focus("civil amount for Villa 48") == "civil"
+    assert derive_profile_focus("what is the mechanical amount of project x") == "mechanical"
+    assert derive_profile_focus("electrical engineer amount of Villa 48") == "electrical"
+    assert derive_profile_focus("ict amount for national guard") == "ict"
+
+
+def test_broad_amount_focus_stays_amounts() -> None:
     for message in (
-        "civil amount for Villa 48",
-        "what is the mechanical amount of project national guard",
         "show wo amount distribution for Villa Maintenance 48",
         "w.o amount of project national guard",
+        "estimation amount of Villa 48",
     ):
         assert is_project_profile_text(message), message
         assert derive_profile_focus(message) == "amounts", message
@@ -252,6 +258,42 @@ def test_narrate_all_null_distribution_is_honest() -> None:
     assert "not set in Odoo" in text
 
 
+def test_narrate_engineers_focus_only_four_disciplines() -> None:
+    profile = normalize_project_profile(VILLA_48_RECORD, focus="engineers")
+    text = narrate_project_profile(profile)
+    assert "Civil AED 359,762.61" in text
+    assert "Electrical AED 39,178.00" in text
+    assert "Mechanical AED 64,248.97" in text
+    assert "ICT AED 0.00" in text
+    assert "W.O Amount" not in text
+    assert "Estimation" not in text
+    assert "Plumbing" not in text
+    assert "Branch Manager" not in text
+    assert "Project Manager" not in text
+
+
+def test_narrate_single_trade_focus() -> None:
+    profile = normalize_project_profile(VILLA_48_RECORD, focus="civil")
+    text = narrate_project_profile(profile)
+    assert "Civil AED 359,762.61" in text
+    assert "Electrical" not in text
+    assert "Mechanical" not in text
+    assert "ICT" not in text
+
+
+def test_narrate_engineers_all_unset_is_honest() -> None:
+    record = dict(VILLA_48_RECORD)
+    record.update(
+        project_eng_amount=False,
+        electrical_eng_amount=False,
+        mechanical_eng_amount=False,
+        it_eng_amount=False,
+    )
+    profile = normalize_project_profile(record, focus="engineers")
+    text = narrate_project_profile(profile)
+    assert "not set in Odoo" in text
+
+
 def test_narrate_team_focus() -> None:
     profile = normalize_project_profile(VILLA_48_RECORD, focus="team")
     text = narrate_project_profile(profile)
@@ -308,6 +350,66 @@ def test_profile_visualization_card() -> None:
     assert rows["Plumbing Amount"] == "Not set"
 
 
+def test_engineers_visualization_card_only_four_rows() -> None:
+    profile = normalize_project_profile(VILLA_48_RECORD, focus="engineers")
+    visual = build_visualization_from_tool_results(["get_project_profile"], [profile])
+    assert visual is not None
+    labels = [row[0] for row in visual["data"]["rows"]]
+    assert labels == ["Civil Amount", "Electrical Amount", "Mechanical Amount", "ICT Amount"]
+    assert "Engineer Amounts" in visual["label"]
+    assert visual.get("disclosure_exempt") is True
+
+
+def test_single_trade_visualization_card() -> None:
+    profile = normalize_project_profile(VILLA_48_RECORD, focus="ict")
+    visual = build_visualization_from_tool_results(["get_project_profile"], [profile])
+    assert visual is not None
+    assert [row[0] for row in visual["data"]["rows"]] == ["ICT Amount"]
+    assert "ICT Amount" in visual["label"]
+
+
+def test_profile_card_exempt_from_progressive_disclosure() -> None:
+    from gateway.progressive_disclosure import apply_progressive_disclosure
+
+    profile = normalize_project_profile(VILLA_48_RECORD, focus="amounts")
+    visual = build_visualization_from_tool_results(["get_project_profile"], [profile])
+    enriched = apply_progressive_disclosure(
+        visual,
+        "tell me engineers amount of project national guard",
+        [profile],
+    )
+    assert enriched["can_expand"] is False
+    # Rows survive intact — no summary-chart stripping, no "See all N records"
+    assert enriched["data"]["rows"] == visual["data"]["rows"]
+
+
+def test_profile_suggestions_have_no_expense_chips() -> None:
+    from types import SimpleNamespace
+
+    from gateway.core.smart_suggestions import SmartSuggestionsGenerator
+    from tests.core.test_context_stack import _make_context_stack
+
+    context = _make_context_stack()
+    context.working_memory.set_active_project(14458, "NATIONAL GUARD COMMAND - Al Nouf Center", confirmed=True)
+    profile = normalize_project_profile(VILLA_48_RECORD, focus="engineers")
+    synthesized = SimpleNamespace(text="profile answer", visualization=None)
+    suggestions = SmartSuggestionsGenerator().generate(
+        synthesized,
+        _profile_intent("tell me engineers amount"),
+        context,
+        tool_names=["get_project_profile"],
+        tool_results=[profile],
+    )
+    assert suggestions, "profile answers should still offer follow-ups"
+    joined = " ".join(suggestions).lower()
+    assert "export" not in joined
+    assert "previous period" not in joined
+    assert "break down" not in joined
+    assert "filter" not in joined
+    assert any("schedule" in item.lower() or "project manager" in item.lower() for item in suggestions)
+    assert any("expenses" in item.lower() for item in suggestions)  # the Deep Think handoff
+
+
 # ---------------------------------------------------------------------------
 # Entity gate requirements
 # ---------------------------------------------------------------------------
@@ -316,3 +418,51 @@ def test_profile_visualization_card() -> None:
 def test_entity_gate_requires_project_for_profile_tool() -> None:
     assert EntityGate.tool_requires_entity("get_project_profile") == ["project"]
     assert EntityGate.is_entity_bound_financial_tool("get_project_profile")
+
+
+# ---------------------------------------------------------------------------
+# Confirmation wording for profile queries
+# ---------------------------------------------------------------------------
+
+
+def test_profile_entity_clarification_wording_not_financial() -> None:
+    import time
+
+    from gateway.core.interaction_telemetry import InteractionTelemetry
+    from gateway.core.telemetry_capture import InMemoryTelemetryStore, TelemetryCapture
+    from gateway.intelligent_handler import EntityResolutionMeta, IntelligentQueryHandler
+    from tests.core.test_context_stack import _make_context_stack
+
+    handler = IntelligentQueryHandler(
+        telemetry_capture=TelemetryCapture(repository=InMemoryTelemetryStore()),
+    )
+    telemetry = InteractionTelemetry.start(
+        user_id=4291,
+        session_id="profile-wording",
+        user_query="start date and duration of project national guard",
+    )
+    options = [
+        {"id": "14458", "label": "NATIONAL GUARD COMMAND - Al Nouf Center",
+         "entity_type": "project", "entity_id": 14458, "action": "confirm_entity"},
+        {"id": "14071", "label": "National Guard Ambulance",
+         "entity_type": "project", "entity_id": 14071, "action": "confirm_entity"},
+    ]
+    meta = EntityResolutionMeta(
+        needs_clarification=True,
+        clarification_options=options,
+        clarification_matches=options,
+    )
+    response = handler._finalize_entity_clarification(
+        entity_meta=meta,
+        context=_make_context_stack(),
+        telemetry=telemetry,
+        resolved_session="profile-wording",
+        language="en",
+        message="start date and duration of project national guard",
+        started=time.perf_counter(),
+        intent=None,
+        profile_query=True,
+    )
+    assert "financial data" not in response.text.lower()
+    assert "which project" in response.text.lower()
+    assert response.awaiting_clarification

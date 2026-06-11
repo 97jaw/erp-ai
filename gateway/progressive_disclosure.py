@@ -216,6 +216,14 @@ def apply_progressive_disclosure(
     if visual_type not in _DISCLOSURE_TYPES:
         return visualization
 
+    # Key/value cards (e.g. project profile) are complete answers — never
+    # strip rows into a summary chart or offer "See all N records".
+    if visualization.get("disclosure_exempt"):
+        enriched = dict(visualization)
+        enriched["level"] = "full"
+        enriched["can_expand"] = False
+        return enriched
+
     level = detect_disclosure_level(user_message)
     enriched = dict(visualization)
     data = dict(enriched.get("data") or {})
