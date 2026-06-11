@@ -399,7 +399,19 @@ def narrate_project_profile(
     schedule = payload.get("schedule") or {}
 
     sections: list[str] = []
-    if focus == "amounts":
+    if focus == "wo_amount":
+        value = amounts.get("wo_amount")
+        if value is None:
+            sections.append(f"{labels['wo_amount']}: {labels['not_set']}.")
+        else:
+            sections.append(f"{labels['wo_amount']}: {_profile_amount(value)}.")
+    elif focus == "estimation":
+        value = amounts.get("estimation_amount")
+        if value is None:
+            sections.append(f"{labels['estimation']}: {labels['not_set']}.")
+        else:
+            sections.append(f"{labels['estimation']}: {_profile_amount(value)}.")
+    elif focus == "amounts":
         sections += _profile_amount_lines(amounts, labels)
     elif focus == "engineers":
         sections += _profile_engineer_lines(amounts, labels)

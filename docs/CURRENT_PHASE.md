@@ -6,9 +6,26 @@
 
 ## 🎯 ACTIVE PLAN
 
-**File:** Project Model — Phase 1.1: engineer focus, clean suggestions, correct wording
+**File:** Project Model — Phase 1.2: W.O-only focus + trade-word entity hint fix
 
 **Status:** Code complete + tested — deploying
+
+| Fix | Description | Code | Tests |
+|-----|-------------|------|-------|
+| W.O-only focus | "w.o amount of X" → `wo_amount` focus = single W.O Amount line/row (not the whole distribution). "estimation amount" → `estimation`. "...distribution" still → full `amounts` | ✅ | ✅ |
+| Trade-word hint | `extract_project_name_hint` strips leading "<trade/engineers/w.o> amount of" qualifier → "civil amount of Villa Maintenance 48" resolves project "Villa Maintenance 48" (was searching "civil") | ✅ | ✅ |
+
+**Behavior contract additions:**
+- "w.o amount of project X" → just the W.O Amount value
+- "civil amount of Villa 48" → resolves Villa 48, returns Civil only (no more "couldn't find project civil")
+
+---
+
+## 📜 PREVIOUS PLAN (1.1)
+
+**File:** Project Model — Phase 1.1: engineer focus, clean suggestions, correct wording
+
+**Status:** Deployed `3d53dc7`
 
 | Piece | Description | Code | Tests |
 |-------|-------------|------|-------|

@@ -137,14 +137,30 @@ def test_single_trade_amount_focus() -> None:
     assert derive_profile_focus("ict amount for national guard") == "ict"
 
 
-def test_broad_amount_focus_stays_amounts() -> None:
+def test_wo_amount_focus_is_single_value() -> None:
     for message in (
-        "show wo amount distribution for Villa Maintenance 48",
         "w.o amount of project national guard",
-        "estimation amount of Villa 48",
+        "wo amount of Villa 48",
+        "work order amount for national guard",
     ):
         assert is_project_profile_text(message), message
-        assert derive_profile_focus(message) == "amounts", message
+        assert derive_profile_focus(message) == "wo_amount", message
+
+
+def test_estimation_amount_focus_is_single_value() -> None:
+    assert derive_profile_focus("estimation amount of Villa 48") == "estimation"
+
+
+def test_distribution_wording_keeps_full_amounts() -> None:
+    assert derive_profile_focus("show wo amount distribution for Villa Maintenance 48") == "amounts"
+
+
+def test_trade_amount_hint_drops_trade_word() -> None:
+    from gateway.core.project_query_utils import extract_project_name_hint
+
+    assert extract_project_name_hint("civil amount of Villa Maintenance 48") == "Villa Maintenance 48"
+    assert extract_project_name_hint("engineers amount of project national guard") == "national guard"
+    assert extract_project_name_hint("w.o amount of project national guard") == "national guard"
 
 
 def test_team_and_schedule_focus() -> None:
@@ -292,6 +308,24 @@ def test_narrate_engineers_all_unset_is_honest() -> None:
     profile = normalize_project_profile(record, focus="engineers")
     text = narrate_project_profile(profile)
     assert "not set in Odoo" in text
+
+
+def test_narrate_wo_amount_focus_only_wo() -> None:
+    profile = normalize_project_profile(VILLA_48_RECORD, focus="wo_amount")
+    text = narrate_project_profile(profile)
+    assert "W.O Amount: AED 463,189.58" in text
+    assert "Civil" not in text
+    assert "Electrical" not in text
+    assert "Estimation" not in text
+    assert "distribution" not in text.lower()
+
+
+def test_wo_amount_visualization_single_row() -> None:
+    profile = normalize_project_profile(VILLA_48_RECORD, focus="wo_amount")
+    visual = build_visualization_from_tool_results(["get_project_profile"], [profile])
+    assert visual is not None
+    assert [row[0] for row in visual["data"]["rows"]] == ["W.O Amount"]
+    assert "W.O Amount" in visual["label"]
 
 
 def test_narrate_team_focus() -> None:

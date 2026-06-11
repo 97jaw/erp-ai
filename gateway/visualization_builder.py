@@ -902,7 +902,16 @@ def _project_profile_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
     focus = str(payload.get("focus") or "all")
     engineer_disciplines = {key for key, _ in _ENGINEER_DISCIPLINE_LABELS}
-    if focus == "engineers":
+    amounts = payload.get("amounts") or {}
+    if focus == "wo_amount":
+        value = amounts.get("wo_amount")
+        rows = [["W.O Amount", round(float(value), 2) if value is not None else "Not set"]]
+        title = f"{payload.get('project_name')} — W.O Amount (AED)"
+    elif focus == "estimation":
+        value = amounts.get("estimation_amount")
+        rows = [["Estimation Amount", round(float(value), 2) if value is not None else "Not set"]]
+        title = f"{payload.get('project_name')} — Estimation Amount (AED)"
+    elif focus == "engineers":
         rows = _profile_rows_engineers(payload)
         title = f"{payload.get('project_name')} — Engineer Amounts (AED)"
     elif focus in engineer_disciplines:

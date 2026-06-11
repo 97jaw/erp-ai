@@ -62,6 +62,19 @@ _LEADING_PREFIXES = (
     "how much ",
 )
 
+# Leading allocation/amount qualifiers that are NOT part of a project name,
+# e.g. "civil amount of <project>", "engineers amount of <project>",
+# "w.o amount of <project>". Strip them so the project name resolves cleanly.
+_LEADING_AMOUNT_QUALIFIER_RE = re.compile(
+    r"^\s*(?:"
+    r"civil|electrical|mechanical|ict|it|plumbing|plumber|"
+    r"branch\s+manager|project\s+manager|"
+    r"engineers?|engineering|"
+    r"w\.?\s*o\.?|work\s+order|estimation|extended"
+    r")\s+(?:engineer(?:ing)?\s+)?amounts?\s+(?:of\s+)?",
+    re.IGNORECASE,
+)
+
 _TRAILING_SUFFIXES = (
     r"\s+costs?\s*$",
     r"\s+expenses?\s*$",
@@ -87,6 +100,12 @@ def extract_project_name_hint(message: str) -> str | None:
             text = text[len(prefix) :]
             lowered = text.lower()
             break
+
+    # Drop a leading "<trade/role/engineers/w.o> amount of" qualifier.
+    stripped = _LEADING_AMOUNT_QUALIFIER_RE.sub("", text, count=1)
+    if stripped.strip():
+        text = stripped
+        lowered = text.lower()
 
     for pattern in _TRAILING_SUFFIXES:
         text = re.sub(pattern, "", text, flags=re.IGNORECASE)

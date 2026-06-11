@@ -47,6 +47,18 @@ _ENGINEERS_AMOUNT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Explicit "distribution" -> the full W.O breakdown block.
+_DISTRIBUTION_RE = re.compile(r"distribution", re.IGNORECASE)
+
+# "w.o amount" / "work order amount" on its own -> just the single W.O Amount.
+_WO_AMOUNT_RE = re.compile(
+    r"\bw\.?\s*o\.?\s+amounts?\b|\bwo_amount\b|work\s+order\s+amounts?",
+    re.IGNORECASE,
+)
+
+# "estimation amount" on its own -> just the estimation figure.
+_ESTIMATION_AMOUNT_RE = re.compile(r"estimation\s+amounts?", re.IGNORECASE)
+
 _TEAM_SIGNAL_RE = re.compile(
     r"\bwho\s+is\b|\bwho'?s\b|project\s+manager|projects\s+manager|"
     r"branch\s+manager|civil\s+engineer|mechanical\s+engineer|"
@@ -127,6 +139,13 @@ def derive_profile_focus(message: str) -> str:
             return trade
     if _ENGINEERS_AMOUNT_RE.search(text):
         return "engineers"
+    # "distribution" wording asks for the whole breakdown; a bare "w.o amount"
+    # or "estimation amount" asks for just that single figure.
+    if not _DISTRIBUTION_RE.search(text):
+        if _WO_AMOUNT_RE.search(text):
+            return "wo_amount"
+        if _ESTIMATION_AMOUNT_RE.search(text):
+            return "estimation"
     if _AMOUNT_SIGNAL_RE.search(text):
         return "amounts"
     if _TEAM_SIGNAL_RE.search(text):

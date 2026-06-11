@@ -27,6 +27,8 @@ PROJECT_PROFILE_TOOL_NAMES = frozenset({"get_project_profile"})
 
 PROFILE_FOCUS_VALUES = (
     "amounts",
+    "wo_amount",
+    "estimation",
     "engineers",
     "civil",
     "electrical",
