@@ -635,6 +635,80 @@ class OdooV14Adapter(BaseOdooAdapter):
                 )
         return {"rows": rows, "total_count": total_count, "total_amount": total_amount}
 
+    def read_project_attachments(
+        self,
+        project_id: int,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List ir.attachment rows linked to one project.project."""
+        domain = [
+            ["res_model", "=", "project.project"],
+            ["res_id", "=", int(project_id)],
+        ]
+        fields = [
+            "name", "mimetype", "file_size", "create_date", "create_uid", "description",
+        ]
+        rows = self.safe_search_read(
+            "ir.attachment",
+            domain,
+            fields,
+            limit=limit,
+            offset=offset,
+            order="create_date desc, id desc",
+        )
+        return {"rows": rows, "total_count": self.search_count("ir.attachment", domain)}
+
+    def read_project_chatter_messages(
+        self,
+        project_id: int,
+        *,
+        limit: int = 25,
+    ) -> dict[str, Any]:
+        """Recent mail.message rows on a project chatter thread."""
+        domain = [
+            ["model", "=", "project.project"],
+            ["res_id", "=", int(project_id)],
+        ]
+        fields = [
+            "date", "author_id", "subject", "body", "message_type", "subtype_id",
+            "email_from",
+        ]
+        rows = self.safe_search_read(
+            "mail.message",
+            domain,
+            fields,
+            limit=limit,
+            order="date desc, id desc",
+        )
+        return {
+            "rows": rows,
+            "total_count": self.search_count("mail.message", domain),
+        }
+
+    def read_project_progress_audit(self, project_id: int) -> dict[str, Any]:
+        """Progress + audit fields from the project header."""
+        record = self.read_project_profile(project_id)
+        if not record:
+            return {}
+        return {
+            k: record.get(k)
+            for k in (
+                "progress_overall_percent",
+                "progress_last_update",
+                "progress_delayed_weeks",
+                "progress_on_time_weeks",
+                "project_status",
+                "project_status_compute",
+                "state",
+                "create_uid",
+                "create_date",
+                "write_uid",
+                "write_date",
+            )
+        }
+
     def read_group(
         self,
         model   : str,

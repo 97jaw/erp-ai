@@ -87,6 +87,8 @@ def build_tool_cache_key(
     # vs petty_cash) and serve the first cached type for every later query.
     variant_fields = (
         "record_type",
+        "activity_type",
+        "focus",
         "move_type",
         "report_type",
         "metric",

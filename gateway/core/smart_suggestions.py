@@ -72,6 +72,8 @@ class SmartSuggestionsGenerator:
             return self._project_profile_suggestions(context, tool_results)
         if "get_project_records" in tool_names:
             return self._project_records_suggestions(context, tool_results)
+        if "get_project_activity" in tool_names:
+            return self._project_activity_suggestions(context, tool_results)
 
         candidates: list[Suggestion] = []
         candidates.extend(
@@ -198,6 +200,44 @@ class SmartSuggestionsGenerator:
             Suggestion(text=f"Show {project_name} expenses", category="action", priority=3),
         )
         return [item for item in suggestions if len(item.text) <= MAX_SUGGESTION_LENGTH]
+
+    @staticmethod
+    def _project_activity_suggestions(
+        context: ContextStack,
+        tool_results: list[Any],
+    ) -> list[Suggestion]:
+        project_name = None
+        activity_type = ""
+        for payload in tool_results:
+            if isinstance(payload, dict) and payload.get("_source") == "project_activity":
+                project_name = payload.get("project_name")
+                activity_type = str(payload.get("activity_type") or "")
+                break
+        if not project_name:
+            active = context.working_memory.get_active_project()
+            project_name = active.project_name if active is not None else "the project"
+        siblings = {
+            "attachments": [
+                (f"Chatter summary of {project_name}", "drill"),
+                (f"Progress of {project_name}", "drill"),
+            ],
+            "chatter_summary": [
+                (f"Attachments of {project_name}", "drill"),
+                (f"Last updated by for {project_name}", "drill"),
+            ],
+            "progress": [
+                (f"Attachments of {project_name}", "drill"),
+                (f"Show {project_name} schedule and duration", "drill"),
+            ],
+            "audit": [
+                (f"Chatter summary of {project_name}", "drill"),
+                (f"Progress of {project_name}", "drill"),
+            ],
+        }
+        return [
+            Suggestion(text=text, category=cat, priority=5)
+            for text, cat in siblings.get(activity_type, [])
+        ][:3]
 
     @staticmethod
     def _context_interpolated_suggestions(

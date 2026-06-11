@@ -44,6 +44,7 @@ def is_deep_think_eligible(message: str) -> bool:
     """True when the query warrants pulling real figures via predefined Odoo methods."""
     from gateway.core.project_profile_routing import is_project_profile_text
     from gateway.core.project_records_routing import is_project_records_text
+    from gateway.core.project_activity_routing import is_project_activity_text
 
     text = (message or "").strip()
     if len(text) < 3:
@@ -57,6 +58,8 @@ def is_deep_think_eligible(message: str) -> bool:
     # Same for record lists (invoices/POs/timesheets/petty cash/staff of a
     # project) — direct ORM lists, no predefined financial methods.
     if is_project_records_text(text):
+        return False
+    if is_project_activity_text(text):
         return False
     if _FINANCIAL_REPORT_RE.search(text):
         return True

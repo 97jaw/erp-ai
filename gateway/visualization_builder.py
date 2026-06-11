@@ -988,6 +988,92 @@ _RECORDS_COLUMNS: dict[str, list[tuple[str, str]]] = {
 }
 
 
+def _project_activity_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if payload.get("status") != "success":
+        return None
+    activity_type = str(payload.get("activity_type") or "")
+    project_name = str(payload.get("project_name") or "Project")
+
+    if activity_type == "attachments":
+        rows: list[list[Any]] = []
+        for row in payload.get("rows") or []:
+            size = row.get("size_bytes")
+            size_label = f"{int(size):,} B" if isinstance(size, (int, float)) else "—"
+            rows.append([
+                row.get("name") or "—",
+                row.get("mimetype") or "—",
+                size_label,
+                row.get("uploaded_at") or "—",
+                row.get("uploaded_by") or "—",
+            ])
+        if not rows:
+            return None
+        total = int(payload.get("total_count") or 0)
+        shown = int(payload.get("returned_count") or 0)
+        title = f"{project_name} — Attachments"
+        if total > shown:
+            title += f" (latest {shown} of {total})"
+        return {
+            "visual_type": "DATA_TABLE",
+            "label": title,
+            "disclosure_exempt": True,
+            "data": {
+                "headers": ["Name", "Type", "Size", "Uploaded", "By"],
+                "rows": rows,
+            },
+            "suggestions": [],
+        }
+
+    if activity_type == "chatter_summary":
+        return {
+            "visual_type": "DATA_TABLE",
+            "label": f"{project_name} — Chatter summary",
+            "disclosure_exempt": True,
+            "data": {
+                "headers": ["Summary"],
+                "rows": [[payload.get("summary") or "—"]],
+            },
+            "suggestions": [],
+        }
+
+    data = payload.get("progress_audit") or {}
+    if activity_type == "progress":
+        return {
+            "visual_type": "DATA_TABLE",
+            "label": f"{project_name} — Progress",
+            "disclosure_exempt": True,
+            "data": {
+                "headers": ["Field", "Value"],
+                "rows": [
+                    ["Progress %", data.get("progress_percent")],
+                    ["Status", data.get("project_status") or data.get("state")],
+                    ["Last progress update", data.get("progress_last_update")],
+                    ["Delayed weeks", data.get("delayed_weeks")],
+                    ["On-time weeks", data.get("on_time_weeks")],
+                ],
+            },
+            "suggestions": [],
+        }
+
+    if activity_type == "audit":
+        return {
+            "visual_type": "DATA_TABLE",
+            "label": f"{project_name} — Audit trail",
+            "disclosure_exempt": True,
+            "data": {
+                "headers": ["Field", "Value"],
+                "rows": [
+                    ["Created by", data.get("created_by")],
+                    ["Created on", data.get("created_on")],
+                    ["Last updated by", data.get("last_updated_by")],
+                    ["Last updated on", data.get("last_updated_on")],
+                ],
+            },
+            "suggestions": [],
+        }
+    return None
+
+
 def _project_records_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
     if payload.get("status") != "success":
         return None
@@ -1058,6 +1144,8 @@ def _visual_from_payload(
         return _project_profile_visual(payload)
     if tool_name == "get_project_records" or payload.get("_source") == "project_records":
         return _project_records_visual(payload)
+    if tool_name == "get_project_activity" or payload.get("_source") == "project_activity":
+        return _project_activity_visual(payload)
     if tool_name == "get_project_expense_summary":
         return _project_expense_summary_visual(payload)
     if tool_name == "get_project_expense_breakdown":

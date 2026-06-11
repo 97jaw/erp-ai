@@ -6,9 +6,32 @@
 
 ## 🎯 ACTIVE PLAN
 
+**File:** Project Model — Phase 3: Project Activity lane (no Deep Think)
+
+**Status:** Deployed — includes Phase 2.1 profile routing fixes
+
+| Piece | Description | Code | Tests |
+|-------|-------------|------|-------|
+| Introspection | `scripts/introspect_project_activity.py`: ir.attachment + mail.message + progress/audit fields on project.project | ✅ | — |
+| Adapter | `read_project_attachments`, `read_project_chatter_messages`, `read_project_progress_audit` | ✅ | ✅ |
+| Tool | `get_project_activity` — types: attachments, chatter_summary (LLM), progress, audit | ✅ | ✅ |
+| Routing | `project_activity_routing.py`; records > activity > profile precedence; Deep Think carve-out | ✅ | ✅ |
+| Handler | Activity lane mirrors records: `_prepare_activity_intent`, forced tool, follow-ups | ✅ | ✅ |
+| Profile fixes (2.1b) | `focus` in cache key (wo/schedule no longer serve cached engineers); profile hint override; broad project search → search_entities | ✅ | ✅ |
+
+**Behavior contract:**
+- "attachments / chatter summary / progress / last updated by of project X" → confirm → direct read (+ LLM for chatter) — NO Deep Think
+- "w.o amount" → single W.O figure (not engineer table); "start date and duration" → schedule (not engineers)
+- "civil amount of Villa 48" → resolves Villa 48 (not project "civil")
+- "show all projects containing civil" → project search list (not Deep Think prompt)
+
+---
+
+## 📜 PREVIOUS PLAN (2.1)
+
 **File:** Project Model — Phase 2.1: records lane post-deploy fixes
 
-**Status:** Deployed `a3b68305` — live
+**Status:** Deployed `a3b68305`
 
 | Fix | Description | Code | Tests |
 |-----|-------------|------|-------|

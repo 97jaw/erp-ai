@@ -11,9 +11,11 @@ from gateway.core.project_expense_routing import is_project_expense_tool_result
 from gateway.quality_narrative import (
     narrate_project_expense_breakdown,
     narrate_project_expense_summary,
+    narrate_project_activity,
     narrate_project_profile,
     narrate_project_records,
 )
+from gateway.tools.project_activity import ACTIVITY_SOURCE
 from gateway.tools.project_expense import PROJECT_EXPENSE_TOOL_NAMES, SUMMARY_SOURCES
 from gateway.tools.project_profile import PROFILE_SOURCE
 from gateway.tools.project_records import RECORDS_SOURCE
@@ -41,6 +43,10 @@ class ResultSynthesizer:
         records = self._find_project_records(execution_result.results, intent)
         if records is not None:
             return records
+
+        activity = self._find_project_activity(execution_result.results, intent)
+        if activity is not None:
+            return activity
 
         composed = self._find_composed_report(execution_result.results)
         if composed is not None:
@@ -124,6 +130,26 @@ class ResultSynthesizer:
             if payload.get("status") != "success":
                 continue
             text = narrate_project_records(
+                payload,
+                user_message=intent.specific_intent,
+            )
+            return SynthesizedResult(text=text, visualization=None)
+        return None
+
+    @staticmethod
+    def _find_project_activity(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if payload.get("_source") != ACTIVITY_SOURCE:
+                continue
+            if payload.get("status") != "success":
+                continue
+            text = narrate_project_activity(
                 payload,
                 user_message=intent.specific_intent,
             )

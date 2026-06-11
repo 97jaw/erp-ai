@@ -340,9 +340,14 @@ class IntelligentQueryHandler:
                 is_project_records_query,
                 records_disqualified,
             )
+            from gateway.core.project_activity_routing import (
+                derive_activity_type,
+                is_project_activity_query,
+            )
 
             has_active_project = bool(active and active.project_id)
             record_type = derive_record_type(message)
+            activity_type = derive_activity_type(message)
             # Records lane fires on explicit "<type> of/for <project>" phrasing
             # OR when a record-type keyword appears in a follow-up to an active
             # project (e.g. the "Show <project> purchase orders" chip, where the
@@ -359,12 +364,25 @@ class IntelligentQueryHandler:
                     or has_active_project
                 )
             )
-            profile_query = not records_query and is_project_profile_query(message, intent)
+            activity_query = (
+                not records_query
+                and activity_type is not None
+                and not records_disqualified(message)
+                and (
+                    is_project_activity_query(message, intent)
+                    or is_active_follow_up
+                    or has_active_project
+                )
+            )
+            profile_query = (
+                not records_query
+                and not activity_query
+                and is_project_profile_query(message, intent)
+            )
 
-            # Project profile/record lanes are served by direct ORM reads — an
-            # LLM "out of scope" verdict (e.g. mistaking timesheets/staff for
-            # unavailable HR data) must not pre-empt them.
-            if intent.out_of_scope and not profile_query and not records_query:
+            # Project profile/record/activity lanes are served by direct ORM reads —
+            # an LLM "out of scope" verdict must not pre-empt them.
+            if intent.out_of_scope and not profile_query and not records_query and not activity_query:
                 return self._finalize_failure(
                     failure=self._failure_responder.failure_from_intent(intent, message),
                     context=context,
@@ -375,7 +393,7 @@ class IntelligentQueryHandler:
                     intent=intent,
                 )
 
-            if intent.subject_area == "project_attribute" and not records_query:
+            if intent.subject_area == "project_attribute" and not records_query and not activity_query:
                 profile_intent = self._prepare_profile_intent(message, intent, context)
                 if profile_intent is None:
                     # No project reference anywhere — keep the honest deferral.
@@ -400,7 +418,38 @@ class IntelligentQueryHandler:
                 else:
                     intent = records_intent
 
+            if activity_query:
+                activity_intent = self._prepare_activity_intent(message, intent, context)
+                if activity_intent is None:
+                    activity_query = False
+                else:
+                    intent = activity_intent
+
             intent = EntityGate.infer_entity_hints(message, intent)
+
+            from gateway.core.project_query_utils import (
+                extract_broad_project_search_term,
+                is_broad_project_search,
+            )
+
+            broad_search_query = is_broad_project_search(message)
+            if broad_search_query and effective_strategy_override is None:
+                search_term = extract_broad_project_search_term(message) or message.strip()
+                effective_strategy_override = build_single_tool_strategy(
+                    tool="search_entities",
+                    tool_input={
+                        "entity_type": "project",
+                        "query": search_term,
+                        "limit": 20,
+                        "min_confidence": 0.3,
+                    },
+                    description=f"Search projects matching: {search_term}",
+                    expected_output="entity_list",
+                )
+                logger.info(
+                    "[BroadSearch] Forcing search_entities query=%r",
+                    search_term,
+                )
 
             # Normal mode (Deep Think OFF): the AI prepares the answer itself —
             # interprets, narrows scope, and offers Deep Think for actual figures.
@@ -409,8 +458,10 @@ class IntelligentQueryHandler:
             # Project profile queries bypass this: header reads need no Deep Think.
             if (
                 not deep_think
-                and not profile_query
+                and                 not profile_query
                 and not records_query
+                and not activity_query
+                and not broad_search_query
                 and not is_active_follow_up
                 and effective_strategy_override is None
                 and self._requires_deep_think(message, intent)
@@ -474,6 +525,21 @@ class IntelligentQueryHandler:
                         "[FollowUp] Forcing get_project_records with project_id=%s",
                         active.project_id,
                     )
+                elif activity_query:
+                    effective_strategy_override = build_single_tool_strategy(
+                        tool="get_project_activity",
+                        tool_input={
+                            "project_id": active.project_id,
+                            "activity_type": derive_activity_type(message) or "progress",
+                            "language": language,
+                        },
+                        description=f"Activity follow-up: {message}",
+                        expected_output=intent.expected_output or "summary",
+                    )
+                    logger.info(
+                        "[FollowUp] Forcing get_project_activity with project_id=%s",
+                        active.project_id,
+                    )
                 else:
                     forced = select_project_expense_tool(message, intent, context)
                     if forced:
@@ -535,7 +601,7 @@ class IntelligentQueryHandler:
                     message=message,
                     started=started,
                     intent=intent,
-                    profile_query=profile_query or records_query,
+                    profile_query=profile_query or records_query or activity_query,
                 )
 
             clarification = self._check_clarification_needed(
@@ -591,6 +657,26 @@ class IntelligentQueryHandler:
                         "[ProjectRecords] Forcing get_project_records project_id=%s type=%s",
                         records_project_id,
                         record_type,
+                    )
+
+            if activity_query and effective_strategy_override is None:
+                activity_project_id = self._resolved_project_id(context, entity_meta)
+                if activity_project_id is not None:
+                    act_type = derive_activity_type(message) or "progress"
+                    effective_strategy_override = build_single_tool_strategy(
+                        tool="get_project_activity",
+                        tool_input={
+                            "project_id": activity_project_id,
+                            "activity_type": act_type,
+                            "language": language,
+                        },
+                        description=f"Project activity: {message}",
+                        expected_output=intent.expected_output or "summary",
+                    )
+                    logger.info(
+                        "[ProjectActivity] Forcing get_project_activity project_id=%s type=%s",
+                        activity_project_id,
+                        act_type,
                     )
 
             pipeline = await self._run_pipeline_orchestration(
@@ -1457,16 +1543,18 @@ class IntelligentQueryHandler:
         Returns None when no project reference exists anywhere (message hint,
         intent entities, active project) — caller keeps the honest deferral.
         """
-        from gateway.core.project_profile_routing import has_project_context
         from gateway.core.project_query_utils import extract_project_name_hint
 
-        entities = list(intent.entities)
-        has_project = any(entity.type == "project" for entity in entities)
-        if not has_project and has_project_context(message):
-            hint = extract_project_name_hint(message)
-            if hint:
-                entities.append(EntityReference(type="project", value=hint, confidence=0.85))
-                has_project = True
+        hint = extract_project_name_hint(message)
+        if hint:
+            # Strip leading trade/amount qualifiers ("civil amount of <X>") — the
+            # LLM often grabs the trade word as the project name.
+            entities = [e for e in intent.entities if e.type != "project"]
+            entities.append(EntityReference(type="project", value=hint, confidence=0.9))
+            has_project = True
+        else:
+            entities = list(intent.entities)
+            has_project = any(entity.type == "project" for entity in entities)
         if not has_project:
             active = context.working_memory.get_active_project()
             if not (active and active.project_id):
@@ -1500,6 +1588,37 @@ class IntelligentQueryHandler:
             # The stripped hint ("invoices of <X>" -> "<X>") is more reliable
             # than the LLM entity, which often grabs the record keyword itself
             # (e.g. project="petty cash"). Replace any project entities with it.
+            entities = [e for e in intent.entities if e.type != "project"]
+            entities.append(EntityReference(type="project", value=hint, confidence=0.9))
+            has_project = True
+        else:
+            entities = list(intent.entities)
+            has_project = any(entity.type == "project" for entity in entities)
+        if not has_project:
+            active = context.working_memory.get_active_project()
+            if not (active and active.project_id):
+                return None
+        return replace(
+            intent,
+            subject_area="project",
+            primary_action="fetch_data",
+            entities=entities,
+            out_of_scope=False,
+            requires_clarification=False,
+            clarification_question=None,
+        )
+
+    @staticmethod
+    def _prepare_activity_intent(
+        message: str,
+        intent: Intent,
+        context: ContextStack,
+    ) -> Intent | None:
+        """Steer an activity query into the activity lane."""
+        from gateway.core.project_activity_routing import extract_activity_project_hint
+
+        hint = extract_activity_project_hint(message)
+        if hint:
             entities = [e for e in intent.entities if e.type != "project"]
             entities.append(EntityReference(type="project", value=hint, confidence=0.9))
             has_project = True

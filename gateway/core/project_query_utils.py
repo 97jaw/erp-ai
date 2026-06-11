@@ -88,6 +88,28 @@ _TRAILING_SUFFIXES = (
 )
 
 
+def extract_broad_project_search_term(message: str) -> str | None:
+    """Extract the search token from 'show all projects containing civil'."""
+    text = (message or "").strip()
+    if not text:
+        return None
+    match = re.search(
+        r"(?:show\s+)?(?:all\s+)?projects?\s+(?:containing|with|matching|like)\s+"
+        r"[\"']?(.+?)[\"']?\s*$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        term = match.group(1).strip(" .,\"'")
+        return term or None
+    return None
+
+
+def is_broad_project_search(message: str) -> bool:
+    """True when the user wants a project name search list (not financial data)."""
+    return extract_broad_project_search_term(message) is not None
+
+
 def extract_project_name_hint(message: str) -> str | None:
     """Strip command words and return the likely project name fragment."""
     text = (message or "").strip()

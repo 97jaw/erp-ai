@@ -232,6 +232,11 @@ from gateway.tools.project_profile import (
     PROJECT_PROFILE_TOOL_NAMES,
     run_project_profile_tool,
 )
+from gateway.tools.project_activity import (
+    PROJECT_ACTIVITY_TOOL_DEFINITIONS,
+    PROJECT_ACTIVITY_TOOL_NAMES,
+    run_project_activity_tool,
+)
 from gateway.tools.project_records import (
     PROJECT_RECORDS_TOOL_DEFINITIONS,
     PROJECT_RECORDS_TOOL_NAMES,
@@ -1200,6 +1205,7 @@ TOOLS = [
     *PROJECT_EXPENSE_TOOL_DEFINITIONS,
     *PROJECT_PROFILE_TOOL_DEFINITIONS,
     *PROJECT_RECORDS_TOOL_DEFINITIONS,
+    *PROJECT_ACTIVITY_TOOL_DEFINITIONS,
     *UNIVERSAL_ODOO_TOOL_DEFINITIONS,
     {
         "name": "search_entities",
@@ -1462,6 +1468,8 @@ def execute_tool(
             result = run_project_profile_tool(tool_name, tool_input, adapter)
         elif tool_name in PROJECT_RECORDS_TOOL_NAMES:
             result = run_project_records_tool(tool_name, tool_input, adapter)
+        elif tool_name in PROJECT_ACTIVITY_TOOL_NAMES:
+            result = run_project_activity_tool(tool_name, tool_input, adapter)
         elif tool_name == "get_period_comparison":
             result = get_period_comparison(adapter, tool_input)
         elif tool_name == "get_projects_with_overrun":
@@ -2023,11 +2031,15 @@ def _finalize_agent_response(
 
     from gateway.tools.project_expense import PROJECT_EXPENSE_TOOL_NAMES
     from gateway.tools.project_profile import PROJECT_PROFILE_TOOL_NAMES as _PROFILE_NAMES
+    from gateway.tools.project_activity import PROJECT_ACTIVITY_TOOL_NAMES as _ACTIVITY_NAMES
     from gateway.tools.project_records import PROJECT_RECORDS_TOOL_NAMES as _RECORDS_NAMES
     from gateway.visualization_builder import build_visualization_from_tool_results, is_renderable_visualization
 
     if visualization is None and any(
-        name in PROJECT_EXPENSE_TOOL_NAMES or name in _PROFILE_NAMES or name in _RECORDS_NAMES
+        name in PROJECT_EXPENSE_TOOL_NAMES
+        or name in _PROFILE_NAMES
+        or name in _RECORDS_NAMES
+        or name in _ACTIVITY_NAMES
         for name in tool_names
     ):
         forced_visual = build_visualization_from_tool_results(tool_names, tool_results)

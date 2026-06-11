@@ -538,6 +538,84 @@ def narrate_project_records(
     return text
 
 
+def narrate_project_activity(
+    payload: dict[str, Any],
+    *,
+    user_message: str = "",
+    language: str = "en",
+) -> str:
+    """Narrate attachments, chatter summary, progress, or audit for one project."""
+    del user_message
+    lang = "ar" if language == "ar" else "en"
+    project_name = payload.get("project_name") or "the project"
+    activity_type = str(payload.get("activity_type") or "")
+
+    if activity_type == "chatter_summary":
+        summary = str(payload.get("summary") or "").strip()
+        if not summary:
+            return (
+                f"{project_name} — no chatter activity to summarize."
+                if lang != "ar"
+                else f"{project_name} — لا يوجد نشاط في سجل المشروع."
+            )
+        return f"{project_name} — {summary}"
+
+    if activity_type == "attachments":
+        total = int(payload.get("total_count") or 0)
+        shown = int(payload.get("returned_count") or 0)
+        if total == 0:
+            return (
+                f"{project_name} — no attachments on file."
+                if lang != "ar"
+                else f"{project_name} — لا توجد مرفقات."
+            )
+        text = f"{project_name} — {total:,} attachment{'s' if total != 1 else ''} on file."
+        if shown < total:
+            text += f" Showing the latest {shown}."
+        return text
+
+    data = payload.get("progress_audit") or {}
+    if activity_type == "progress":
+        pct = data.get("progress_percent")
+        status = data.get("project_status") or data.get("state") or "unknown"
+        last_upd = data.get("progress_last_update") or data.get("last_updated_on")
+        delayed = data.get("delayed_weeks")
+        if lang == "ar":
+            bits = [f"{project_name} — التقدم"]
+            if pct is not None:
+                bits.append(f"{float(pct):.1f}%")
+            bits.append(f"الحالة: {status}")
+            if last_upd:
+                bits.append(f"آخر تحديث للتقدم: {last_upd}")
+            if delayed is not None:
+                bits.append(f"أسابيع التأخير: {delayed}")
+            return "؛ ".join(bits) + "."
+        bits = [f"{project_name} — progress"]
+        if pct is not None:
+            bits.append(f"{float(pct):.1f}%")
+        bits.append(f"status {status}")
+        if last_upd:
+            bits.append(f"last progress update {last_upd}")
+        if delayed is not None:
+            bits.append(f"{delayed} delayed weeks")
+        return ", ".join(bits) + "."
+
+    # audit
+    updated_by = data.get("last_updated_by") or "not recorded"
+    updated_on = data.get("last_updated_on") or "not recorded"
+    created_by = data.get("created_by") or "not recorded"
+    created_on = data.get("created_on") or "not recorded"
+    if lang == "ar":
+        return (
+            f"{project_name} — أنشئ بواسطة {created_by} في {created_on}؛ "
+            f"آخر تحديث بواسطة {updated_by} في {updated_on}."
+        )
+    return (
+        f"{project_name} — created by {created_by} on {created_on}; "
+        f"last updated by {updated_by} on {updated_on}."
+    )
+
+
 def _payload_from_expense_visualization(visualization: dict[str, Any]) -> dict[str, Any]:
     kpis = visualization.get("kpis") or {}
     wo = (kpis.get("wo_amount") or {}).get("value")

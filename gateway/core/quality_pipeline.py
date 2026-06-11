@@ -141,6 +141,8 @@ def has_meaningful_tool_data(tool_results: list[Any]) -> bool:
         # not a failure ("no timesheets recorded for this period").
         if payload.get("_source") == "project_records" and payload.get("status") == "success":
             return True
+        if payload.get("_source") == "project_activity" and payload.get("status") == "success":
+            return True
         if payload.get("candidates"):
             return True
         for key in scalar_keys:
