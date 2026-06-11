@@ -15,6 +15,7 @@ from gateway.core.context_stack_builder import ContextStackBuilder
 from gateway.core.entity_gate import (
     ConfirmedEntityRef,
     EntityGate,
+    build_entity_near_miss_clarification,
     build_entity_not_found_clarification,
     build_entity_options,
     build_entity_transient_error_clarification,
@@ -88,6 +89,7 @@ class EntityResolutionMeta:
     compare_pending_query: str = ""
     compare_resolved_projects: list[dict[str, Any]] = field(default_factory=list)
     weak_matches: bool = False
+    entity_near_miss: bool = False
     entity_discovery_count: int = 0
     entity_top_confidence: float = 0.0
     entity_gate_status: str = "skipped"
@@ -962,6 +964,9 @@ class IntelligentQueryHandler:
 
         meta.needs_clarification = True
         meta.weak_matches = result.status == "weak_confirmation"
+        meta.entity_near_miss = result.entity_near_miss
+        if result.entity_near_miss:
+            meta.clarification_reason = "entity_near_miss"
         meta.clarification_matches = result.matches
         meta.clarification_options = result.options or build_entity_options(result.matches)
         meta.query_label = result.query_label
@@ -1229,7 +1234,21 @@ class IntelligentQueryHandler:
         has_candidates = bool(entity_meta.clarification_options)
         if has_candidates:
             duration_ms = int((time.perf_counter() - started) * 1000)
-            if entity_meta.compare_pending_query:
+            if entity_meta.entity_near_miss:
+                query_label = entity_meta.query_label or message
+                near_miss = build_entity_near_miss_clarification(
+                    query_label,
+                    entity_meta.clarification_options,
+                    language=language,
+                )
+                question = near_miss["question"]
+                clarification = {
+                    "reason": "entity_near_miss",
+                    "question": question,
+                    "matches": entity_meta.clarification_matches,
+                    "options": entity_meta.clarification_options,
+                }
+            elif entity_meta.compare_pending_query:
                 pending = entity_meta.compare_pending_query
                 resolved = entity_meta.compare_resolved_projects
                 if resolved:
@@ -1255,6 +1274,15 @@ class IntelligentQueryHandler:
                         if language != "ar"
                         else f"أي مشروع تقصد لـ **{pending}**؟"
                     )
+                clarification = {
+                    "reason": "compare_entity_confirmation",
+                    "question": question,
+                    "matches": entity_meta.clarification_matches,
+                    "options": entity_meta.clarification_options,
+                    "compare_pending_query": pending,
+                }
+                if entity_meta.compare_resolved_projects:
+                    clarification["compare_resolved"] = entity_meta.compare_resolved_projects
             elif entity_meta.weak_matches:
                 if len(entity_meta.clarification_options) == 1:
                     label = entity_meta.clarification_options[0].get("label", "")
@@ -1269,6 +1297,12 @@ class IntelligentQueryHandler:
                         if language != "ar"
                         else "هذه نتائج محتملة لكن الثقة منخفضة. هل تقصد أحد هذه؟"
                     )
+                clarification = {
+                    "reason": "entity_confirmation",
+                    "question": question,
+                    "matches": entity_meta.clarification_matches,
+                    "options": entity_meta.clarification_options,
+                }
             elif len(entity_meta.clarification_options) == 1:
                 label = entity_meta.clarification_options[0].get("label", "")
                 question = (
@@ -1276,24 +1310,24 @@ class IntelligentQueryHandler:
                     if language != "ar"
                     else f"هل تقصد **{label}**؟"
                 )
+                clarification = {
+                    "reason": "entity_confirmation",
+                    "question": question,
+                    "matches": entity_meta.clarification_matches,
+                    "options": entity_meta.clarification_options,
+                }
             else:
                 question = (
                     "Please confirm which record you mean before I fetch financial data."
                     if language != "ar"
                     else "يرجى تأكيد السجل المطلوب قبل جلب البيانات المالية."
                 )
-            clarification = {
-                "reason": "compare_entity_confirmation"
-                if entity_meta.compare_pending_query
-                else "entity_confirmation",
-                "question": question,
-                "matches": entity_meta.clarification_matches,
-                "options": entity_meta.clarification_options,
-            }
-            if entity_meta.compare_pending_query:
-                clarification["compare_pending_query"] = entity_meta.compare_pending_query
-                if entity_meta.compare_resolved_projects:
-                    clarification["compare_resolved"] = entity_meta.compare_resolved_projects
+                clarification = {
+                    "reason": "entity_confirmation",
+                    "question": question,
+                    "matches": entity_meta.clarification_matches,
+                    "options": entity_meta.clarification_options,
+                }
             response = IntelligentQueryResponse(
                 session_id=resolved_session,
                 text=question,

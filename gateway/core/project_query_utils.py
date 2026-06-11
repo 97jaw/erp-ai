@@ -174,6 +174,49 @@ def query_mentions_maintenance(query: str) -> bool:
     return "maintenance" in blob or "maint" in blob
 
 
+_SUGGESTION_TOKEN_STOP = frozenset({"no"})
+
+
+def extract_suggestion_tokens(query: str, *, min_len: int = 3) -> list[str]:
+    """Meaningful name tokens (3+ chars) for broad related-project search."""
+    expanded = normalize_project_search_tokens(query)
+    tokens: list[str] = []
+    for word in expanded:
+        cleaned = re.sub(r"[^\w]", "", word).lower()
+        if not cleaned or cleaned in _SUGGESTION_TOKEN_STOP:
+            continue
+        if cleaned.isdigit():
+            continue
+        if len(cleaned) < min_len:
+            continue
+        tokens.append(cleaned)
+    return list(dict.fromkeys(tokens))
+
+
+def rank_related_project(
+    entity: dict[str, Any],
+    tokens: list[str],
+    *,
+    maintenance_query: bool = False,
+) -> float:
+    """Score how well a project name matches suggestion tokens (higher is better)."""
+    name = str(entity.get("name") or "").lower()
+    if not name or not tokens:
+        return -1.0
+    score = 0.0
+    for token in tokens:
+        if token in name:
+            score += 1.0
+    if score <= 0:
+        return -1.0
+    if maintenance_query:
+        if "villa maintenance" in name:
+            score += 2.0
+        elif "maintenance" in name:
+            score += 0.5
+    return score
+
+
 _EXPENSE_FOLLOW_UP_SIGNALS = (
     "break down",
     "breakdown",

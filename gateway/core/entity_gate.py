@@ -17,11 +17,13 @@ from gateway.core.intent_analyzer import EntityReference, Intent
 from gateway.core.project_query_utils import (
     extract_project_name_hint,
     extract_project_number_hint,
+    extract_suggestion_tokens,
     is_project_expense_follow_up,
     looks_like_project_cost_query,
     meaningful_project_words,
     project_record_matches_number,
     query_mentions_maintenance,
+    rank_related_project,
 )
 from gateway.core.working_memory import ActiveContext
 
@@ -223,6 +225,7 @@ class EntityGateResult:
     compare_project_ids: list[int] = field(default_factory=list)
     compare_resolved_projects: list[dict[str, Any]] = field(default_factory=list)
     compare_pending_query: str = ""
+    entity_near_miss: bool = False
 
 
 class PartnerDiscoverySearch:
@@ -506,6 +509,7 @@ class EntityGate:
             "entity_strategy_that_matched": None,
         }
         using_weak = False
+        entity_near_miss = False
 
         for entity_type, query in pending:
             matches, discovery, weak, transient_failed = await self._discover(
@@ -514,6 +518,8 @@ class EntityGate:
                 context,
                 message=message,
             )
+            if discovery.get("entity_near_miss"):
+                entity_near_miss = True
             gate_telemetry["entity_discovery_count"] = max(
                 gate_telemetry["entity_discovery_count"],
                 discovery.get("entity_discovery_count", 0),
@@ -547,6 +553,7 @@ class EntityGate:
                     status="not_found",
                     required_types=[item[0] for item in required],
                     query_label=query,
+                    entity_near_miss=entity_near_miss,
                     **gate_telemetry,
                 )
             if weak:
@@ -585,6 +592,7 @@ class EntityGate:
             matches=all_matches,
             options=options,
             query_label=query_label,
+            entity_near_miss=entity_near_miss,
             **gate_telemetry,
         )
 
@@ -931,6 +939,82 @@ class EntityGate:
 
         return None
 
+    async def _discover_related_projects(
+        self,
+        query: str,
+        message: str,
+        context: ContextStack,
+    ) -> list[dict[str, Any]]:
+        """Token-based broad search when exact entity match fails."""
+        del context
+        hint = extract_project_name_hint(message) or ""
+        token_source = f"{query} {hint}".strip()
+        tokens = extract_suggestion_tokens(token_source)
+        if not tokens:
+            return []
+
+        maintenance_query = query_mentions_maintenance(query) or query_mentions_maintenance(message)
+        search = self._project_resolver._search
+        candidates_by_id: dict[int, dict[str, Any]] = {}
+
+        for token in tokens:
+            try:
+                results = await search.search_projects([["name", "ilike", token]], limit=30)
+            except Exception as exc:
+                logger.warning("[EntityGate] related project search failed for %r: %s", token, exc)
+                continue
+            for project in results:
+                project_id = int(project.get("id") or 0)
+                if project_id <= 0:
+                    continue
+                candidates_by_id[project_id] = project
+
+        if not candidates_by_id:
+            return []
+
+        ranked = sorted(
+            candidates_by_id.values(),
+            key=lambda project: (
+                -rank_related_project(project, tokens, maintenance_query=maintenance_query),
+                str(project.get("name") or "").lower(),
+            ),
+        )
+        summaries: list[dict[str, Any]] = []
+        for project in ranked:
+            score = rank_related_project(project, tokens, maintenance_query=maintenance_query)
+            if score < 0:
+                continue
+            summaries.append(
+                _project_match_summary(project, min(0.55, 0.35 + score * 0.1), weak=True),
+            )
+            if len(summaries) >= 5:
+                break
+        return summaries
+
+    async def _try_related_project_fallback(
+        self,
+        query: str,
+        message: str,
+        context: ContextStack,
+        discovery: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], bool, bool] | None:
+        """Return related-project summaries when exact discovery finds nothing."""
+        related = await self._discover_related_projects(query, message, context)
+        if not related:
+            return None
+        updated_discovery = dict(discovery)
+        updated_discovery["entity_near_miss"] = True
+        updated_discovery["entity_discovery_count"] = max(
+            updated_discovery.get("entity_discovery_count", 0),
+            len(related),
+        )
+        logger.info(
+            "[EntityGate] Exact match failed for %r — suggesting %d related projects",
+            query,
+            len(related),
+        )
+        return related, updated_discovery, True, False
+
     async def _discover(
         self,
         entity_type: str,
@@ -1011,20 +1095,36 @@ class EntityGate:
                     elif numbered_matches:
                         logger.info(
                             "[EntityGate] Query %r requested maintenance number %s "
-                            "but no maintenance project name contains it — not_found",
+                            "but no maintenance project name contains it — near_miss fallback",
                             query,
                             number_hint,
                         )
+                        fallback = await self._try_related_project_fallback(
+                            query,
+                            message,
+                            context,
+                            discovery,
+                        )
+                        if fallback is not None:
+                            return fallback
                         return [], discovery, False, False
                 if numbered_matches:
                     match_pool = numbered_matches
                 else:
                     logger.info(
                         "[EntityGate] Query %r requested villa/project number %s "
-                        "but no discovery match contains it — not_found",
+                        "but no discovery match contains it — near_miss fallback",
                         query,
                         number_hint,
                     )
+                    fallback = await self._try_related_project_fallback(
+                        query,
+                        message,
+                        context,
+                        discovery,
+                    )
+                    if fallback is not None:
+                        return fallback
                     return [], discovery, False, False
 
             summaries: list[dict[str, Any]] = []
@@ -1036,6 +1136,17 @@ class EntityGate:
                     continue
                 seen_ids.add(entity_id)
                 summaries.append(_project_match_summary(entity, match.confidence, weak=weak))
+
+            if not summaries:
+                fallback = await self._try_related_project_fallback(
+                    query,
+                    message,
+                    context,
+                    discovery,
+                )
+                if fallback is not None:
+                    return fallback
+
             return summaries, discovery, weak, False
 
         if entity_type == "partner":
@@ -1235,6 +1346,31 @@ def build_entity_transient_error_clarification(
         "question": question,
         "matches": [],
         "options": [],
+    }
+
+
+def build_entity_near_miss_clarification(
+    query: str,
+    options: list[dict[str, Any]],
+    *,
+    language: str = "en",
+) -> dict[str, Any]:
+    """Clarification when exact match failed but related projects were found."""
+    if language == "ar":
+        question = (
+            f'لم أجد تطابقاً دقيقاً لـ "{query}" في Odoo.\n\n'
+            "إليك أقرب المشاريع بالاسم — أيها تقصد؟"
+        )
+    else:
+        question = (
+            f'I couldn\'t find an exact match for **"{query}"** in Odoo.\n\n'
+            "Here are the closest projects by name — which one did you mean?"
+        )
+    return {
+        "reason": "entity_near_miss",
+        "question": question,
+        "matches": options,
+        "options": options,
     }
 
 

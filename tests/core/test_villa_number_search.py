@@ -9,6 +9,7 @@ from gateway.core.entity_resolver import EntityResolver, _villa_number_ilike_dom
 from gateway.core.intent_analyzer import EntityReference, Intent
 from gateway.core.project_query_utils import (
     extract_project_number_hint,
+    extract_suggestion_tokens,
     normalize_project_search_tokens,
     project_record_matches_number,
 )
@@ -161,9 +162,15 @@ async def test_villa_37_no_dot_spacing_resolves() -> None:
     assert result.confirmed["project"]["id"] == 15160
 
 
+def test_token_search_uses_villa_and_maintenance() -> None:
+    tokens = extract_suggestion_tokens("expense for villa maintanence No. 37")
+    assert "villa" in tokens
+    assert "maintenance" in tokens
+
+
 @pytest.mark.asyncio
-async def test_villa_maintenance_number_rejects_unrelated_villa_name() -> None:
-    """A generic 'Villa 37' project must not match a 'villa maintenance 37' query."""
+async def test_villa_maintenance_number_suggests_maintenance_sibling() -> None:
+    """When Villa 37 is missing, suggest Villa Maintenance 34 over unrelated Villa 37."""
     catalog = [
         {
             "id": 99001,
@@ -186,25 +193,54 @@ async def test_villa_maintenance_number_rejects_unrelated_villa_name() -> None:
         entities=[EntityReference(type="project", value="villa maintanence", confidence=0.9)],
     )
     result = await gate.evaluate(intent, _make_context_stack(), message)
-    assert result.status == "not_found"
+    assert result.status == "weak_confirmation"
+    assert result.entity_near_miss is True
+    labels = " ".join(str(option.get("label", "")) for option in result.options)
+    assert "34" in labels
+    assert result.options[0].get("entity_id") == 15157
 
 
 @pytest.mark.asyncio
-async def test_villa_37_missing_returns_not_found_not_villa_34() -> None:
+async def test_villa_37_missing_suggests_maintenance_siblings() -> None:
     catalog_without_37 = [p for p in VILLA_CATALOG if p["id"] != 15158]
     gate = EntityGate(object())
     gate._project_resolver = EntityResolver(MockProjectSearch(catalog_without_37))
+    message = "expense for villa maintanence No. 37"
     intent = Intent(
         primary_action="fetch_data",
         subject_area="project",
-        specific_intent="expense for villa maintanence 37",
-        entities=[EntityReference(type="project", value="villa maintanence 37", confidence=0.9)],
+        specific_intent=message,
+        entities=[EntityReference(type="project", value="villa maintanence", confidence=0.9)],
     )
-    result = await gate.evaluate(
-        intent,
-        _make_context_stack(),
-        "expense for villa maintanence 37",
-    )
-    assert result.status == "not_found"
+    result = await gate.evaluate(intent, _make_context_stack(), message)
+    assert result.status == "weak_confirmation"
+    assert result.entity_near_miss is True
     labels = " ".join(str(option.get("label", "")) for option in result.options)
-    assert "34" not in labels
+    assert "34" in labels
+    assert "48" in labels
+
+
+@pytest.mark.asyncio
+async def test_true_not_found_when_no_token_overlap() -> None:
+    gate = EntityGate(object())
+    gate._project_resolver = EntityResolver(
+        MockProjectSearch(
+            [
+                {
+                    "id": 1,
+                    "name": "Zayidia Boys School Renovation",
+                    "wo_ref_no": "WO-001",
+                },
+            ],
+        ),
+    )
+    message = "expense for xyzzy qwerty"
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="project",
+        specific_intent=message,
+        entities=[EntityReference(type="project", value="xyzzy qwerty", confidence=0.9)],
+    )
+    result = await gate.evaluate(intent, _make_context_stack(), message)
+    assert result.status == "not_found"
+    assert not result.options
