@@ -15,6 +15,9 @@ Tests cover:
 All tests use mocking — no real Odoo connection needed.
 """
 
+import os
+import xmlrpc.client
+
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -70,6 +73,69 @@ class TestAuthentication:
     def test_version_is_v14(self):
         adapter = make_adapter()
         assert adapter.version == OdooVersion.V14
+
+    def test_get_uid_authenticates_once_across_many_executes(self):
+        with patch("xmlrpc.client.ServerProxy") as mock_proxy:
+            mock_common = MagicMock()
+            mock_common.authenticate.return_value = 4291
+            adapter = OdooV14Adapter(make_config())
+            adapter._common = mock_common
+            adapter._object = MagicMock()
+            adapter._object.execute_kw.return_value = []
+
+            for _ in range(10):
+                adapter.search_read("project.project", [], ["name"], limit=1)
+
+            mock_common.authenticate.assert_called_once()
+
+    def test_access_denied_fault_does_not_reauthenticate(self):
+        adapter = make_adapter()
+        adapter._object = MagicMock()
+        adapter._object.execute_kw.side_effect = xmlrpc.client.Fault(
+            2,
+            "Access Denied",
+        )
+        adapter.authenticate = MagicMock(return_value=adapter._uid)
+
+        with pytest.raises(xmlrpc.client.Fault):
+            adapter.search_read("project.project", [], ["name"])
+
+        adapter.authenticate.assert_not_called()
+        assert adapter._uid == 1
+
+    def test_session_expired_fault_reauthenticates_once(self):
+        adapter = make_adapter()
+        adapter._object = MagicMock()
+        adapter._object.execute_kw.side_effect = [
+            xmlrpc.client.Fault(2, "Session expired"),
+            [{"id": 1, "name": "Project Alpha"}],
+        ]
+        def _reauth() -> int:
+            adapter._uid = 99
+            return 99
+
+        adapter.authenticate = MagicMock(side_effect=_reauth)
+        adapter._uid = 1
+
+        records = adapter.search_read("project.project", [], ["name"])
+
+        assert records == [{"id": 1, "name": "Project Alpha"}]
+        adapter.authenticate.assert_called_once()
+        assert adapter._uid == 99
+
+    def test_env_uid_skips_authenticate_rpc(self, monkeypatch):
+        monkeypatch.setenv("ODOO_V14_UID", "4291")
+        with patch("xmlrpc.client.ServerProxy") as mock_proxy:
+            mock_common = MagicMock()
+            adapter = OdooV14Adapter(make_config())
+            adapter._common = mock_common
+            adapter._object = MagicMock()
+            adapter._object.execute_kw.return_value = []
+
+            adapter.search_read("project.project", [], ["name"])
+
+            mock_common.authenticate.assert_not_called()
+            assert adapter._uid == 4291
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,12 @@ _lock = threading.Lock()
 
 
 def get_shared_odoo_adapter(*, authenticate: bool = True) -> OdooV14Adapter:
-    """Return a process-wide Odoo adapter; authenticate at most once per process."""
+    """Return a process-wide Odoo adapter.
+
+    Authentication is lazy: the first RPC calls ``_get_uid()`` which runs
+    ``common.authenticate()`` at most once. Set ``ODOO_V14_UID`` to skip the
+    authenticate RPC entirely (password still validated on each execute_kw).
+    """
     global _adapter
     if _adapter is not None:
         return _adapter
@@ -43,16 +48,22 @@ def get_shared_odoo_adapter(*, authenticate: bool = True) -> OdooV14Adapter:
         )
         adapter = OdooV14Adapter(config)
         if authenticate:
-            try:
-                adapter.authenticate()
-            except (OdooAuthError, ConnectionError, TimeoutError, OSError) as exc:
-                logger.error("[OdooAdapterPool] Odoo connection failed: %s", exc)
-                raise
-            logger.info(
-                "[OdooAdapterPool] Connected to Odoo — user: %s | uid: %s",
-                config.username,
-                adapter._uid,
-            )
+            eager = os.environ.get("ODOO_V14_EAGER_AUTH", "").lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+            if eager or os.environ.get("ODOO_V14_UID"):
+                try:
+                    adapter._get_uid()
+                except (OdooAuthError, ConnectionError, TimeoutError, OSError) as exc:
+                    logger.error("[OdooAdapterPool] Odoo connection failed: %s", exc)
+                    raise
+                logger.info(
+                    "[OdooAdapterPool] Odoo uid ready — user: %s | uid: %s",
+                    config.username,
+                    adapter._uid,
+                )
         _adapter = adapter
         return _adapter
 

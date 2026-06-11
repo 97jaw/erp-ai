@@ -209,4 +209,4 @@ def test_execute_retries_once_after_protocol_error() -> None:
 
     assert result == {"ok": True}
     assert adapter._object.execute_kw.call_count == 2
-    adapter.authenticate.assert_called_once()
+    adapter.authenticate.assert_not_called()

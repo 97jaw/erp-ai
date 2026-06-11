@@ -16,6 +16,17 @@ def test_format_ambiguous_user_id_fault():
     assert "jwt_provider" in message or "api keys" in message.lower()
 
 
+def test_user_limit_fault_message():
+    exc = xmlrpc.client.Fault(
+        2,
+        "Maximimum allowed records in table \"Users\" is 2500, "
+        "while after this update you would have 2547",
+    )
+    message = format_xmlrpc_auth_fault(exc)
+    assert "2500" in message
+    assert "ODOO_V14_UID" in message
+
+
 def test_authenticate_fault_raises_odoo_auth_error():
     with patch("xmlrpc.client.ServerProxy") as mock_proxy:
         mock_proxy.return_value.authenticate.side_effect = xmlrpc.client.Fault(

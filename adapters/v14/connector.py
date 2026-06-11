@@ -17,6 +17,7 @@ import anthropic
 import os
 import logging
 import re
+import threading
 import time
 import xmlrpc.client
 from difflib import SequenceMatcher
@@ -130,7 +131,18 @@ class OdooV14Adapter(BaseOdooAdapter):
             allow_none=True,
         )
         self._uid: Optional[int] = None
+        self._uid_lock = threading.Lock()
         self._model_fields_cache: dict[str, dict[str, Any]] = {}
+        env_uid = os.environ.get("ODOO_V14_UID", "").strip()
+        if env_uid:
+            try:
+                self._uid = int(env_uid)
+                logger.info(
+                    "[V14Adapter] Using ODOO_V14_UID=%s — skipping authenticate() RPC",
+                    self._uid,
+                )
+            except ValueError:
+                logger.warning("[V14Adapter] Ignoring invalid ODOO_V14_UID=%r", env_uid)
 
     # -----------------------------------------------------------------------
     # Version Identity
@@ -149,11 +161,28 @@ class OdooV14Adapter(BaseOdooAdapter):
     # 1. Authentication
     # -----------------------------------------------------------------------
 
+    def _get_uid(self) -> int:
+        """Authenticate once, cache uid for all subsequent RPC calls."""
+        if self._uid is not None:
+            return self._uid
+
+        with self._uid_lock:
+            if self._uid is not None:
+                return self._uid
+            return self.authenticate()
+
+    def _invalidate_uid(self) -> None:
+        """Force re-authentication on the next RPC (session expiry only)."""
+        self._uid = None
+
     def authenticate(self) -> int:
         """
         Authenticates via XML-RPC common.authenticate().
-        Stores uid for all subsequent calls.
+        Called at most once per adapter lifetime unless session expires.
         """
+        if self._uid is not None:
+            return self._uid
+
         try:
             uid = self._common.authenticate(
                 self.config.database,
@@ -167,11 +196,12 @@ class OdooV14Adapter(BaseOdooAdapter):
                     f"on database '{self.config.database}'. "
                     f"Check credentials in .env file."
                 )
-            self._uid = uid
+            self._uid = int(uid)
             logger.info(
-                "[V14Adapter] Authenticated — user: %s | uid: %d | db: %s",
-                self.config.username,
+                "[V14Adapter] Authenticated once — uid=%s user=%s db=%s "
+                "(will reuse for all queries)",
                 self._uid,
+                self.config.username,
                 self.config.database,
             )
             return self._uid
@@ -188,28 +218,23 @@ class OdooV14Adapter(BaseOdooAdapter):
             raise OdooAuthError(message) from exc
 
     def _ensure_authenticated(self) -> None:
-        """Auto-authenticates if uid is not set."""
-        if self._uid is None:
-            self.authenticate()
+        """Ensure cached uid is available (authenticate at most once)."""
+        self._get_uid()
 
-    def _is_transient_odoo_rpc_error(self, exc: BaseException) -> bool:
+    @staticmethod
+    def _is_session_expired_fault(exc: BaseException) -> bool:
+        """True only when Odoo rejected a cached session — safe to re-auth once."""
+        if not isinstance(exc, xmlrpc.client.Fault):
+            return False
+        fault = str(exc).lower()
+        return "session" in fault or "expired" in fault
+
+    @staticmethod
+    def _is_transient_connection_error(exc: BaseException) -> bool:
+        """Retry execute_kw with the same cached uid (no re-authenticate)."""
         if isinstance(exc, xmlrpc.client.ProtocolError):
             return True
-        if isinstance(exc, (TimeoutError, OSError, ConnectionError)):
-            return True
-        if isinstance(exc, xmlrpc.client.Fault):
-            fault = str(exc).lower()
-            return any(
-                token in fault
-                for token in (
-                    "access denied",
-                    "accessdenied",
-                    "session",
-                    "expired",
-                    "invalid",
-                )
-            )
-        return False
+        return isinstance(exc, (TimeoutError, OSError, ConnectionError))
 
     def _execute(
         self,
@@ -226,12 +251,12 @@ class OdooV14Adapter(BaseOdooAdapter):
         last_exc: BaseException | None = None
 
         for attempt in range(2):
-            self._ensure_authenticated()
+            uid = self._get_uid()
             start = time.perf_counter()
             try:
                 result = self._object.execute_kw(
                     self.config.database,
-                    self._uid,
+                    uid,
                     self.config.api_key,
                     model,
                     method,
@@ -250,14 +275,22 @@ class OdooV14Adapter(BaseOdooAdapter):
                     )
                 except Exception:
                     pass
-                if attempt == 0 and self._is_transient_odoo_rpc_error(exc):
-                    logger.warning(
-                        "[V14Adapter] %s failed (%s) — re-authenticating once",
-                        method_label,
-                        exc,
-                    )
-                    self._uid = None
-                    continue
+                if attempt == 0:
+                    if self._is_session_expired_fault(exc):
+                        logger.warning(
+                            "[V14Adapter] %s session expired (%s) — re-authenticating once",
+                            method_label,
+                            exc,
+                        )
+                        self._invalidate_uid()
+                        continue
+                    if self._is_transient_connection_error(exc):
+                        logger.warning(
+                            "[V14Adapter] %s transient connection error (%s) — retrying",
+                            method_label,
+                            exc,
+                        )
+                        continue
                 raise
 
             try:

@@ -30,6 +30,14 @@ def format_xmlrpc_auth_fault(exc: xmlrpc.client.Fault) -> str:
             "Check ODOO_V14_URL, ODOO_V14_DB, ODOO_V14_USER, and ODOO_V14_PASSWORD in .env."
         )
 
+    if "2500" in fault and "users" in lower:
+        return (
+            "Odoo rejected login: the ERP user license limit (2500 users) is exceeded. "
+            "Ask your Odoo administrator to archive unused users or clean stale sessions. "
+            "As a temporary bridge workaround, set ODOO_V14_UID to the service account uid "
+            "in .env.production so the gateway skips authenticate() RPC."
+        )
+
     return (
         "Odoo XML-RPC authentication failed. "
         f"Server response: {fault[:800]}"
