@@ -795,7 +795,8 @@
 }
 
 .ooa-chat-input-bar__mic,
-.ooa-chat-input-bar__send {
+.ooa-chat-input-bar__send,
+.ooa-chat-input-bar__deepthink {
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -803,6 +804,25 @@
   background: color-mix(in srgb, var(--ooa-glass-bg) 90%, transparent);
   cursor: pointer;
   transition: background 0.15s ease;
+}
+
+.ooa-chat-input-bar__deepthink {
+  color: var(--ooa-main-text-muted);
+}
+
+.ooa-chat-input-bar__deepthink:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ooa-gold) 18%, transparent);
+}
+
+.ooa-chat-input-bar__deepthink--active {
+  background: linear-gradient(135deg, var(--ooa-gold), #a8873d);
+  border-color: transparent;
+  color: #1a2744;
+}
+
+.ooa-chat-input-bar__deepthink:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .ooa-chat-input-bar__mic--active,

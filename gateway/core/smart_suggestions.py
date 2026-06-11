@@ -71,6 +71,7 @@ class SmartSuggestionsGenerator:
             Suggestion(text=item.text, category=item.category, priority=item.priority)
             for item in self._predicted_suggestions(predicted_actions)
         )
+        candidates.extend(self._context_interpolated_suggestions(context, tool_results))
         candidates.extend(self._drill_down_suggestions(synthesized, intent))
         candidates.extend(self._comparison_suggestions(synthesized, intent))
         candidates.extend(self._action_suggestions(synthesized, tool_names))
@@ -90,6 +91,40 @@ class SmartSuggestionsGenerator:
             )
 
         return candidates
+
+    @staticmethod
+    def _context_interpolated_suggestions(
+        context: ContextStack,
+        tool_results: list[Any],
+    ) -> list[Suggestion]:
+        """Chips built from the actual entities and date range of this turn."""
+        suggestions: list[Suggestion] = []
+        date_from, date_to = _executed_date_range(tool_results)
+        period_label = f"from {date_from} to {date_to}" if date_from and date_to else ""
+
+        active = context.working_memory.get_active_project()
+        project_name = active.project_name if active is not None else None
+        if project_name:
+            breakdown = f"Break down {project_name} expenses by account"
+            if period_label:
+                breakdown = f"{breakdown} {period_label}"
+            suggestions.append(Suggestion(text=breakdown, category="drill", priority=5))
+            suggestions.append(
+                Suggestion(
+                    text=f"Compare {project_name} expenses with the previous period",
+                    category="compare",
+                    priority=4,
+                ),
+            )
+        if period_label:
+            suggestions.append(
+                Suggestion(
+                    text=f"Show the P&L {period_label}",
+                    category="drill",
+                    priority=3,
+                ),
+            )
+        return [item for item in suggestions if len(item.text) <= MAX_SUGGESTION_LENGTH]
 
     @staticmethod
     def _predicted_suggestions(predicted_actions: list[PredictedAction]) -> list[Suggestion]:
@@ -285,6 +320,19 @@ def remember_shown_suggestions(context: ContextStack, suggestions: list[str]) ->
         if text and text not in shown:
             shown.append(text)
     context.working_memory.session_facts["shown_suggestions"] = shown[-30:]
+
+
+def _executed_date_range(tool_results: list[Any] | None) -> tuple[str | None, str | None]:
+    """Pull the actual date range used by the executed tools, if any."""
+    for result in reversed(tool_results or []):
+        if not isinstance(result, dict):
+            continue
+        used = result.get("used_context") if isinstance(result.get("used_context"), dict) else {}
+        date_from = result.get("date_from") or used.get("date_from")
+        date_to = result.get("date_to") or used.get("date_to")
+        if date_from and date_to:
+            return str(date_from), str(date_to)
+    return None, None
 
 
 def _infer_category(text: str) -> str:

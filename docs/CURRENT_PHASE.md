@@ -6,6 +6,36 @@
 
 ## 🎯 ACTIVE PLAN
 
+**File:** AI Intelligence Rebuild (conversational routing + Deep Think mode)
+
+**Status:** Code complete — pending live verification + commit
+
+| Piece | Description | Code | Tests |
+|-------|-------------|------|-------|
+| Conversational branch | "Hi"/capability/off-topic → scoped responder, never Odoo/tool-error | ✅ | ✅ |
+| Normal mode | Data queries without Deep Think → AI-prepared answer + narrowing, no Odoo methods | ✅ | ✅ |
+| Deep Think gate | Predefined Odoo methods + synthesis only when `deep_think=true` | ✅ | ✅ |
+| Eligibility | `POST /deep-think/eligibility` keyword check (no LLM) | ✅ | ✅ |
+| UI button | Conditional Deep Think toggle in ChatInputBar (debounced eligibility) | ✅ | lint |
+| Suggestions | Date-range + project-name interpolation; capability chips on chitchat | ✅ | ✅ |
+
+**Key files:** `gateway/core/conversational_responder.py`, `gateway/core/deep_think.py`, `gateway/intelligent_handler.py`, `gateway/main.py`, `ooa-ui/src/main/chat/ChatInputBar.jsx`, `ooa-ui/src/components/chat/ChatScreen.jsx`
+
+**Behavior contract:**
+- Greeting / "what can you do" / off-topic → conversational reply, zero Odoo, zero tools
+- Financial/data query, Deep Think OFF → AI restates + narrows (date/project) + offers Deep Think; NEVER outputs figures
+- Financial/data query, Deep Think ON → entity gate → predefined Odoo methods → AI synthesis (existing pipeline)
+- Follow-ups to an active project keep their forced-tool flow (continuation of Deep Think session)
+- Integration tests updated: entity-gate/tool flows now pass `deep_think=True`
+
+**Live verify (manual):** `Hi` → greeting; `what can you do?` → capabilities; `show me the P&L` (no Deep Think) → AI-prepared + button highlighted; same with Deep Think → real figures.
+
+**Pre-existing test failures (NOT this phase):** 2x `test_quality_gate` pass-rate (10th check added, tests assume 9), 2x villa auto-confirm integration tests (expect old confirm-first flow), `test_incident_five_turn_sequence`, `test_concurrent_same_zayidia_query_all_get_confirm`, 1 live Odoo test.
+
+---
+
+## 📜 PREVIOUS PLAN
+
 **File:** `docs/CONVERSATION_INTELLIGENCE_SPRINT.md` — Conversation Intelligence Sprint (6 fixes)
 
 **Status:** All 6 fixes complete in code — **7-turn acceptance test** is the final gate (live verify when you test)

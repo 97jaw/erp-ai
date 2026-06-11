@@ -2312,6 +2312,7 @@ async def _run_intelligent_chat(
     *,
     skip_clarification: bool = False,
     confirmed_entities: list[ConfirmedEntityRef] | None = None,
+    deep_think: bool = False,
 ) -> IntelligentQueryResponse:
     """Run the orchestrated intelligence pipeline and persist the conversation turn."""
     user_id = chat_user.id if chat_user else None
@@ -2327,6 +2328,7 @@ async def _run_intelligent_chat(
         language=language,
         skip_clarification=skip_clarification,
         confirmed_entities=confirmed_entities,
+        deep_think=deep_think,
     )
 
     await ConversationStore.append(
@@ -2376,6 +2378,7 @@ class ChatRequest(BaseModel):
     session_id          : str | None = None
     skip_clarification  : bool = False
     confirmed_entities  : list[ConfirmedEntityModel] = []
+    deep_think          : bool = False
 
 
 class QueryPageRequest(BaseModel):
@@ -2546,16 +2549,28 @@ def _tool_payloads_from_intelligent_result(
     return tools_called, tool_payloads
 
 
-def _intelligent_progress_steps(language: str) -> list[dict[str, str]]:
+def _intelligent_progress_steps(language: str, *, deep_think: bool = False) -> list[dict[str, str]]:
+    if deep_think:
+        if language == "ar":
+            return [
+                {"label": "فهم السؤال", "status": "running"},
+                {"label": "تفكير عميق — جلب البيانات من Odoo", "status": "pending"},
+                {"label": "تحليل وإعداد الإجابة", "status": "pending"},
+            ]
+        return [
+            {"label": "Understanding your question", "status": "running"},
+            {"label": "Deep thinking — pulling data from Odoo", "status": "pending"},
+            {"label": "Analyzing and preparing the answer", "status": "pending"},
+        ]
     if language == "ar":
         return [
             {"label": "فهم السؤال", "status": "running"},
-            {"label": "البحث في Odoo", "status": "pending"},
+            {"label": "تحليل الطلب", "status": "pending"},
             {"label": "إعداد الإجابة", "status": "pending"},
         ]
     return [
         {"label": "Understanding your question", "status": "running"},
-        {"label": "Querying Odoo", "status": "pending"},
+        {"label": "Analyzing your request", "status": "pending"},
         {"label": "Preparing response", "status": "pending"},
     ]
 
@@ -2594,12 +2609,19 @@ async def chat_stream(
                 yield f"data: {json.dumps({'type': 'done', 'text': message, 'session_id': session_id})}\n\n"
                 return
 
-            progress_steps = _intelligent_progress_steps(language)
-            status_message = (
-                "جاري تحليل السؤال..."
-                if language == "ar"
-                else "Analyzing your question..."
-            )
+            progress_steps = _intelligent_progress_steps(language, deep_think=request.deep_think)
+            if request.deep_think:
+                status_message = (
+                    "تفكير عميق — جاري جلب البيانات..."
+                    if language == "ar"
+                    else "Deep thinking — pulling live data..."
+                )
+            else:
+                status_message = (
+                    "جاري تحليل السؤال..."
+                    if language == "ar"
+                    else "Analyzing your question..."
+                )
             yield f"data: {json.dumps({'type': 'status', 'message': status_message})}\n\n"
             yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
 
@@ -2613,6 +2635,7 @@ async def chat_stream(
                 chat_user,
                 skip_clarification=request.skip_clarification,
                 confirmed_entities=_parse_confirmed_entities(request.confirmed_entities),
+                deep_think=request.deep_think,
             )
 
             progress_steps[1]["status"] = "done"
@@ -2661,7 +2684,7 @@ async def chat_stream(
             progress_steps[2]["status"] = "done"
             yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
 
-            yield f"data: {json.dumps({'type': 'done', 'text': clean_text, 'visualization': visualization, 'suggestions': suggestions, 'suggestion_meta': suggestion_meta, 'session_id': session_id, 'conversation_id': conv_id, 'interaction_id': result.interaction_id})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'text': clean_text, 'visualization': visualization, 'suggestions': suggestions, 'suggestion_meta': suggestion_meta, 'session_id': session_id, 'conversation_id': conv_id, 'interaction_id': result.interaction_id, 'deep_think_available': result.deep_think_available})}\n\n"
         except Exception as exc:
             stream_status = "error"
             logger.error("[/chat/stream] Intelligent handler error: %s", exc)
@@ -2712,6 +2735,7 @@ async def chat(
             chat_user,
             skip_clarification=request.skip_clarification,
             confirmed_entities=_parse_confirmed_entities(request.confirmed_entities),
+            deep_think=request.deep_think,
         )
     except Exception as exc:
         logger.error("[/chat] Intelligent handler error: %s", exc)
@@ -2752,6 +2776,7 @@ async def chat_intelligent(
             chat_user,
             skip_clarification=request.skip_clarification,
             confirmed_entities=_parse_confirmed_entities(request.confirmed_entities),
+            deep_think=request.deep_think,
         )
     except Exception as exc:
         logger.error("[/chat/intelligent] Orchestration error: %s", exc)
@@ -2808,6 +2833,23 @@ async def suggestions_more(
             "has_more": has_more,
         },
     }
+
+
+class DeepThinkEligibilityRequest(BaseModel):
+    message: str
+
+
+@app.post("/deep-think/eligibility")
+async def deep_think_eligibility(
+    request: DeepThinkEligibilityRequest,
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+):
+    """Cheap keyword-based check whether Deep Think applies to the typed query."""
+    await require_chat_user(http_request, credentials)
+    from gateway.core.deep_think import is_deep_think_eligible
+
+    return {"eligible": is_deep_think_eligible(request.message)}
 
 
 @app.post("/query/page")

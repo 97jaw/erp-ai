@@ -73,6 +73,8 @@ export default function ChatScreen({
   const [pendingVizType, setPendingVizType] = useState(null);
   const [voicePlaying, setVoicePlaying] = useState(false);
   const [loadingMoreSuggestions, setLoadingMoreSuggestions] = useState(false);
+  const [deepThink, setDeepThink] = useState(false);
+  const [deepThinkEligible, setDeepThinkEligible] = useState(false);
   const mediaRef = useRef(null);
   const audioRef = useRef(null);
   const chunksRef = useRef([]);
@@ -246,12 +248,42 @@ export default function ChatScreen({
     )));
   }, []);
 
+  // Deep Think button is conditional: only shown when the typed query is
+  // detected as financial / Odoo-data related (cheap keyword check, debounced).
+  useEffect(() => {
+    const trimmed = input.trim();
+    if (!trimmed || trimmed.length < 3) {
+      setDeepThinkEligible(false);
+      setDeepThink(false);
+      return undefined;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const payload = await apiFetch("/deep-think/eligibility", {
+          method: "POST",
+          body: JSON.stringify({ message: trimmed }),
+        });
+        const eligible = Boolean(payload?.eligible);
+        setDeepThinkEligible(eligible);
+        if (!eligible) setDeepThink(false);
+      } catch {
+        /* keep current state on transient errors */
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [input]);
+
   const sendMessage = useCallback(async (text, options = {}) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
+    const useDeepThink = options.deepThink !== undefined
+      ? Boolean(options.deepThink)
+      : deepThink;
+
     setError(null);
     setInput("");
+    setDeepThink(false);
     sound.play("message-send", { volume: 0.35 });
 
     const queryId = Date.now();
@@ -263,6 +295,7 @@ export default function ChatScreen({
       createdAt,
       status: "generating",
       vizType: null,
+      deepThink: useDeepThink,
       response: {
         text: "",
         visualization: null,
@@ -273,7 +306,7 @@ export default function ChatScreen({
     setQueries((prev) => [nextQuery, ...prev]);
     setActiveQueryId(queryId);
     setLoading(true);
-    setLoadingStage("Preparing your answer...");
+    setLoadingStage(useDeepThink ? "Deep thinking — pulling live data..." : "Preparing your answer...");
     setPendingVizType(null);
     setToolSteps([]);
 
@@ -286,6 +319,7 @@ export default function ChatScreen({
           session_id: chatThreadId,
           skip_clarification: Boolean(options.skipClarification),
           confirmed_entities: options.confirmedEntities || [],
+          deep_think: useDeepThink,
         }),
       });
 
@@ -389,8 +423,12 @@ export default function ChatScreen({
                     suggestions: data.suggestions || [],
                     suggestionMeta: data.suggestion_meta || null,
                     clarification: null,
+                    deepThinkAvailable: Boolean(data.deep_think_available),
                   },
                 });
+                if (data.deep_think_available) {
+                  setDeepThinkEligible(true);
+                }
                 if (visualization || data.auto_show_visualize) {
                   visualize.openPanel();
                 }
@@ -415,14 +453,18 @@ export default function ChatScreen({
       setPendingVizType(null);
       setToolSteps([]);
     }
-  }, [loading, chatThreadId, updateQuery, visualize]);
+  }, [loading, chatThreadId, updateQuery, visualize, deepThink]);
 
   const handleClarificationSelect = useCallback((option, originalQuery) => {
+    // Clarifications continue the original turn — preserve its Deep Think mode.
+    const sourceQuery = queries.find((item) => item.question === originalQuery);
+    const preservedDeepThink = Boolean(sourceQuery?.deepThink);
     const confirmedEntities = buildConfirmedEntities(option);
     if (confirmedEntities.length > 0) {
       sendMessage(originalQuery, {
         skipClarification: true,
         confirmedEntities,
+        deepThink: preservedDeepThink,
       });
       return;
     }
@@ -434,8 +476,8 @@ export default function ChatScreen({
       return;
     }
     const enriched = buildClarificationQuery(originalQuery, option);
-    sendMessage(enriched, { skipClarification: true });
-  }, [sendMessage, focusInput]);
+    sendMessage(enriched, { skipClarification: true, deepThink: preservedDeepThink });
+  }, [sendMessage, focusInput, queries]);
 
   const handleShowMoreSuggestions = useCallback(async (queryId) => {
     const query = queries.find((item) => item.id === queryId);
@@ -765,6 +807,9 @@ export default function ChatScreen({
             onStartRecording={startRecording}
             onStopRecording={stopRecording}
             onSelectSuggestion={sendMessage}
+            deepThink={deepThink}
+            deepThinkEligible={deepThinkEligible}
+            onToggleDeepThink={() => setDeepThink((value) => !value)}
           />
         </main>
       </div>

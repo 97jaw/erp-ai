@@ -99,6 +99,15 @@ export function IconSend({ size = 20 }) {
   );
 }
 
+export function IconDeepThink({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3a6.5 6.5 0 0 1 6.5 6.5c0 2.4-1.3 4.1-2.6 5.4-.6.6-.9 1.4-.9 2.1v1h-6v-1c0-.7-.3-1.5-.9-2.1C6.8 13.6 5.5 11.9 5.5 9.5A6.5 6.5 0 0 1 12 3Z" {...stroke} />
+      <path d="M10 21h4M12 7.5v3M10.5 9h3" {...stroke} />
+    </svg>
+  );
+}
+
 export function IconChart({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">

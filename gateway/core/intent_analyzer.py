@@ -263,6 +263,13 @@ class IntentAnalyzer:
             "primary_action=ask_question, requires_clarification=false.\n"
             "Examples: 'who is the PM of Villa 34' → project_attribute; "
             "'Villa 34 expense' → financial/project.\n"
+            "CONVERSATIONAL queries:\n"
+            "Greetings, smalltalk, thanks, capability questions ('what can you do'), "
+            "and off-topic general knowledge (weather, sports, news) are conversational: "
+            "set subject_area=general, primary_action=ask_question or other, entities=[], "
+            "requires_clarification=false, out_of_scope=false.\n"
+            "Examples: 'Hi' → general/other; 'what can you help with' → general/ask_question; "
+            "'weather in Dubai' → general/other.\n"
             f"{CLARIFICATION_PROMPT_RULES}"
         )
 

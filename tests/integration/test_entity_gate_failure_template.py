@@ -51,7 +51,7 @@ async def test_zayidia_boys_school_single_match_shows_confirm_not_ambiguous_erro
         intent=intent,
         stack=_stack_for_user(_super_admin()),
         entity_catalog=[PROJECT_CATALOG[3]],
-    ).handle("show me Zayidia Boys School costs", _super_admin(), adapter=object())
+    ).handle("show me Zayidia Boys School costs", _super_admin(), adapter=object(), deep_think=True)
 
     assert response.awaiting_clarification
     assert response.clarification is not None
@@ -76,7 +76,7 @@ async def test_prefixed_zayidia_name_shows_confirm_card_not_not_found() -> None:
         intent=intent,
         stack=_stack_for_user(_super_admin()),
         entity_catalog=ZAYIDIA_PREFIXED_CATALOG,
-    ).handle("show me Zayidia Boys School costs", _super_admin(), adapter=object())
+    ).handle("show me Zayidia Boys School costs", _super_admin(), adapter=object(), deep_think=True)
 
     assert response.awaiting_clarification
     assert response.clarification is not None
@@ -105,7 +105,7 @@ async def test_nonexistent_project_shows_not_found_with_broaden_options() -> Non
         intent=intent,
         stack=_stack_for_user(_super_admin()),
         entity_catalog=[],
-    ).handle("show me XYZABC123 costs", _super_admin(), adapter=object())
+    ).handle("show me XYZABC123 costs", _super_admin(), adapter=object(), deep_think=True)
 
     assert response.awaiting_clarification
     assert response.clarification is not None
@@ -134,7 +134,7 @@ async def test_zayidia_two_matches_shows_candidate_list() -> None:
         intent=intent,
         stack=_stack_for_user(_super_admin()),
         entity_catalog=zayidia_only,
-    ).handle("Show me the Zayidia project costs", _super_admin(), adapter=object())
+    ).handle("Show me the Zayidia project costs", _super_admin(), adapter=object(), deep_think=True)
 
     assert response.awaiting_clarification
     assert response.clarification is not None
@@ -245,6 +245,7 @@ async def test_entity_gate_candidates_override_intent_clarification() -> None:
         "national guard expenses",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
     )
 
     assert response.awaiting_clarification
@@ -291,6 +292,7 @@ async def test_entity_gate_transient_error_shows_honest_message() -> None:
         "national guard expenses",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
     )
 
     assert response.awaiting_clarification
@@ -344,6 +346,7 @@ async def test_weak_match_shown_with_caveat_not_discarded() -> None:
         "show me Zayidia Boys School costs",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
     )
 
     assert response.awaiting_clarification

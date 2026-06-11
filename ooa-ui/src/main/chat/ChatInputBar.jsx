@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { IconMic, IconSend } from "../../components/common/MainIcons";
+import { IconDeepThink, IconMic, IconSend } from "../../components/common/MainIcons";
 import { filterLiveSuggestions } from "../../utils/layoutContent";
 
 const MAX_TEXTAREA_HEIGHT = 200;
@@ -18,6 +18,9 @@ export default function ChatInputBar({
   onStopRecording,
   onSelectSuggestion,
   showSuggestions = true,
+  deepThink = false,
+  deepThinkEligible = false,
+  onToggleDeepThink,
 }) {
   const textareaRef = useRef(null);
   const ref = inputRef || textareaRef;
@@ -97,6 +100,25 @@ export default function ChatInputBar({
           onKeyDown={onKeyDown}
           aria-label="Chat message"
         />
+        {deepThinkEligible ? (
+          <button
+            type="button"
+            className={`ooa-chat-input-bar__deepthink${
+              deepThink ? " ooa-chat-input-bar__deepthink--active" : ""
+            }`}
+            disabled={loading}
+            onClick={() => onToggleDeepThink?.()}
+            aria-pressed={deepThink}
+            aria-label={deepThink ? "Deep Think on — will pull live Odoo data" : "Enable Deep Think"}
+            title={
+              deepThink
+                ? "Deep Think on: pulls actual figures from Odoo"
+                : "Deep Think: pull actual figures from Odoo"
+            }
+          >
+            <IconDeepThink size={18} />
+          </button>
+        ) : null}
         <button
           type="button"
           className="ooa-chat-input-bar__send"

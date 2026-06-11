@@ -24,7 +24,7 @@ async def test_zayidia_costs_shows_confirm_not_hatta_hospital() -> None:
         intent=intent,
         stack=_stack_for_user(_super_admin()),
         entity_catalog=[PROJECT_CATALOG[3]],
-    ).handle("show me Zayidia Boys School costs", _super_admin(), adapter=object())
+    ).handle("show me Zayidia Boys School costs", _super_admin(), adapter=object(), deep_think=True)
 
     assert response.awaiting_clarification
     assert response.clarification is not None

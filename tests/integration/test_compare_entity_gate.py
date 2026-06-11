@@ -57,6 +57,7 @@ async def test_compare_villa_34_and_43_runs_compare_tool() -> None:
         "compare Villa 34 and Villa 43",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         executor=executor,
     )
 
@@ -104,6 +105,7 @@ async def test_compare_zayidia_boys_and_girls_runs_compare_tool() -> None:
         "compare Zayidia Boys and Girls",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         executor=executor,
     )
 

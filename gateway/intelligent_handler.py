@@ -12,6 +12,15 @@ from admin.auth.principal import CurrentUser
 from gateway.clarify import build_date_range_clarification, should_offer_date_clarification
 from gateway.core.context_stack import ContextStack
 from gateway.core.context_stack_builder import ContextStackBuilder
+from gateway.core.conversational_responder import (
+    ConversationalResponder,
+    NormalModeResponder,
+    conversational_suggestions,
+    is_conversational_intent,
+    is_conversational_message,
+    normal_mode_suggestions,
+)
+from gateway.core.deep_think import is_deep_think_eligible
 from gateway.core.entity_gate import (
     ConfirmedEntityRef,
     EntityGate,
@@ -125,6 +134,7 @@ class IntelligentQueryResponse:
     awaiting_clarification: bool = False
     clarification: dict[str, Any] | None = None
     resolved_entities: list[dict[str, Any]] = field(default_factory=list)
+    deep_think_available: bool = False
 
 
 class _HandlerRequest:
@@ -155,6 +165,8 @@ class IntelligentQueryHandler:
         telemetry_capture: TelemetryCapture | None = None,
         entity_resolver: EntityResolver | None = None,
         resolution_strategy: ResolutionStrategy | None = None,
+        conversational_responder: ConversationalResponder | None = None,
+        normal_mode_responder: NormalModeResponder | None = None,
     ) -> None:
         self._context_builder = context_builder or ContextStackBuilder()
         self._intent_analyzer = intent_analyzer or IntentAnalyzer()
@@ -170,6 +182,8 @@ class IntelligentQueryHandler:
         self._telemetry_capture = telemetry_capture
         self._entity_resolver = entity_resolver
         self._resolution_strategy = resolution_strategy or ResolutionStrategy()
+        self._conversational_responder = conversational_responder or ConversationalResponder()
+        self._normal_mode_responder = normal_mode_responder or NormalModeResponder()
 
     def _resolve_entity_resolver(self, adapter: Any) -> EntityResolver:
         if self._entity_resolver is not None:
@@ -199,6 +213,7 @@ class IntelligentQueryHandler:
         confirmed_entities: list[ConfirmedEntityRef] | None = None,
         strategy_override: Strategy | None = None,
         executor: Any | None = None,
+        deep_think: bool = False,
     ) -> IntelligentQueryResponse:
         """Run the orchestrated intelligence pipeline for one user message."""
         started = time.perf_counter()
@@ -244,10 +259,37 @@ class IntelligentQueryHandler:
                 self._context_builder.build(user, request),
             )
 
+            # Deterministic guardrail: pure greetings/capability questions never
+            # reach intent analysis, the strategy planner, or Odoo.
+            if is_conversational_message(message):
+                return await self._finalize_conversational_response(
+                    message=message,
+                    context=context,
+                    telemetry=telemetry,
+                    resolved_session=resolved_session,
+                    language=language,
+                    started=started,
+                    intent=None,
+                )
+
             intent = await self._run_stage(
                 PipelineStage.INTENT,
                 self._intent_analyzer.analyze(message, context),
             )
+
+            # LLM-classified conversational turn (general chat, off-topic) — scoped
+            # responder instead of tool routing, so it can never raise TOOL_ERROR.
+            if is_conversational_intent(intent, message):
+                telemetry.intent_extracted = intent
+                return await self._finalize_conversational_response(
+                    message=message,
+                    context=context,
+                    telemetry=telemetry,
+                    resolved_session=resolved_session,
+                    language=language,
+                    started=started,
+                    intent=intent,
+                )
 
             from gateway.core.project_expense_routing import (
                 apply_active_follow_up_context,
@@ -308,6 +350,27 @@ class IntelligentQueryHandler:
                 )
 
             intent = EntityGate.infer_entity_hints(message, intent)
+
+            # Normal mode (Deep Think OFF): the AI prepares the answer itself —
+            # interprets, narrows scope, and offers Deep Think for actual figures.
+            # Predefined Odoo methods only run when deep_think is active.
+            # Follow-ups to an active Deep Think project keep their tool flow.
+            if (
+                not deep_think
+                and not is_active_follow_up
+                and effective_strategy_override is None
+                and self._requires_deep_think(message, intent)
+            ):
+                return await self._finalize_normal_mode_response(
+                    message=message,
+                    context=context,
+                    telemetry=telemetry,
+                    resolved_session=resolved_session,
+                    language=language,
+                    started=started,
+                    intent=intent,
+                    skip_clarification=skip_clarification,
+                )
 
             if is_active_follow_up and active is not None:
                 logger.info(
@@ -1083,6 +1146,143 @@ class IntelligentQueryHandler:
             total_duration_ms=duration_ms,
             cache_hit=True,
             proactive_cache_keys=response.proactive_cache_keys,
+        )
+        return response
+
+    @staticmethod
+    def _requires_deep_think(message: str, intent: Intent) -> bool:
+        """True when the query asks for real ERP data (Deep Think territory)."""
+        data_action = intent.primary_action in (
+            "fetch_data",
+            "analyze",
+            "compare",
+            "generate_report",
+            "search_entity",
+        )
+        data_subject = intent.subject_area in (
+            "financial",
+            "project",
+            "sales",
+            "inventory",
+            "hr",
+        )
+        if data_action and data_subject:
+            return True
+        return is_deep_think_eligible(message)
+
+    async def _finalize_normal_mode_response(
+        self,
+        *,
+        message: str,
+        context: ContextStack,
+        telemetry: InteractionTelemetry,
+        resolved_session: str,
+        language: str,
+        started: float,
+        intent: Intent,
+        skip_clarification: bool,
+    ) -> IntelligentQueryResponse:
+        """AI-prepared answer for data queries when Deep Think is off — no Odoo."""
+        clarification = self._check_clarification_needed(
+            message=message,
+            intent=intent,
+            context=context,
+            language=language,
+            skip_clarification=skip_clarification,
+        )
+        if clarification is not None:
+            return self._finalize_clarification(
+                clarification=clarification,
+                context=context,
+                telemetry=telemetry,
+                resolved_session=resolved_session,
+                language=language,
+                started=started,
+                intent=intent,
+            )
+
+        text = await self._normal_mode_responder.respond(
+            message,
+            context,
+            intent,
+            language=language,
+        )
+        suggestions = normal_mode_suggestions(message, context, language)
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "[IntelligentQueryHandler] normal-mode (no Deep Think) turn message=%r "
+            "duration_ms=%d",
+            message[:80],
+            duration_ms,
+        )
+        response = IntelligentQueryResponse(
+            session_id=resolved_session,
+            text=text,
+            language=language,
+            visualization=None,
+            orchestration_log=[],
+            execution_duration_ms=duration_ms,
+            orchestration_duration_ms=0,
+            strategy_step_count=0,
+            tools_called=[],
+            execution_result=None,
+            suggestions=suggestions[:3],
+            interaction_id=telemetry.interaction_id,
+            deep_think_available=True,
+        )
+        telemetry.finalize_response(
+            response_text=response.text,
+            visualization=None,
+            suggestions=response.suggestions,
+            total_duration_ms=duration_ms,
+            intent=intent,
+        )
+        return response
+
+    async def _finalize_conversational_response(
+        self,
+        *,
+        message: str,
+        context: ContextStack,
+        telemetry: InteractionTelemetry,
+        resolved_session: str,
+        language: str,
+        started: float,
+        intent: Intent | None,
+    ) -> IntelligentQueryResponse:
+        """Scoped conversational reply — no tools, no Odoo, no strategy planning."""
+        text = await self._conversational_responder.respond(
+            message,
+            context,
+            language=language,
+        )
+        suggestions = conversational_suggestions(language)
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "[IntelligentQueryHandler] conversational turn message=%r duration_ms=%d",
+            message[:80],
+            duration_ms,
+        )
+        response = IntelligentQueryResponse(
+            session_id=resolved_session,
+            text=text,
+            language=language,
+            visualization=None,
+            orchestration_log=[],
+            execution_duration_ms=duration_ms,
+            orchestration_duration_ms=0,
+            strategy_step_count=0,
+            tools_called=[],
+            execution_result=None,
+            suggestions=suggestions[:3],
+            interaction_id=telemetry.interaction_id,
+        )
+        telemetry.finalize_response(
+            response_text=response.text,
+            visualization=None,
+            suggestions=response.suggestions,
+            total_duration_ms=duration_ms,
+            intent=intent,
         )
         return response
 

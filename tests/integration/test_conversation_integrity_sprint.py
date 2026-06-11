@@ -234,6 +234,7 @@ async def test_incident_five_turn_sequence() -> None:
         turn1_query,
         user,
         adapter=object(),
+        deep_think=True,
         executor=executor,
         session_id=session_id,
     )
@@ -244,6 +245,7 @@ async def test_incident_five_turn_sequence() -> None:
         turn1_query,
         user,
         adapter=object(),
+        deep_think=True,
         executor=executor,
         session_id=session_id,
         confirmed_entities=[
@@ -259,6 +261,7 @@ async def test_incident_five_turn_sequence() -> None:
         "General maintenance work need expense report",
         user,
         adapter=object(),
+        deep_think=True,
         executor=executor,
         session_id=session_id,
     )
@@ -273,6 +276,7 @@ async def test_incident_five_turn_sequence() -> None:
         "now General maintenance work",
         user,
         adapter=object(),
+        deep_think=True,
         executor=executor,
         session_id=session_id,
     )
@@ -289,6 +293,7 @@ async def test_incident_five_turn_sequence() -> None:
         "give General maintenance work need expense report",
         user,
         adapter=object(),
+        deep_think=True,
         executor=executor,
         session_id=session_id,
     )
@@ -304,6 +309,7 @@ async def test_incident_five_turn_sequence() -> None:
         turn5_query,
         user,
         adapter=object(),
+        deep_think=True,
         executor=executor,
         session_id=session_id,
     )
@@ -313,6 +319,7 @@ async def test_incident_five_turn_sequence() -> None:
             turn5_query,
             user,
             adapter=object(),
+            deep_think=True,
             executor=executor,
             session_id=session_id,
             confirmed_entities=[

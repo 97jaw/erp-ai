@@ -30,7 +30,7 @@ async def test_empty_entity_query_shows_not_found_not_fabrication() -> None:
         intent=intent,
         stack=_stack_for_user(_super_admin()),
         entity_catalog=[],
-    ).handle("show me XYZNONEXISTENT999 costs", _super_admin(), adapter=object())
+    ).handle("show me XYZNONEXISTENT999 costs", _super_admin(), adapter=object(), deep_think=True)
 
     assert response.awaiting_clarification or response.failure_mode == "no_data_found"
     assert not contains_fabricated_excuse(response.text)
@@ -85,6 +85,7 @@ async def test_arabic_query_handler_does_not_fabricate_errors() -> None:
         "أرني تقرير الأرباح والخسائر لهذا الشهر",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         language="ar",
         strategy_override=_build_pl_strategy(),
         executor=MockToolExecutor(
@@ -120,6 +121,7 @@ async def test_confirmed_entity_turn_two_no_regression() -> None:
         "show me Zayidia Boys School costs",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         confirmed_entities=confirmed,
         executor=MockToolExecutor(
             responses={

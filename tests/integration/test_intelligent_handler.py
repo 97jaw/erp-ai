@@ -248,6 +248,7 @@ async def test_zayidia_boys_school_costs_requires_confirmation_then_fetches() ->
         "show me Zayidia Boys School costs",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         executor=executor,
     )
 
@@ -271,6 +272,7 @@ async def test_zayidia_boys_school_costs_requires_confirmation_then_fetches() ->
         "show me Zayidia Boys School costs",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         executor=executor,
         confirmed_entities=confirmed,
     )
@@ -330,6 +332,7 @@ async def test_villa_maintenance_expense_uses_mobile_summary_after_confirm() -> 
         "Villa Maintenance No. 34 expense",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         executor=executor,
     )
     assert first.awaiting_clarification
@@ -342,6 +345,7 @@ async def test_villa_maintenance_expense_uses_mobile_summary_after_confirm() -> 
         "Villa Maintenance No. 34 expense",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         executor=executor,
         confirmed_entities=confirmed,
     )
@@ -402,6 +406,7 @@ async def test_villa_maintenance_expense_for_this_year_uses_mobile_summary() -> 
         query,
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         executor=executor,
     )
     assert first.awaiting_clarification
@@ -413,6 +418,7 @@ async def test_villa_maintenance_expense_for_this_year_uses_mobile_summary() -> 
         query,
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         executor=executor,
         confirmed_entities=confirmed,
     )
@@ -498,6 +504,7 @@ async def test_villa_cost_breakdown_follow_up_reuses_session_project() -> None:
         follow_up,
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         executor=executor,
         session_id=session_id,
     )
@@ -557,6 +564,7 @@ async def test_general_maintenance_returns_candidates() -> None:
         query,
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         executor=executor,
         session_id="general-maintenance-search",
     )
@@ -582,6 +590,7 @@ async def test_payslip_query_honest_unavailable_response() -> None:
         "what is my last payslip",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         session_id="sess-payslip",
     )
 
@@ -608,6 +617,7 @@ async def test_national_guard_requires_confirmation_before_expenses() -> None:
         "give me national guard project expense report for last month",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
     )
 
     assert response.awaiting_clarification
@@ -640,6 +650,7 @@ async def test_simple_pl_query_completes_under_five_seconds() -> None:
         "Show P&L for last 3 months",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         strategy_override=_build_pl_strategy(),
         executor=executor,
     )
@@ -664,6 +675,7 @@ async def test_complex_comparison_orchestrates_multiple_tools() -> None:
         "Compare top 5 projects revenue this year vs last year",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         strategy_override=build_revenue_comparison_strategy(),
         executor=executor,
     )
@@ -698,6 +710,7 @@ async def test_quality_gate_retries_on_bad_response() -> None:
         "Show P&L for last 3 months",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         strategy_override=_build_pl_strategy(),
         executor=executor,
     )
@@ -724,6 +737,7 @@ async def test_telemetry_recorded_for_every_query() -> None:
         "Compare revenue Q1 2026 vs Q1 2025",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         strategy_override=build_revenue_comparison_strategy(),
         executor=executor,
     )
@@ -762,6 +776,7 @@ async def test_arabic_query_returns_arabic_response() -> None:
         "أرني تقرير الأرباح والخسائر لهذا الشهر",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         language="ar",
         strategy_override=_build_pl_strategy(),
         executor=executor,
@@ -786,6 +801,7 @@ async def test_super_admin_also_requires_entity_confirmation() -> None:
         "national guard expenses last month",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
     )
 
     assert response.awaiting_clarification
@@ -810,6 +826,7 @@ async def test_regular_user_gets_conservative_entity_resolution() -> None:
         "Show me the Zayidia project costs",
         _regular_user(),
         adapter=object(),
+        deep_think=True,
     )
 
     assert response.awaiting_clarification
@@ -832,7 +849,7 @@ async def test_part_xii_canonical_scenarios() -> None:
             out_of_scope_reason="hr.payslips is unavailable. Use the HR portal directly at hr.elrace.com",
         ),
         stack=_stack_for_user(_super_admin()),
-    ).handle("what is my last payslip", _super_admin(), adapter=object())
+    ).handle("what is my last payslip", _super_admin(), adapter=object(), deep_think=True)
     assert not contains_fabricated_excuse(payslip.text)
     assert "hr" in payslip.text.lower()
 
@@ -847,6 +864,7 @@ async def test_part_xii_canonical_scenarios() -> None:
         "give me national guard project expense report for last month",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
     )
     assert ng.awaiting_clarification
     assert ng.tools_called == []
@@ -861,7 +879,7 @@ async def test_part_xii_canonical_scenarios() -> None:
         ),
         stack=_stack_for_user(_regular_user()),
         entity_catalog=ZAYIDIA_CATALOG,
-    ).handle("Show me the Zayidia project costs", _regular_user(), adapter=object())
+    ).handle("Show me the Zayidia project costs", _regular_user(), adapter=object(), deep_think=True)
     assert zayidia.awaiting_clarification or zayidia.failure_mode == "ambiguous_reference"
 
     # D — Forecast out of scope
@@ -874,7 +892,7 @@ async def test_part_xii_canonical_scenarios() -> None:
             out_of_scope_reason="Cash flow forecasting is planned but not live yet.",
         ),
         stack=_stack_for_user(_super_admin()),
-    ).handle("Forecast next month's cash position", _super_admin(), adapter=object())
+    ).handle("Forecast next month's cash position", _super_admin(), adapter=object(), deep_think=True)
     assert forecast.failure_mode in {"feature_coming_soon", "out_of_scope"}
     assert "forecast" in forecast.text.lower() or "historical" in forecast.text.lower()
 
@@ -886,6 +904,7 @@ async def test_part_xii_canonical_scenarios() -> None:
         "Compare top 5 projects revenue this year vs last year",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         strategy_override=build_revenue_comparison_strategy(),
         executor=MockToolExecutor(
             responses={
@@ -910,7 +929,7 @@ async def test_part_xii_canonical_scenarios() -> None:
             ),
         ),
         stack=_stack_for_user(_regular_user()),
-    ).handle("Show me all department budgets", _regular_user(), adapter=object())
+    ).handle("Show me all department budgets", _regular_user(), adapter=object(), deep_think=True)
     assert "department" in restricted.text.lower() or "access" in restricted.text.lower()
 
     # G — Vague date / period
@@ -923,7 +942,7 @@ async def test_part_xii_canonical_scenarios() -> None:
             clarification_question="Which period should I use — this month, last 3 months, or year to date?",
         ),
         stack=_stack_for_user(_regular_user()),
-    ).handle("How are we doing?", _regular_user(), adapter=object())
+    ).handle("How are we doing?", _regular_user(), adapter=object(), deep_think=True)
     assert vague.awaiting_clarification
     assert "period" in vague.text.lower() or "month" in vague.text.lower()
 
@@ -940,6 +959,7 @@ async def test_part_xii_canonical_scenarios() -> None:
         "أرني تقرير الأرباح والخسائر لهذا الشهر",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         language="ar",
         strategy_override=_build_pl_strategy(),
         executor=MockToolExecutor(
@@ -968,6 +988,7 @@ async def test_part_xii_canonical_scenarios() -> None:
         "Why is our margin lower this month?",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         strategy_override=Strategy(
             steps=[
                 ExecutionStep(
@@ -1040,6 +1061,7 @@ async def test_part_xii_canonical_scenarios() -> None:
         "And the income?",
         _super_admin(),
         adapter=object(),
+        deep_think=True,
         confirmed_entities=[
             ConfirmedEntityRef(type="project", id=201, name="Zayidia Boys School Renovation"),
         ],
