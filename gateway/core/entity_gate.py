@@ -447,12 +447,19 @@ class EntityGate:
             context.working_memory.session_facts.get("confirmed_entities") or {},
         )
 
+        # Types explicitly confirmed by the user this turn (clarification click).
+        # These are authoritative: the user may have picked a near-miss candidate
+        # whose name does NOT match the original query text (e.g. typed "Villa 37",
+        # picked "Villa Maintenance No. 34") — never re-validate them against the
+        # message hint or we loop back into the same clarification.
+        user_confirmed_types: set[str] = set()
         if confirmed_entities:
             for item in confirmed_entities:
                 confirmed_map[item.type] = {
                     "id": item.id,
                     "name": item.name or str(item.id),
                 }
+                user_confirmed_types.add(item.type)
 
         active = context.working_memory.get_active_project()
         if active and active.confirmed and active.project_id:
@@ -480,6 +487,8 @@ class EntityGate:
         for entity_type, query in required:
             if entity_type not in confirmed_map:
                 pending.append((entity_type, query))
+                continue
+            if entity_type in user_confirmed_types:
                 continue
             if entity_type == "project":
                 confirmed_project = confirmed_map["project"]

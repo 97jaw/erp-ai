@@ -457,14 +457,16 @@ export default function ChatScreen({
 
   const handleClarificationSelect = useCallback((option, originalQuery) => {
     // Clarifications continue the original turn — preserve its Deep Think mode.
+    // Options flagged deep_think (period presets on report queries) force it on
+    // so one click fetches the real Odoo figures.
     const sourceQuery = queries.find((item) => item.question === originalQuery);
-    const preservedDeepThink = Boolean(sourceQuery?.deepThink);
+    const resumeDeepThink = Boolean(sourceQuery?.deepThink) || Boolean(option?.deep_think);
     const confirmedEntities = buildConfirmedEntities(option);
     if (confirmedEntities.length > 0) {
       sendMessage(originalQuery, {
         skipClarification: true,
         confirmedEntities,
-        deepThink: preservedDeepThink,
+        deepThink: resumeDeepThink,
       });
       return;
     }
@@ -476,7 +478,7 @@ export default function ChatScreen({
       return;
     }
     const enriched = buildClarificationQuery(originalQuery, option);
-    sendMessage(enriched, { skipClarification: true, deepThink: preservedDeepThink });
+    sendMessage(enriched, { skipClarification: true, deepThink: resumeDeepThink });
   }, [sendMessage, focusInput, queries]);
 
   const handleShowMoreSuggestions = useCallback(async (queryId) => {

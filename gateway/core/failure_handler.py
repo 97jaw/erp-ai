@@ -320,12 +320,18 @@ class HonestFailureResponder:
 
     @classmethod
     def failure_from_no_data(cls, intent: Intent, user_message: str, *, strategies_tried: list[str] | None = None) -> Failure:
+        query_label = (
+            (intent.specific_intent or "").strip()
+            or (user_message or "").strip()
+            or "that request"
+        )
         return Failure(
             mode=FailureMode.NO_DATA_FOUND,
             user_message=user_message,
             details={
-                "query_label": intent.specific_intent or user_message,
+                "query_label": query_label,
                 "strategies_tried": strategies_tried or [],
+                "subject_area": intent.subject_area,
             },
         )
 
@@ -541,7 +547,10 @@ class HonestFailureResponder:
             "reason_clause": self._reason_clause(details.get("reason")),
             "query_label": query_label,
             "effort_clause": self._effort_clause(details.get("strategies_tried") or []),
-            "suggest_clause": self._suggest_clause(details.get("fuzzy_matches") or []),
+            "suggest_clause": self._suggest_clause(
+                details.get("fuzzy_matches") or [],
+                subject_area=str(details.get("subject_area") or ""),
+            ),
             "detail_clause": self._detail_clause(details.get("detail") or details.get("reason") or ""),
             "data_type": str(details.get("data_type") or "that data"),
             "permission_clause": self._permission_clause(details.get("required_permission")),
@@ -613,8 +622,14 @@ class HonestFailureResponder:
         return f"I searched using: {joined}. "
 
     @staticmethod
-    def _suggest_clause(matches: list[str]) -> str:
+    def _suggest_clause(matches: list[str], *, subject_area: str = "") -> str:
         if not matches:
+            if subject_area == "financial":
+                # Company-wide report — never suggest checking client/project spelling.
+                return (
+                    "Try a different reporting period, or check that the period "
+                    "has posted entries in Odoo."
+                )
             return "Try a wider date range or confirm spelling of the client or project name."
         preview = ", ".join(matches[:3])
         return f"Did you mean: {preview}?"

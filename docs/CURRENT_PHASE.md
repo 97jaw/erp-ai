@@ -6,9 +6,32 @@
 
 ## 🎯 ACTIVE PLAN
 
+**File:** Conversational fixes + Deep Think resume (post-live-test feedback round)
+
+**Status:** Code complete + tested — deployed, pending live verification
+
+| Fix | Description | Code | Tests |
+|-----|-------------|------|-------|
+| Near-miss confirm loop | `entity_gate.evaluate`: API-supplied `confirmed_entities` are authoritative — no `_matches_active` re-validation (picking "Villa 34" for query "Villa 37" now resumes) | ✅ | ✅ |
+| P&L false "No data" | `has_meaningful_tool_data` recognizes financial report shape (`kpis`, `report_lines`) | ✅ | ✅ |
+| Empty "for ." label | `failure_from_no_data`: label falls back to user message; financial wording drops client/project spelling hint + raw `group_and_aggregate` | ✅ | ✅ |
+| Report misroute guardrail | `strategy_planner`: P&L/balance-sheet/cash-flow/trial-balance queries force `get_financial_report`/`get_trial_balance` (never entity search) | ✅ | ✅ |
+| Date parsing | `resolve_report_date_range`: this/last month, last quarter, this/last year, last N months, explicit `from X to Y` — replaces hardcoded last_3_months | ✅ | ✅ |
+| One-click Deep Think | Normal-mode report queries return clickable period card (`resume_deep_think`, explicit-date suffixes, detected period = default); clicking any preset/custom range resumes with `deep_think=true` and fetches real figures | ✅ | ✅ |
+
+**Key files:** `gateway/core/entity_gate.py`, `gateway/core/quality_pipeline.py`, `gateway/core/failure_handler.py`, `gateway/core/strategy_planner.py`, `gateway/clarify.py`, `gateway/intelligent_handler.py`, `ooa-ui/src/components/chat/ChatScreen.jsx`, `ooa-ui/src/components/chat/ClarificationCard.jsx`
+
+**Tests:** `tests/core/test_conversational_fixes.py` (14 tests). Full suite: 456 passed; 7 failures all pre-existing (verified on clean tree).
+
+**Live verify (manual):** P&L in normal mode → period card → click preset → real figures, one click. "Villa maintainacne 37" → pick "Villa Maintenance No. 34" → expenses for 34.
+
+---
+
+## 📜 PREVIOUS PLAN (a)
+
 **File:** AI Intelligence Rebuild (conversational routing + Deep Think mode)
 
-**Status:** Code complete — pending live verification + commit
+**Status:** Deployed `78a1d32`
 
 | Piece | Description | Code | Tests |
 |-------|-------------|------|-------|

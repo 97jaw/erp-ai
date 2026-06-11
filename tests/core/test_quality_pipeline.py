@@ -52,12 +52,13 @@ def test_no_data_message_for_project_expense_omits_invoice_filters() -> None:
     assert "project expense breakdown" in message or "expense summary" in message
 
 
-def test_no_data_message_for_financial_tool_keeps_invoice_filters() -> None:
+def test_no_data_message_for_financial_tool_uses_report_wording() -> None:
     message = no_data_message(
         _intent(),
         tool_names=["get_financial_report"],
     )
-    assert "posted invoice filters" in message
+    assert "posted journal entries" in message
+    assert "group_and_aggregate" not in message
 
 
 def test_breakdown_empty_with_prior_summary_suggests_trade_categories() -> None:

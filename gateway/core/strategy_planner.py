@@ -22,6 +22,69 @@ logger = logging.getLogger(__name__)
 STRATEGY_PLANNER_MODEL = "claude-sonnet-4-20250514"
 STRATEGY_PLANNER_MAX_TOKENS = 2048
 
+# Company-wide financial report names → (tool, report_type). Used both for the
+# misroute guardrail and the simple-tool resolver.
+_COMPANY_REPORT_PATTERNS: tuple[tuple[re.Pattern[str], str, str | None], ...] = (
+    (
+        re.compile(r"p\s*&\s*l|\bpandl\b|\bpnl\b|profit\s+(and|&)\s+loss|income\s+statement", re.IGNORECASE),
+        "get_financial_report",
+        "pandl",
+    ),
+    (re.compile(r"balance\s+sheet", re.IGNORECASE), "get_financial_report", "balance_sheet"),
+    (re.compile(r"cash\s*flow\s+(statement|report)|cash\s*flow\b", re.IGNORECASE), "get_financial_report", "cash_flow"),
+    (re.compile(r"trial\s+balance", re.IGNORECASE), "get_trial_balance", None),
+)
+
+_EXPLICIT_RANGE_RE = re.compile(
+    r"from\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})",
+    re.IGNORECASE,
+)
+
+_LAST_N_MONTHS_RE = re.compile(r"(?:last|past)\s+(\d+)\s+months?", re.IGNORECASE)
+
+
+def resolve_report_date_range(query: str, temporal: Any) -> tuple[str, str]:
+    """Map a period phrase in the query to (date_from, date_to).
+
+    Falls back to last 3 months when no period is named — the product default.
+    """
+    blob = (query or "").lower()
+
+    explicit = _EXPLICIT_RANGE_RE.search(blob)
+    if explicit:
+        return explicit.group(1), explicit.group(2)
+
+    if "this month" in blob:
+        today = temporal.today
+        return today.replace(day=1).isoformat(), today.isoformat()
+    if "last month" in blob:
+        return temporal.last_month
+    if "last quarter" in blob:
+        return temporal.last_quarter
+    if "last year" in blob:
+        return temporal.last_year
+    if "this year" in blob or "ytd" in blob or "year to date" in blob:
+        return temporal.ytd
+
+    n_months = _LAST_N_MONTHS_RE.search(blob)
+    if n_months:
+        months = max(1, min(int(n_months.group(1)), 36))
+        from datetime import timedelta
+
+        start = temporal.today - timedelta(days=30 * months)
+        return start.isoformat(), temporal.today.isoformat()
+
+    return temporal.last_3_months
+
+
+def match_company_report(query: str) -> tuple[str, str | None] | None:
+    """Return (tool, report_type) when the query names a company-wide report."""
+    blob = (query or "").lower()
+    for pattern, tool, report_type in _COMPANY_REPORT_PATTERNS:
+        if pattern.search(blob):
+            return tool, report_type
+    return None
+
 
 class StrategyException(Exception):
     """Raised when strategy planning cannot proceed."""
@@ -123,7 +186,10 @@ class StrategyPlanner:
                 f"{intent.out_of_scope_reason or 'capability unavailable'}",
             )
 
-        if intent.primary_action == "search_entity" or self._needs_project_entity_search(
+        company_report = self._plan_company_report_if_applicable(intent, context)
+        if company_report is not None:
+            strategy = company_report
+        elif intent.primary_action == "search_entity" or self._needs_project_entity_search(
             intent,
             context,
         ):
@@ -146,6 +212,68 @@ class StrategyPlanner:
             strategy.estimated_duration_ms,
         )
         return strategy
+
+    def _plan_company_report_if_applicable(
+        self,
+        intent: Intent,
+        context: ContextStack,
+    ) -> Strategy | None:
+        """Force the financial-report tool when the user named a company-wide report.
+
+        Guards against LLM intent misclassification (e.g. search_entity/complex)
+        sending a P&L query into entity search, which yields a bogus
+        'No data found' instead of the report.
+        """
+        blob = f"{intent.specific_intent} {context.conversation.message}"
+        matched = match_company_report(blob)
+        if matched is None:
+            return None
+        if intent.primary_action == "compare":
+            return None
+        # Deterministic revenue-by-client routes take precedence.
+        if self._is_revenue_by_client_period(intent) or self._is_revenue_by_client_comparison(intent):
+            return None
+        # Project-scoped cost queries keep their existing routing.
+        if looks_like_project_cost_query(blob, subject_area=intent.subject_area):
+            return None
+        if any(entity.type == "project" for entity in intent.entities):
+            return None
+
+        tool, report_type = matched
+        # The raw message is the user's literal wording — prefer it for dates.
+        date_source = context.conversation.message or intent.specific_intent
+        date_from, date_to = resolve_report_date_range(date_source, context.temporal_context)
+        tool_input: dict[str, Any] = {"date_from": date_from, "date_to": date_to}
+        if report_type:
+            tool_input["report_type"] = report_type
+        logger.info(
+            "[StrategyPlanner] company report guardrail tool=%s report_type=%s range=%s..%s",
+            tool,
+            report_type,
+            date_from,
+            date_to,
+        )
+        step = ExecutionStep(
+            step_number=1,
+            description=intent.specific_intent or context.conversation.message,
+            tool=tool,
+            tool_input=tool_input,
+            depends_on=[],
+            parallel_with=[],
+            expected_output=intent.expected_output or "table",
+            fallback_if_fails=f"Retry {tool} with the default last 3 months range",
+        )
+        return Strategy(
+            steps=[step],
+            synthesis_approach=(
+                "Return the financial report directly with a concise executive summary"
+            ),
+            quality_checks=[
+                "Verify numeric values are present in the tool result",
+                "Confirm the date range used matches the user's intent",
+            ],
+            estimated_duration_ms=4000,
+        )
 
     @staticmethod
     def _project_entity_hints(intent: Intent) -> list[str]:
@@ -508,20 +636,33 @@ class StrategyPlanner:
             return expense_tool
 
         if intent.primary_action == "fetch_data" and intent.subject_area == "financial":
+            date_source = context.conversation.message or intent.specific_intent
+            date_from, date_to = resolve_report_date_range(
+                date_source,
+                context.temporal_context,
+            )
             if any(token in query for token in ("p&l", "profit", "loss", "pandl")):
-                tool_input: dict[str, Any] = {"report_type": "pandl"}
-                date_range = context.temporal_context.last_3_months
-                tool_input["date_from"] = date_range[0]
-                tool_input["date_to"] = date_range[1]
-                return "get_financial_report", tool_input
+                return "get_financial_report", {
+                    "report_type": "pandl",
+                    "date_from": date_from,
+                    "date_to": date_to,
+                }
             if "balance sheet" in query:
-                return "get_financial_report", {"report_type": "balance_sheet"}
+                return "get_financial_report", {
+                    "report_type": "balance_sheet",
+                    "date_from": date_from,
+                    "date_to": date_to,
+                }
             if "cash flow" in query:
-                return "get_financial_report", {"report_type": "cash_flow"}
+                return "get_financial_report", {
+                    "report_type": "cash_flow",
+                    "date_from": date_from,
+                    "date_to": date_to,
+                }
             if "trial balance" in query:
                 return "get_trial_balance", {
-                    "date_from": context.temporal_context.last_3_months[0],
-                    "date_to": context.temporal_context.last_3_months[1],
+                    "date_from": date_from,
+                    "date_to": date_to,
                 }
 
         if intent.primary_action in {"search_entity", "fetch_data"} and intent.subject_area == "project":

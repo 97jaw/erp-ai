@@ -31,7 +31,10 @@ export default function ClarificationCard({ clarification, originalQuery, onSele
 
   const handleDateApply = (dateFrom, dateTo) => {
     onSelect?.(
-      { query_suffix: ` from ${dateFrom} to ${dateTo}` },
+      {
+        query_suffix: ` from ${dateFrom} to ${dateTo}`,
+        deep_think: Boolean(clarification.resume_deep_think),
+      },
       originalQuery,
     );
     setShowDatePicker(false);

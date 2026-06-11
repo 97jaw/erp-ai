@@ -127,6 +127,74 @@ def build_date_range_clarification(language: str = "en") -> dict[str, Any]:
     }
 
 
+def build_deep_think_date_clarification(
+    message: str,
+    temporal: Any,
+    language: str = "en",
+) -> dict[str, Any]:
+    """Clickable period card for company-wide report queries in normal mode.
+
+    Every option carries explicit dates and `deep_think: True` so a single click
+    resumes the query straight into Deep Think and fetches real Odoo figures.
+    Explicit `from X to Y` suffixes win over any period phrase already in the
+    message, so conflicting wording can never change the fetched range.
+    """
+    from gateway.core.strategy_planner import resolve_report_date_range
+
+    arabic = language == "ar"
+    today = temporal.today
+    this_month = (today.replace(day=1).isoformat(), today.isoformat())
+    presets = [
+        ("this_month", "This Month", "هذا الشهر", this_month),
+        ("last_month", "Last Month", "الشهر الماضي", tuple(temporal.last_month)),
+        ("last_3m", "Last 3 Months", "آخر 3 أشهر", tuple(temporal.last_3_months)),
+        ("ytd", "This Year", "هذا العام", tuple(temporal.ytd)),
+        ("last_year", "Last Year", "العام الماضي", tuple(temporal.last_year)),
+    ]
+    detected = tuple(resolve_report_date_range(message, temporal))
+
+    options: list[dict[str, Any]] = []
+    for option_id, label, label_ar, date_range in presets:
+        option: dict[str, Any] = {
+            "id": option_id,
+            "label": label,
+            "label_ar": label_ar,
+            "query_suffix": f" from {date_range[0]} to {date_range[1]}",
+            "deep_think": True,
+        }
+        if date_range == detected:
+            option["is_default"] = True
+        options.append(option)
+    options.append(
+        {
+            "id": "custom",
+            "label": "Custom Range",
+            "label_ar": "نطاق مخصص",
+            "action": "open_date_picker",
+            "deep_think": True,
+        },
+    )
+
+    return {
+        "reason": "date_range_deep_think",
+        "resume_deep_think": True,
+        "question": (
+            "Which period should I pull this report for? "
+            "Pick one and I'll fetch the actual figures from Odoo."
+            if not arabic
+            else "أي فترة تريد لهذا التقرير؟ اختر واحدة وسأجلب الأرقام الفعلية من أودو."
+        ),
+        "question_ar": "أي فترة تريد لهذا التقرير؟ اختر واحدة وسأجلب الأرقام الفعلية من أودو.",
+        "options": options,
+        "skip_option": {
+            "label": "Use detected period",
+            "label_ar": "استخدام الفترة المكتشفة",
+            "query_suffix": f" from {detected[0]} to {detected[1]}",
+            "deep_think": True,
+        },
+    }
+
+
 def enrich_query_with_clarification(original_query: str, option: dict[str, Any]) -> str:
     suffix = str(option.get("query_suffix") or "")
     if not suffix.strip():

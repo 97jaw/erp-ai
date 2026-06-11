@@ -59,13 +59,13 @@ def _resolve_tool_name(
     return _primary_tool_name(tool_names) or _infer_tool_name_from_results(tool_results)
 
 
-def _get_strategies_for_context(tool_name: str) -> list[str]:
+def _get_strategies_for_context(tool_name: str, subject_area: str = "") -> list[str]:
     """Return context-appropriate strategy descriptions for no-data messaging."""
     lowered = (tool_name or "").lower()
     if "expense" in lowered or "project" in lowered:
         return ["project expense breakdown", "GL group hierarchy"]
-    if "financial" in lowered or "ledger" in lowered:
-        return ["group_and_aggregate", "posted invoice filters"]
+    if "financial" in lowered or "ledger" in lowered or subject_area == "financial":
+        return ["the financial report query", "posted journal entries"]
     return ["data search"]
 
 
@@ -140,6 +140,22 @@ def has_meaningful_tool_data(tool_results: list[Any]) -> bool:
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 if abs(float(value)) >= 1:
                     return True
+        # Financial report shape (e.g. normalized P&L): scalars live in a
+        # nested "kpis" dict and lines in "report_lines", not rows/groups.
+        kpis = payload.get("kpis")
+        if isinstance(kpis, dict):
+            for value in kpis.values():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    if abs(float(value)) >= 1:
+                        return True
+        for line in payload.get("report_lines") or []:
+            if not isinstance(line, dict):
+                continue
+            for key in ("balance", "debit", "credit"):
+                value = line.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    if abs(float(value)) >= 1:
+                        return True
         groups = payload.get("groups") or payload.get("rows") or []
         for group in groups:
             if not isinstance(group, dict):
@@ -175,7 +191,7 @@ def no_data_message(
     failure = HonestFailureResponder.failure_from_no_data(
         intent,
         user_message or intent.specific_intent,
-        strategies_tried=_get_strategies_for_context(tool_name),
+        strategies_tried=_get_strategies_for_context(tool_name, intent.subject_area),
     )
     stack = context or _minimal_context(user_message or intent.specific_intent)
     return responder.respond(failure, stack).text

@@ -9,7 +9,11 @@ from enum import Enum
 from typing import Any
 
 from admin.auth.principal import CurrentUser
-from gateway.clarify import build_date_range_clarification, should_offer_date_clarification
+from gateway.clarify import (
+    build_date_range_clarification,
+    build_deep_think_date_clarification,
+    should_offer_date_clarification,
+)
 from gateway.core.context_stack import ContextStack
 from gateway.core.context_stack_builder import ContextStackBuilder
 from gateway.core.conversational_responder import (
@@ -1170,6 +1174,28 @@ class IntelligentQueryHandler:
             return True
         return is_deep_think_eligible(message)
 
+    @staticmethod
+    def _build_report_date_clarification(
+        *,
+        message: str,
+        context: ContextStack,
+        language: str,
+    ) -> dict[str, Any] | None:
+        """Clickable period card for company-wide report queries (normal mode).
+
+        Selecting any option resumes the query with Deep Think so the real
+        Odoo figures are fetched in one click — no typing, no manual toggle.
+        """
+        from gateway.core.strategy_planner import match_company_report
+
+        if match_company_report(message) is None:
+            return None
+        return build_deep_think_date_clarification(
+            message,
+            context.temporal_context,
+            language,
+        )
+
     async def _finalize_normal_mode_response(
         self,
         *,
@@ -1183,6 +1209,23 @@ class IntelligentQueryHandler:
         skip_clarification: bool,
     ) -> IntelligentQueryResponse:
         """AI-prepared answer for data queries when Deep Think is off — no Odoo."""
+        if not skip_clarification:
+            report_clarification = self._build_report_date_clarification(
+                message=message,
+                context=context,
+                language=language,
+            )
+            if report_clarification is not None:
+                return self._finalize_clarification(
+                    clarification=report_clarification,
+                    context=context,
+                    telemetry=telemetry,
+                    resolved_session=resolved_session,
+                    language=language,
+                    started=started,
+                    intent=intent,
+                )
+
         clarification = self._check_clarification_needed(
             message=message,
             intent=intent,
