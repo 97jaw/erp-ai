@@ -56,6 +56,7 @@ export default function ChatInputBar({
       }`}
     >
       <div className="ooa-chat-input-bar__panel">
+        <div className="ooa-chat-input-bar__leading">
         <button
           type="button"
           className={`ooa-chat-input-bar__mic${recording ? " ooa-chat-input-bar__mic--active" : ""}`}
@@ -79,6 +80,7 @@ export default function ChatInputBar({
           <IconMic size={18} />
           {recording ? <span className="ooa-chat-input-bar__mic-pulse" aria-hidden="true" /> : null}
         </button>
+        </div>
         <textarea
           ref={ref}
           id="chat-input"
@@ -100,34 +102,36 @@ export default function ChatInputBar({
           onKeyDown={onKeyDown}
           aria-label="Chat message"
         />
-        {deepThinkEligible ? (
+        <div className="ooa-chat-input-bar__trailing">
+          {deepThinkEligible ? (
+            <button
+              type="button"
+              className={`ooa-chat-input-bar__deepthink${
+                deepThink ? " ooa-chat-input-bar__deepthink--active" : ""
+              }`}
+              disabled={loading}
+              onClick={() => onToggleDeepThink?.()}
+              aria-pressed={deepThink}
+              aria-label={deepThink ? "Deep Think on — will pull live Odoo data" : "Enable Deep Think"}
+              title={
+                deepThink
+                  ? "Deep Think on: pulls actual figures from Odoo"
+                  : "Deep Think: pull actual figures from Odoo"
+              }
+            >
+              <IconDeepThink size={18} />
+            </button>
+          ) : null}
           <button
             type="button"
-            className={`ooa-chat-input-bar__deepthink${
-              deepThink ? " ooa-chat-input-bar__deepthink--active" : ""
-            }`}
-            disabled={loading}
-            onClick={() => onToggleDeepThink?.()}
-            aria-pressed={deepThink}
-            aria-label={deepThink ? "Deep Think on — will pull live Odoo data" : "Enable Deep Think"}
-            title={
-              deepThink
-                ? "Deep Think on: pulls actual figures from Odoo"
-                : "Deep Think: pull actual figures from Odoo"
-            }
+            className="ooa-chat-input-bar__send"
+            disabled={!input.trim() || loading}
+            onClick={onSend}
+            aria-label="Send message"
           >
-            <IconDeepThink size={18} />
+            <IconSend size={18} />
           </button>
-        ) : null}
-        <button
-          type="button"
-          className="ooa-chat-input-bar__send"
-          disabled={!input.trim() || loading}
-          onClick={onSend}
-          aria-label="Send message"
-        >
-          <IconSend size={18} />
-        </button>
+        </div>
       </div>
       <p className="ooa-chat-input-bar__hint">
         {voicePhase === "recording"

@@ -118,6 +118,26 @@ export function IconSend({ size = 20 }) {
   );
 }
 
+export function IconVisualize({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 18l4-8 4 5 4-9 4 12" {...stroke} />
+      <rect x="3" y="3" width="18" height="18" rx="3" {...stroke} />
+    </svg>
+  );
+}
+
+export function IconDashboard({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4" y="4" width="7" height="7" rx="1.5" {...stroke} />
+      <rect x="13" y="4" width="7" height="7" rx="1.5" {...stroke} />
+      <rect x="4" y="13" width="7" height="7" rx="1.5" {...stroke} />
+      <rect x="13" y="13" width="7" height="7" rx="1.5" {...stroke} />
+    </svg>
+  );
+}
+
 export function IconDeepThink({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">

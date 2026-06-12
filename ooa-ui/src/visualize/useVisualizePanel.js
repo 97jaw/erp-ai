@@ -21,8 +21,6 @@ export default function useVisualizePanel() {
 
   const notifyDragStart = useCallback(() => {
     setIsDraggingFromChat(true);
-    setOpen(true);
-    window.dispatchEvent(new CustomEvent(VISUALIZE_OPEN_EVENT));
   }, []);
 
   const notifyDragEnd = useCallback(() => {

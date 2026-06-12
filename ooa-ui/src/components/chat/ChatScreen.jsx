@@ -31,6 +31,8 @@ import QuickActionsSidebar from "../../main/sidebar/QuickActionsSidebar";
 import ChatsSheet from "../../main/sidebar/ChatsSheet";
 import ChatScrollView from "../../main/chat/ChatScrollView";
 import ChatInputBar from "../../main/chat/ChatInputBar";
+import DeepThinkConsentModal from "../../main/chat/DeepThinkConsentModal";
+import ComingSoonFeatureModal from "../../main/chat/ComingSoonFeatureModal";
 import VoiceStatusBanner from "../../main/chat/VoiceStatusBanner";
 import { AuditPanel } from "../../audit";
 import "../../audit/styles/audit.css";
@@ -68,7 +70,9 @@ export default function ChatScreen({
   const [mainView, setMainView] = useState(
     () => (initialMainView === "audit" ? "audit" : "chat"),
   );
-  const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [sidebarExpanded, setSidebarExpanded] = useState(true);
+  const [deepThinkConsent, setDeepThinkConsent] = useState(null);
+  const [dashboardModalOpen, setDashboardModalOpen] = useState(false);
   const [chatsSheetOpen, setChatsSheetOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -251,11 +255,6 @@ export default function ChatScreen({
 
   const handleSidebarNav = useCallback(
     (item) => {
-      if (item?.action === "audit") {
-        setMainView("audit");
-        setChatsSheetOpen(false);
-        return;
-      }
       setMainView("chat");
       if (item?.action === "focus") {
         focusInput();
@@ -265,6 +264,17 @@ export default function ChatScreen({
     },
     [focusInput],
   );
+
+  const openAuditView = useCallback(() => {
+    setMainView("audit");
+    setChatsSheetOpen(false);
+    visualize.closePanel();
+  }, [visualize]);
+
+  const handleToggleVisualize = useCallback(() => {
+    setMainView("chat");
+    visualize.togglePanel();
+  }, [visualize]);
 
   useEffect(() => {
     if (!initialSpotlightQuery?.trim()) return;
@@ -458,9 +468,7 @@ export default function ChatScreen({
                 if (data.deep_think_available) {
                   setDeepThinkEligible(true);
                 }
-                if (visualization || data.auto_show_visualize) {
-                  visualize.openPanel();
-                }
+                /* Visualize opens only via top-bar / ⌘V — not auto on response */
               }
             }
           } catch (error) {}
@@ -484,6 +492,42 @@ export default function ChatScreen({
     }
   }, [loading, chatThreadId, updateQuery, visualize, deepThink]);
 
+  const requestSend = useCallback((text, options = {}) => {
+    const trimmed = String(text || "").trim();
+    if (!trimmed || loading) return;
+    const useDeepThink = options.deepThink !== undefined
+      ? Boolean(options.deepThink)
+      : deepThink;
+    if (useDeepThink) {
+      setDeepThinkConsent({
+        mode: "send",
+        payload: { text: trimmed, options: { ...options, deepThink: true } },
+      });
+      return;
+    }
+    sendMessage(trimmed, options);
+  }, [deepThink, loading, sendMessage]);
+
+  const handleDeepThinkToggle = useCallback(() => {
+    if (deepThink) {
+      setDeepThink(false);
+      return;
+    }
+    setDeepThinkConsent({ mode: "enable" });
+  }, [deepThink]);
+
+  const handleDeepThinkConsentConfirm = useCallback(() => {
+    if (!deepThinkConsent) return;
+    if (deepThinkConsent.mode === "enable") {
+      setDeepThink(true);
+      setDeepThinkConsent(null);
+      return;
+    }
+    const { text, options } = deepThinkConsent.payload || {};
+    setDeepThinkConsent(null);
+    if (text) sendMessage(text, options || {});
+  }, [deepThinkConsent, sendMessage]);
+
   const handleClarificationSelect = useCallback((option, originalQuery) => {
     // Clarifications continue the original turn — preserve its Deep Think mode.
     // Options flagged deep_think (period presets on report queries) force it on
@@ -492,7 +536,7 @@ export default function ChatScreen({
     const resumeDeepThink = Boolean(sourceQuery?.deepThink) || Boolean(option?.deep_think);
     const confirmedEntities = buildConfirmedEntities(option);
     if (confirmedEntities.length > 0) {
-      sendMessage(originalQuery, {
+      requestSend(originalQuery, {
         skipClarification: true,
         confirmedEntities,
         deepThink: resumeDeepThink,
@@ -507,8 +551,8 @@ export default function ChatScreen({
       return;
     }
     const enriched = buildClarificationQuery(originalQuery, option);
-    sendMessage(enriched, { skipClarification: true, deepThink: resumeDeepThink });
-  }, [sendMessage, focusInput, queries]);
+    requestSend(enriched, { skipClarification: true, deepThink: resumeDeepThink });
+  }, [requestSend, focusInput, queries]);
 
   const handleShowMoreSuggestions = useCallback(async (queryId) => {
     const query = queries.find((item) => item.id === queryId);
@@ -569,7 +613,7 @@ export default function ChatScreen({
   const handleInputKeyDown = (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      sendMessage(input);
+      requestSend(input);
     }
     if (event.key === "Escape") {
       event.preventDefault();
@@ -719,6 +763,7 @@ export default function ChatScreen({
   const shellClass = [
     "ooa-main-shell-wrap",
     visualize.open ? "ooa-main-shell-wrap--viz-open" : "",
+    sidebarExpanded ? "ooa-main-shell-wrap--sidebar-expanded" : "",
     `ooa-main-shell-wrap--viz-${vizBorderState}`,
   ].filter(Boolean).join(" ");
 
@@ -744,9 +789,14 @@ export default function ChatScreen({
       <div className="ooa-main-shell">
         <MainTopBar
           user={user}
+          mainView={mainView}
+          visualizeOpen={visualize.open}
           onLogout={handleLogout}
           onClearConversation={clearConversation}
           onNewChat={handleNewChat}
+          onOpenAudit={openAuditView}
+          onToggleVisualize={handleToggleVisualize}
+          onBuildDashboard={() => setDashboardModalOpen(true)}
           onOpenChats={() => {
             switchToChat();
             setChatsSheetOpen(true);
@@ -774,7 +824,6 @@ export default function ChatScreen({
         <QuickActionsSidebar
           queries={queries}
           activeQueryId={activeQueryId}
-          mainView={mainView}
           onNavAction={handleSidebarNav}
           onSelectHistory={(queryId) => {
             switchToChat();
@@ -817,7 +866,7 @@ export default function ChatScreen({
                 onOpenSpotlight={() => focusInput()}
                 onSeedQuery={(query) => {
                   if (typeof query === "string" && query.trim()) {
-                    sendMessage(query);
+                    requestSend(query);
                   } else {
                     focusInput();
                   }
@@ -832,7 +881,7 @@ export default function ChatScreen({
                 pendingVizType={pendingVizType}
                 toolSteps={toolSteps}
                 language={user?.language || "en"}
-                onSuggestion={sendMessage}
+                onSuggestion={requestSend}
                 onClarificationSelect={handleClarificationSelect}
                 onClarificationSkip={handleClarificationSelect}
                 onShowMoreSuggestions={() => handleShowMoreSuggestions(activeQueryId)}
@@ -851,13 +900,13 @@ export default function ChatScreen({
               rtlInput={isArabic(input)}
               onInputChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
-              onSend={() => sendMessage(input)}
+              onSend={() => requestSend(input)}
               onStartRecording={startRecording}
               onStopRecording={stopRecording}
-              onSelectSuggestion={sendMessage}
+              onSelectSuggestion={requestSend}
               deepThink={deepThink}
               deepThinkEligible={deepThinkEligible}
-              onToggleDeepThink={() => setDeepThink((value) => !value)}
+              onToggleDeepThink={handleDeepThinkToggle}
             />
           </div>
         </main>
@@ -869,6 +918,20 @@ export default function ChatScreen({
           <button type="button" onClick={() => setError(null)}>×</button>
         </div>
       ) : null}
+
+      <DeepThinkConsentModal
+        open={Boolean(deepThinkConsent)}
+        mode={deepThinkConsent?.mode || "send"}
+        onConfirm={handleDeepThinkConsentConfirm}
+        onCancel={() => setDeepThinkConsent(null)}
+      />
+
+      <ComingSoonFeatureModal
+        open={dashboardModalOpen}
+        title="Build My Dashboard"
+        body="Personalized executive dashboards are under development. You will be able to pin KPIs, projects, and reports here soon."
+        onClose={() => setDashboardModalOpen(false)}
+      />
     </div>
   );
 }

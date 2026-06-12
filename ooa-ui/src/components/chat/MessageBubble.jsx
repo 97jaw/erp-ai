@@ -9,36 +9,12 @@ import {
   humanizeOutput,
   normalizeVisualization,
 } from "../../utils/chat";
+import StreamingMessageText from "./StreamingMessageText";
 import VisualizationPanel from "../visualization/VisualizationPanel";
 import VisualizationSkeleton from "../visualization/VisualizationSkeleton";
 import SuggestionChips from "./SuggestionChips";
 import TypingIndicator from "./TypingIndicator";
 import ToolProgress from "./ToolProgress";
-
-function MessageText({ text, rtl }) {
-  const paragraphs = String(text || "").split(/\n+/).filter((part) => part.trim());
-  if (!paragraphs.length) return null;
-
-  return (
-    <>
-      {paragraphs.map((paragraph, index) => {
-        const direction = rtl ? "rtl" : detectTextDirection(paragraph);
-        return (
-          <p
-            key={`${index}-${paragraph.slice(0, 12)}`}
-            style={{
-              direction,
-              textAlign: direction === "rtl" ? "right" : "left",
-              margin: index === 0 ? 0 : "0.65em 0 0",
-            }}
-          >
-            {humanizeOutput(paragraph)}
-          </p>
-        );
-      })}
-    </>
-  );
-}
 
 export default function MessageBubble({
   msg,
@@ -50,6 +26,7 @@ export default function MessageBubble({
   onShowMoreSuggestions,
   loadingMoreSuggestions = false,
   language = "en",
+  isStreaming = false,
   visualizeDragContext = null,
   onVisualizeDragStart,
   onVisualizeDragEnd,
@@ -58,13 +35,16 @@ export default function MessageBubble({
   const [dragging, setDragging] = useState(false);
 
   const isUser = msg.role === "user";
-  const rtl = msg.id === "welcome" ? false : detectTextDirection(msg.text);
+  const preferDir = language?.startsWith("ar") ? "rtl" : "ltr";
+  const rtl = !isUser && msg.id !== "welcome"
+    ? detectTextDirection(msg.text, { prefer: preferDir }) === "rtl"
+    : detectTextDirection(msg.text, { prefer: preferDir }) === "rtl";
   const visualization = hasRenderableVisualization(msg.visualization)
     ? normalizeVisualization(msg.visualization)
     : null;
   const displayText = isUser ? msg.text : humanizeOutput(msg.text);
   const showText = Boolean(displayText?.trim());
-  const showPending = Boolean(pendingLabel) && !showText && !visualization;
+  const showPending = Boolean(pendingLabel) && !showText && !visualization && !isStreaming;
   const showSkeleton = Boolean(pendingVizType) && !visualization && !showPending;
   const depth = visualization ? 0.85 : msg.suggestions?.length ? 0.7 : 1;
   const parallaxShift = -(parallaxOffset || 0) * (1 - depth) * 0.04;
@@ -179,20 +159,23 @@ export default function MessageBubble({
           </div>
         ) : null}
 
-        {showText ? (
+        {showText || isStreaming ? (
           <div
             className={`ooa-bubble ${isUser ? "ooa-bubble--user" : "ooa-bubble--bot"}`}
+            dir={isUser ? (rtl ? "rtl" : "ltr") : preferDir}
             style={{
-              direction: rtl ? "rtl" : "ltr",
-              textAlign: isUser ? (rtl ? "right" : "left") : rtl ? "right" : "left",
+              textAlign: rtl ? "right" : "left",
             }}
           >
             {isUser ? (
               <span className="ooa-bubble__text">{displayText}</span>
             ) : (
-              <MessageText text={displayText} rtl={rtl} />
+              <StreamingMessageText
+                text={displayText}
+                language={language}
+                isStreaming={isStreaming}
+              />
             )}
-            {showPending ? <span className="ooa-bubble__cursor" /> : null}
           </div>
         ) : null}
 

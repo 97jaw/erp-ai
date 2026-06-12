@@ -22,11 +22,14 @@ const LATIN_RE = /[a-zA-Z]/g;
 export const isArabic = (text = "") => ARABIC_RE.test(text);
 
 /** Per-paragraph direction for mixed Arabic/English (Bug 7). */
-export const detectTextDirection = (text = "") => {
+export const detectTextDirection = (text = "", { prefer = "ltr" } = {}) => {
   const arabicChars = (text.match(ARABIC_RE) || []).length;
   const latinChars = (text.match(LATIN_RE) || []).length;
-  if (arabicChars === 0 && latinChars === 0) return "ltr";
-  return arabicChars > latinChars ? "rtl" : "ltr";
+  if (arabicChars === 0) return "ltr";
+  if (latinChars === 0) return "rtl";
+  const letterTotal = arabicChars + latinChars;
+  if (arabicChars / letterTotal >= 0.45) return "rtl";
+  return prefer === "rtl" ? "rtl" : "ltr";
 };
 
 export const sessionId = () => Math.random().toString(36).slice(2);

@@ -4,11 +4,3 @@ export const SIDEBAR_NAV_ITEMS = [
   { id: "chat-list", icon: "chats", label: "Chat List", action: "chat-list" },
   { id: "sessions", icon: "clock", label: "Sessions", action: "sessions" },
 ];
-
-/** Audit lane — pinned at bottom of the sidebar. */
-export const AUDIT_NAV_ITEM = {
-  id: "audit",
-  icon: "audit",
-  label: "Audit",
-  action: "audit",
-};

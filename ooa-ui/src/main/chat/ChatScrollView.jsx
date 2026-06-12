@@ -88,7 +88,10 @@ export default function ChatScrollView({
               <div className="ooa-chat-thread__query">
                 <MessageBubble msg={userMessage} onSuggestion={onSuggestion} />
               </div>
-              <div className="ooa-response-card">
+              <div
+                className="ooa-response-card"
+                dir={language?.startsWith("ar") ? "auto" : "ltr"}
+              >
                 {awaitingClarification ? (
                   <ClarificationCard
                     clarification={query.response?.clarification}
@@ -102,6 +105,7 @@ export default function ChatScrollView({
                     pendingLabel={showPending ? loadingStage : null}
                     pendingVizType={showPending ? pendingVizType : null}
                     toolSteps={showPending ? toolSteps : null}
+                    isStreaming={showPending && Boolean(botMessage.text?.trim())}
                     onSuggestion={onSuggestion}
                     onShowMoreSuggestions={
                       isActive ? () => onShowMoreSuggestions?.(query.id) : undefined

@@ -1,12 +1,15 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
+  IconAudit,
   IconBell,
   IconChats,
+  IconDashboard,
   IconIntegration,
   IconLogout,
   IconNewChat,
   IconSearch,
+  IconVisualize,
 } from "../../components/common/MainIcons";
 import ProfileMenu from "../../components/chat/ProfileMenu";
 import MainThemeMenu from "./MainThemeMenu";
@@ -29,6 +32,11 @@ export default function MainTopBar({
   onToggleSound,
   onVolumeChange,
   onOpenSearch,
+  mainView = "chat",
+  visualizeOpen = false,
+  onOpenAudit,
+  onToggleVisualize,
+  onBuildDashboard,
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -101,6 +109,48 @@ export default function MainTopBar({
       </div>
 
       <div className="ooa-main-topbar__group ooa-main-topbar__group--utility">
+        {onOpenAudit ? (
+          <button
+            type="button"
+            className={`ooa-main-topbar__ai-btn${
+              mainView === "audit" ? " ooa-main-topbar__ai-btn--active" : ""
+            } ooa-main-topbar__ai-btn--audit`}
+            aria-label="Audit"
+            title="Audit — change history & activity"
+            aria-pressed={mainView === "audit"}
+            onClick={onOpenAudit}
+          >
+            <IconAudit size={18} />
+            <span className="ooa-main-topbar__btn-label">Audit</span>
+          </button>
+        ) : null}
+        {onToggleVisualize ? (
+          <button
+            type="button"
+            className={`ooa-main-topbar__ai-btn${
+              visualizeOpen ? " ooa-main-topbar__ai-btn--active" : ""
+            } ooa-main-topbar__ai-btn--visualize`}
+            aria-label="Visualize"
+            title="Visualize — PDF & Excel reports"
+            aria-pressed={visualizeOpen}
+            onClick={onToggleVisualize}
+          >
+            <IconVisualize size={18} />
+            <span className="ooa-main-topbar__btn-label">Visualize</span>
+          </button>
+        ) : null}
+        {onBuildDashboard ? (
+          <button
+            type="button"
+            className="ooa-main-topbar__ai-btn ooa-main-topbar__ai-btn--dashboard"
+            aria-label="Build My Dashboard"
+            title="Build My Dashboard (coming soon)"
+            onClick={onBuildDashboard}
+          >
+            <IconDashboard size={18} />
+            <span className="ooa-main-topbar__btn-label">Dashboard</span>
+          </button>
+        ) : null}
         {onNewChat ? (
           <button
             type="button"

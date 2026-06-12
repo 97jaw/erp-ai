@@ -430,17 +430,21 @@ def main() -> int:
 
         # --- SECTION E (structure + API smoke) ---
         qa = (ROOT / "ooa-ui/src/main/sidebar/quickActions.js").read_text()
+        topbar = (ROOT / "ooa-ui/src/main/topbar/MainTopBar.jsx").read_text()
         e1 = (
             "Search" in qa
             and "Chat List" in qa
             and "Sessions" in qa
-            and "Audit" in qa
+            and "Audit" not in qa
             and "P&L" not in qa
             and "Projects" not in qa
             and "Voice" not in qa
             and "Tasks" not in qa
+            and "onOpenAudit" in topbar
+            and "onToggleVisualize" in topbar
+            and "onBuildDashboard" in topbar
         )
-        record(results, "E", "E1", e1, "quickActions.js sidebar nav verified")
+        record(results, "E", "E1", e1, "sidebar nav + topbar AI actions verified")
 
         e2_text = audit_stream(client, token, "what changed on Villa 34 today", f"r6-e2-{uuid.uuid4()}")
         record(
