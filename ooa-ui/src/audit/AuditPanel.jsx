@@ -43,17 +43,31 @@ export default function AuditPanel({ user, embedded = false }) {
   const [sessionId] = useState(() => readAuditSessionId());
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
+  const pinnedToBottomRef = useRef(true);
 
   useEffect(() => {
     persistAuditSessionId(sessionId);
   }, [sessionId]);
 
-  useEffect(() => {
+  const scrollToBottomIfPinned = useCallback((behavior = "auto") => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [narrative, auditData, loading]);
+    if (!el || !pinnedToBottomRef.current) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  }, []);
+
+  const handleBodyScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    pinnedToBottomRef.current = distance < 80;
+  }, []);
+
+  useEffect(() => {
+    scrollToBottomIfPinned("smooth");
+  }, [narrative, auditData, scrollToBottomIfPinned]);
 
   const goBack = useCallback(() => {
+    pinnedToBottomRef.current = false;
     setViewStack((prev) => {
       if (!prev.length) return prev;
       const next = [...prev];
@@ -61,6 +75,10 @@ export default function AuditPanel({ user, embedded = false }) {
       setNarrative(frame.narrative || "");
       setAuditData(frame.auditData || null);
       return next;
+    });
+    window.requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = 0;
     });
   }, []);
 
@@ -94,10 +112,15 @@ export default function AuditPanel({ user, embedded = false }) {
         setViewStack([]);
       }
 
+      pinnedToBottomRef.current = true;
       setLoading(true);
       setStatus("Analyzing audit trail...");
       setNarrative("");
       setAuditData(null);
+      window.requestAnimationFrame(() => {
+        const el = scrollRef.current;
+        if (el) el.scrollTop = 0;
+      });
 
       let streamed = "";
       try {
@@ -171,7 +194,11 @@ export default function AuditPanel({ user, embedded = false }) {
         ) : null}
       </header>
 
-      <div className="ooa-audit-panel__body" ref={scrollRef}>
+      <div
+        className="ooa-audit-panel__body"
+        ref={scrollRef}
+        onScroll={handleBodyScroll}
+      >
         {showEmpty ? (
           <div className="ooa-audit-panel__empty">
             <div className="ooa-audit-panel__empty-icon" aria-hidden="true">
