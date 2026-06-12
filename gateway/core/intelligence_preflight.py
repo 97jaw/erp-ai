@@ -59,10 +59,10 @@ OUT OF SCOPE QUERY DETECTED:
 {reason}
 
 MANDATORY RESPONSE RULES:
-- Do NOT call Odoo tools or HR/payroll tools for this request
+- Do NOT call Odoo tools for this request
 - Do NOT claim a database error, system error, connection issue, or operation in progress
 - Do NOT tell the user to try again later
-- Respond honestly that payroll/payslip access is not available in this assistant
+- Respond honestly using the reason above (read-only / ERP-only / non-ERP)
 - Provide the alternative from the reason above when available
 - Keep the response short and direct
 """

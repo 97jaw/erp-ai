@@ -56,21 +56,24 @@ WHAT'S COMING SOON (mention when relevant):
 {self._format_list(self.coming_soon)}
 
 CRITICAL RULES:
-- If asked about an "unavailable" capability:
-  → State honestly it's not available
-  → Suggest alternative if any
-  → Offer to track when ready
+- For ANY read/data question about Odoo (HR, payroll, inventory, purchases,
+  sales, fleet, timesheets, or any installed model): attempt query_odoo or
+  aggregate_odoo. Use introspect_odoo_schema when unsure of the model.
+- If query_odoo returns no rows: say "no data found" honestly — do not refuse
+  upfront because a module was previously marked unavailable.
+- If asked about an "unavailable" capability (writes or non-ERP):
+  → State honestly what you cannot do (read-only / ERP-only)
   → DO NOT FABRICATE FAKE ERRORS like "database issue"
-
 - If asked about "coming_soon" capability:
   → Acknowledge it's in development
   → Provide ETA if known
-  → Suggest workaround
+  → Suggest workaround when possible
 """
 
     def tools_summary(self) -> str:
         """Return gateway tool names available for strategy planning prompts."""
         return (
+            "query_odoo, aggregate_odoo, introspect_odoo_schema, "
             "get_financial_report, get_project_expenses, get_project_financial_data, "
             "get_project_expense_summary, get_project_expense_breakdown, compare_project_expenses, "
             "get_general_ledger, get_trial_balance, get_partner_ageing, get_partner_ledger, "
@@ -94,6 +97,10 @@ CRITICAL RULES:
 
 CAPABILITY_MANIFEST = CapabilityManifest(
     available=[
+        Capability(
+            "universal.odoo_read",
+            "Read any Odoo model via query_odoo and aggregate_odoo",
+        ),
         Capability("financial.pandl", "Profit & Loss reports"),
         Capability("financial.balance_sheet", "Balance Sheet"),
         Capability("financial.cash_flow", "Cash Flow Statement"),
@@ -107,6 +114,17 @@ CAPABILITY_MANIFEST = CapabilityManifest(
         Capability("partner.search", "Customer/Vendor search"),
         Capability("partner.ageing", "Receivables/Payables ageing"),
         Capability("partner.ledger", "Partner transaction history"),
+        Capability("hr.employees", "Employee directory and headcount reads"),
+        Capability("hr.payslips", "Payslip reads via query_odoo"),
+        Capability("hr.attendance", "Attendance record reads"),
+        Capability("hr.leave_balance", "Leave balance reads"),
+        Capability("inventory.stock", "Inventory and stock level reads"),
+        Capability("purchase.read", "Purchase orders and vendor data reads"),
+        Capability("sales.read", "Sales orders and quotation reads"),
+        Capability("crm.opportunities", "CRM opportunity reads"),
+        Capability("fleet.read", "Fleet vehicle reads"),
+        Capability("timesheet.read", "Timesheet and analytic line reads"),
+        Capability("fsm.read", "Field service reads"),
         Capability("reports.generate_pdf", "PDF report generation"),
         Capability("reports.generate_excel", "Excel export"),
         Capability("voice.input", "Voice query input"),
@@ -116,46 +134,39 @@ CAPABILITY_MANIFEST = CapabilityManifest(
     ],
     unavailable=[
         Capability(
-            "hr.payslips",
-            "Payslip access",
-            alternative="Use the HR portal directly at hr.elrace.com",
-            roadmap="Q3 2026",
+            "write.create_record",
+            "Create new Odoo records (invoices, orders, employees, etc.)",
+            alternative="Use Odoo directly to create records",
         ),
         Capability(
-            "hr.attendance",
-            "Attendance records",
-            alternative="Use HR portal",
-            roadmap="Q3 2026",
+            "write.update_record",
+            "Update or modify existing Odoo records",
+            alternative="Use Odoo directly to edit records",
         ),
         Capability(
-            "hr.leave_balance",
-            "Leave balance",
-            alternative="Use HR portal",
-            roadmap="Q3 2026",
-        ),
-        Capability(
-            "inventory.stock",
-            "Inventory levels",
-            alternative="Use Odoo Inventory module directly",
-            roadmap="Q4 2026",
-        ),
-        Capability(
-            "crm.opportunities",
-            "Sales opportunities",
-            alternative="Use CRM module",
-            roadmap="Q4 2026",
-        ),
-        Capability(
-            "write.create_invoice",
-            "Create invoices",
+            "write.delete_record",
+            "Delete or archive Odoo records",
             alternative="Use Odoo directly",
-            roadmap="Q4 2026",
         ),
         Capability(
-            "write.approve_payments",
-            "Approve payments",
-            alternative="Use Odoo approval flow",
-            roadmap="2027",
+            "write.approve_transactions",
+            "Approve, post, cancel, or validate transactions",
+            alternative="Use Odoo approval workflows",
+        ),
+        Capability(
+            "non_erp.weather",
+            "Weather forecasts and non-business external data",
+            alternative="Use a weather service or app",
+        ),
+        Capability(
+            "non_erp.web_browsing",
+            "General web browsing and external sites",
+            alternative="Use a web browser",
+        ),
+        Capability(
+            "non_erp.general_knowledge",
+            "General knowledge unrelated to Elrace ERP data",
+            alternative="I'm an ERP assistant for Elrace Odoo data",
         ),
     ],
     coming_soon=[

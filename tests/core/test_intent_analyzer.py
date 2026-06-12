@@ -85,32 +85,29 @@ async def test_show_me_pandl_subject_area_financial() -> None:
 
 
 @pytest.mark.asyncio
-async def test_payslip_query_out_of_scope_true() -> None:
+async def test_payslip_query_not_forced_out_of_scope() -> None:
     intent = await _analyze(
         "what is my payslip",
         _intent_json(
             primary_action="fetch_data",
             subject_area="hr",
             specific_intent="Retrieve payslip",
-            out_of_scope=True,
-            out_of_scope_reason="hr.payslips is unavailable in the assistant",
+            out_of_scope=False,
         ),
     )
-    assert intent.out_of_scope is True
+    assert intent.out_of_scope is False
 
 
 @pytest.mark.asyncio
-async def test_payslip_query_out_of_scope_reason_mentions_hr_or_payroll() -> None:
+async def test_payslip_query_write_variant_still_out_of_scope() -> None:
     intent = await _analyze(
-        "what is my payslip",
+        "create a payslip for Ahmed",
         _intent_json(
             subject_area="hr",
-            out_of_scope=True,
-            out_of_scope_reason="hr.payslips is unavailable; use HR portal",
+            out_of_scope=False,
         ),
     )
-    reason = (intent.out_of_scope_reason or "").lower()
-    assert "hr" in reason or "payroll" in reason or "payslip" in reason
+    assert intent.out_of_scope is True
 
 
 @pytest.mark.asyncio

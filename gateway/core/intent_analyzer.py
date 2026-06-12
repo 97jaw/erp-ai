@@ -18,6 +18,25 @@ logger = logging.getLogger(__name__)
 
 INTENT_ANALYZER_MODEL = "claude-sonnet-4-20250514"
 
+_WRITE_OPERATION_RE = re.compile(
+    r"\b(create|delete|update|approve|modify|change|edit|post|cancel|validate|"
+    r"remove|archive|unlink)\b",
+    re.IGNORECASE,
+)
+_WRITE_TARGET_RE = re.compile(
+    r"\b(invoice|invoices|bill|bills|payment|payments|record|records|order|orders|"
+    r"employee|employees|project|projects|journal|entry|entries|timesheet|"
+    r"payslip|payslips|purchase|sale|stock|product|partner|vendor|contract|"
+    r"quotation|receipt|expense|expenses)\b",
+    re.IGNORECASE,
+)
+_NON_ERP_QUERY_RE = re.compile(
+    r"\b(weather|forecast|temperature|joke|jokes|\bhack\b|predict the future|"
+    r"sports score|football|cricket|movie|recipe)\b|"
+    r"who is the (king|president|prime minister)\b",
+    re.IGNORECASE,
+)
+
 
 class AnalyzerException(Exception):
     """Raised when intent analysis cannot complete due to Claude/API failure."""
@@ -250,8 +269,17 @@ class IntentAnalyzer:
             '"out_of_scope":false,'
             '"out_of_scope_reason":null'
             "}\n"
-            "Rules: mark out_of_scope when unavailable capability is required; "
-            "minimize requires_clarification for super_admin/top_mgmt; "
+            "OUT OF SCOPE RULES (out_of_scope=true ONLY when):\n"
+            "- Write/modification requests: create, delete, update, approve, modify, "
+            "change, edit, post, cancel, validate records in Odoo\n"
+            "- Non-ERP questions: weather, jokes, general knowledge, personal questions "
+            "not about ERP data (e.g. who is the King of UAE)\n"
+            "- Genuinely impossible: predict the future, hack into systems\n"
+            "OUT OF SCOPE=false for:\n"
+            "- ANY data retrieval about employees, payroll, inventory, purchases, sales, "
+            "fleet, timesheets, FSM, or ANY Odoo model — even unusual requests\n"
+            "- If unsure, set out_of_scope=false and let query_odoo attempt the read\n"
+            "Other rules: minimize requires_clarification for super_admin/top_mgmt; "
             "use fetch_data for report/data requests; "
             "when CONVERSATION CONTEXT lists a last project and the user asks for "
             "cost/expense breakdown or drill-down without naming a new project, set "
@@ -264,12 +292,11 @@ class IntentAnalyzer:
             "Examples: 'who is the PM of Villa 34' → project_attribute; "
             "'Villa 34 expense' → financial/project.\n"
             "CONVERSATIONAL queries:\n"
-            "Greetings, smalltalk, thanks, capability questions ('what can you do'), "
-            "and off-topic general knowledge (weather, sports, news) are conversational: "
+            "Greetings, smalltalk, thanks, capability questions ('what can you do'): "
             "set subject_area=general, primary_action=ask_question or other, entities=[], "
             "requires_clarification=false, out_of_scope=false.\n"
-            "Examples: 'Hi' → general/other; 'what can you help with' → general/ask_question; "
-            "'weather in Dubai' → general/other.\n"
+            "Examples: 'Hi' → general/other; 'what can you help with' → general/ask_question.\n"
+            "Off-topic non-ERP (weather, jokes, general knowledge): out_of_scope=true.\n"
             f"{CLARIFICATION_PROMPT_RULES}"
         )
 
@@ -299,47 +326,33 @@ class IntentAnalyzer:
         intent: Intent,
         context: ContextStack,
     ) -> Intent:
-        """Override intent when the query clearly requires an unavailable capability."""
+        """Override intent for write operations and non-ERP requests only."""
+        del context
         lowered = query.lower()
-        trigger_map = {
-            "payslip": "hr.payslips",
-            "pay slip": "hr.payslips",
-            "salary slip": "hr.payslips",
-            "leave balance": "hr.leave_balance",
-            "attendance record": "hr.attendance",
-            "attendance": "hr.attendance",
-        }
-        for phrase, capability_code in trigger_map.items():
-            if phrase not in lowered:
-                continue
-            if context.capability_manifest.status_of(capability_code) != "unavailable":
-                continue
-            unavailable = next(
-                (
-                    capability
-                    for capability in context.capability_manifest.unavailable
-                    if capability.code == capability_code
-                ),
-                None,
-            )
-            alternative = unavailable.alternative if unavailable else "Use the HR portal."
-            return Intent(
-                primary_action=intent.primary_action,
-                subject_area="hr",
-                specific_intent=intent.specific_intent or query,
-                entities=intent.entities,
-                implicit_requirements=intent.implicit_requirements,
-                ambiguities=intent.ambiguities,
-                expected_output=intent.expected_output,
-                urgency=intent.urgency,
-                estimated_complexity="simple",
+
+        if _NON_ERP_QUERY_RE.search(lowered):
+            return replace(
+                intent,
                 requires_clarification=False,
                 clarification_question=None,
                 out_of_scope=True,
                 out_of_scope_reason=(
-                    f"{capability_code} is unavailable. {alternative}"
+                    "I'm an ERP assistant for Elrace Odoo data — "
+                    "I can't help with that."
                 ),
             )
+
+        if _WRITE_OPERATION_RE.search(lowered) and _WRITE_TARGET_RE.search(lowered):
+            return replace(
+                intent,
+                requires_clarification=False,
+                clarification_question=None,
+                out_of_scope=True,
+                out_of_scope_reason=(
+                    "I can only read data, not create or modify records in Odoo."
+                ),
+            )
+
         return intent
 
     def _apply_project_attribute_detection(self, query: str, intent: Intent) -> Intent:

@@ -183,12 +183,12 @@ async def test_regular_user_context_has_conservative_assumption_level_in_prompt(
 
 
 @pytest.mark.asyncio
-async def test_payslip_appears_in_cannot_do_section_of_capability_output():
+async def test_payslip_appears_in_can_do_section_of_capability_output():
     builder = ContextStackBuilder()
     stack = await builder.build(
         _make_current_user(),
         SimpleChatRequest(message="Show my payslip"),
     )
     prompt = stack.to_prompt_section()
-    assert "CANNOT DO" in prompt
+    assert "WHAT YOU CAN DO" in prompt
     assert "hr.payslips" in prompt
