@@ -50,8 +50,20 @@ _api = _SlidingWindow()
 _admin = _SlidingWindow()
 
 
+def _is_loopback(ip: str | None) -> bool:
+    if not ip:
+        return False
+    normalized = ip.strip().lower()
+    if normalized in {"127.0.0.1", "::1", "localhost"}:
+        return True
+    return normalized.startswith("127.") or normalized == "::ffff:127.0.0.1"
+
+
 def check_login_ip(ip: str | None) -> None:
     address = ip or "unknown"
+    # Allow on-server acceptance scripts and curl health checks without burning the IP bucket.
+    if _is_loopback(address):
+        return
     if not _login.allow(f"login:{address}", limit=LOGIN_LIMIT, window_seconds=LOGIN_WINDOW_SECONDS):
         raise RateLimitExceeded(
             f"Too many login attempts. Try again in {LOGIN_WINDOW_SECONDS // 60} minutes.",

@@ -65,6 +65,15 @@ def login(
             if not token:
                 raise RuntimeError(f"login response missing token: {body!r}")
             return str(token)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 429:
+                raise RuntimeError(
+                    f"login rate-limited at {base}/auth/login — wait "
+                    f"{os.environ.get('AUTH_LOGIN_WINDOW_SECONDS', '900')}s or retry from browser"
+                ) from exc
+            last_exc = exc
+            if attempt < retries:
+                time.sleep(3 * attempt)
         except (httpx.HTTPError, RuntimeError) as exc:
             last_exc = exc
             if attempt < retries:
