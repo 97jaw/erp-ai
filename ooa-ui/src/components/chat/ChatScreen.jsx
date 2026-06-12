@@ -891,23 +891,25 @@ export default function ChatScreen({
               />
             )}
             <VoiceStatusBanner phase={voicePhase} />
-            <ChatInputBar
-              input={input}
-              inputRef={chatInputRef}
-              loading={loading}
-              recording={recording}
-              voicePhase={voicePhase}
-              rtlInput={isArabic(input)}
-              onInputChange={handleInputChange}
-              onKeyDown={handleInputKeyDown}
-              onSend={() => requestSend(input)}
-              onStartRecording={startRecording}
-              onStopRecording={stopRecording}
-              onSelectSuggestion={requestSend}
-              deepThink={deepThink}
-              deepThinkEligible={deepThinkEligible}
-              onToggleDeepThink={handleDeepThinkToggle}
-            />
+            <div className="ooa-chat-input-dock">
+              <ChatInputBar
+                input={input}
+                inputRef={chatInputRef}
+                loading={loading}
+                recording={recording}
+                voicePhase={voicePhase}
+                rtlInput={isArabic(input)}
+                onInputChange={handleInputChange}
+                onKeyDown={handleInputKeyDown}
+                onSend={() => requestSend(input)}
+                onStartRecording={startRecording}
+                onStopRecording={stopRecording}
+                onSelectSuggestion={requestSend}
+                deepThink={deepThink}
+                deepThinkEligible={deepThinkEligible}
+                onToggleDeepThink={handleDeepThinkToggle}
+              />
+            </div>
           </div>
         </main>
       </div>
