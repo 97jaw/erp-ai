@@ -905,7 +905,7 @@
   z-index: 5;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  align-items: center;
   min-height: 0;
 }
 
@@ -940,6 +940,7 @@
   overflow-x: hidden;
   padding: 20px 28px 12px;
   scroll-behavior: smooth;
+  box-sizing: border-box;
 }
 
 .ooa-chat-scroll__date {
@@ -957,7 +958,9 @@
   flex-direction: column;
   gap: 14px;
   width: 100%;
+  max-width: 860px;
   margin: 0 auto 28px;
+  box-sizing: border-box;
 }
 
 .ooa-chat-thread__query {
@@ -1041,6 +1044,7 @@
 .ooa-response-card {
   width: 100%;
   max-width: 100%;
+  margin: 0 auto;
   padding: 20px 22px;
   border-radius: 20px;
   border: 1px solid color-mix(in srgb, var(--ooa-glass-border) 70%, transparent);
@@ -1048,15 +1052,40 @@
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   text-align: left;
+  box-sizing: border-box;
 }
 
 .ooa-response-card .ooa-message--bot {
   justify-content: flex-start;
+  width: 100%;
+}
+
+.ooa-response-card .ooa-message__avatar {
+  flex-shrink: 0;
+}
+
+.ooa-response-card .ooa-message__content {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  align-items: stretch;
 }
 
 .ooa-response-card .ooa-bubble--bot,
 .ooa-response-card .ooa-message__content {
   text-align: left;
+}
+
+.ooa-response-card .ooa-visual-panel,
+.ooa-response-card .ooa-table-wrap,
+.ooa-response-card .ooa-chart-card,
+.ooa-response-card .ooa-report-card,
+.ooa-response-card .ooa-pe-summary {
+  width: 100%;
+  max-width: 100%;
+  margin-inline: auto;
+  box-sizing: border-box;
 }
 
 .ooa-chat-thread--active .ooa-response-card {
@@ -1720,7 +1749,41 @@
   }
 
   .ooa-chat-scroll__viewport {
-    padding: 12px 12px 8px;
+    padding: 12px 10px 8px;
+  }
+
+  .ooa-chat-thread {
+    max-width: 100%;
+    margin-bottom: 20px;
+  }
+
+  .ooa-response-card {
+    padding: 14px 12px;
+    border-radius: 16px;
+  }
+
+  .ooa-response-card .ooa-message--bot {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .ooa-response-card .ooa-message__toolbar {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .ooa-message__action--drag {
+    display: none;
+  }
+
+  .ooa-message__action--visualize {
+    display: inline-flex;
+  }
+
+  .ooa-table-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .ooa-chat-input-bar {

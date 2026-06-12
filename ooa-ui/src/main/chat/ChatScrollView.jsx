@@ -18,6 +18,7 @@ export default function ChatScrollView({
   loadingMoreSuggestions,
   onVisualizeDragStart,
   onVisualizeDragEnd,
+  onSendToVisualize,
   onJumpToLatest,
 }) {
   const scrollRef = useRef(null);
@@ -115,6 +116,7 @@ export default function ChatScrollView({
                     visualizeDragContext={visualizeDragContext}
                     onVisualizeDragStart={onVisualizeDragStart}
                     onVisualizeDragEnd={onVisualizeDragEnd}
+                    onSendToVisualize={onSendToVisualize}
                   />
                 )}
               </div>

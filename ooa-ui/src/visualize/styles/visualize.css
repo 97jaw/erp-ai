@@ -140,6 +140,7 @@
   border-radius: 16px;
   border: 2px dashed color-mix(in srgb, var(--ooa-glass-border) 80%, transparent);
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  touch-action: pan-y;
 }
 
 .ooa-viz-dropzone--active {
@@ -749,6 +750,17 @@
   .ooa-viz-rail,
   .ooa-viz-rail__collapse {
     display: none;
+  }
+
+  .ooa-viz-dropzone {
+    max-height: none;
+    min-height: 100px;
+    margin: 10px;
+  }
+
+  .ooa-viz-dropzone__hint {
+    font-size: 0.72rem;
+    line-height: 1.35;
   }
 
   .ooa-viz-agent__primary-action,

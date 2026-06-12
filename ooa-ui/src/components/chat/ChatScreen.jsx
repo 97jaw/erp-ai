@@ -274,6 +274,12 @@ export default function ChatScreen({
     visualize.togglePanel();
   }, [visualize]);
 
+  const handleSendToVisualize = useCallback(async (payload) => {
+    setMainView("chat");
+    visualize.openPanel();
+    await visualize.addItem(payload);
+  }, [visualize]);
+
   useEffect(() => {
     if (!initialSpotlightQuery?.trim()) return;
     focusInput(initialSpotlightQuery);
@@ -865,6 +871,7 @@ export default function ChatScreen({
                 loadingMoreSuggestions={loadingMoreSuggestions}
                 onVisualizeDragStart={visualize.notifyDragStart}
                 onVisualizeDragEnd={visualize.notifyDragEnd}
+                onSendToVisualize={handleSendToVisualize}
               />
             )}
             <VoiceStatusBanner phase={voicePhase} />

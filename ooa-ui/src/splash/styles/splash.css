@@ -1104,14 +1104,99 @@
 }
 
 @media (max-width: 767px) {
+  .splash-screen {
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .splash-header,
+  .splash-topbar {
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 14px 10px;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .splash-profile__meta {
+    display: none;
+  }
+
+  .splash-header__spacer {
+    display: none;
+  }
+
+  .splash-footer {
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .splash-header__left,
+  .splash-header__right,
+  .splash-topbar__left,
+  .splash-topbar__right {
+    gap: 6px;
+  }
+
+  .splash-body,
   .splash-content {
-    padding-bottom: 120px;
+    padding: calc(68px + env(safe-area-inset-top, 0px)) 14px calc(96px + env(safe-area-inset-bottom, 0px));
+    gap: 18px;
+    overflow-x: hidden;
+    min-height: 0;
+  }
+
+  .splash-left {
+    justify-content: flex-start;
+  }
+
+  .splash-greeting {
+    font-size: clamp(1.65rem, 7.5vw, 2.1rem);
+    line-height: 1.15;
+  }
+
+  .splash-greeting__question {
+    margin-top: 18px;
+    max-width: 100%;
+    font-size: 0.92rem;
+  }
+
+  .splash-pills {
+    max-width: 100%;
+    margin-bottom: 24px;
+    gap: 8px;
+  }
+
+  .splash-pill {
+    font-size: 0.82rem;
+    padding: 9px 14px;
+  }
+
+  .splash-right {
+    max-width: 100%;
+    width: 100%;
+    margin-inline: 0;
+  }
+
+  .splash-widget {
+    max-width: 100%;
+    padding: 18px 16px;
+    border-radius: 18px;
+  }
+
+  .splash-login-inline,
+  .splash-login-widget {
+    max-width: 100%;
   }
 
   .splash-footer {
     flex-direction: column;
     align-items: stretch;
     text-align: center;
+    padding-inline: 14px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .splash-content {
+    padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
   }
 }
 

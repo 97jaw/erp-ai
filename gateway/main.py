@@ -2466,6 +2466,10 @@ class QueryPageRequest(BaseModel):
     sort_dir  : str = "desc"
 
 
+class QueryFullRequest(BaseModel):
+    query_id: str
+
+
 class SuggestionMoreRequest(BaseModel):
     token: str
 
@@ -3021,6 +3025,25 @@ async def query_page(
             sort_by=request.sort_by,
             sort_dir=request.sort_dir,
         )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Query expired or not found. Please run the report again.",
+        ) from exc
+
+
+@app.post("/query/full")
+async def query_full(
+    request: QueryFullRequest,
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+):
+    """Return all cached rows for a query (Visualize export — no page cap)."""
+    await require_chat_user(http_request, credentials)
+    from gateway.query_pagination import QueryPageStore
+
+    try:
+        return QueryPageStore.get_full(request.query_id)
     except KeyError as exc:
         raise HTTPException(
             status_code=400,

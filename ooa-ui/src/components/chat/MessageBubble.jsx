@@ -1,7 +1,8 @@
 import { useCallback, useState } from "react";
 import { motion } from "framer-motion";
-import { IconClipboard, IconGrip } from "../common/MainIcons";
+import { IconClipboard, IconGrip, IconVisualize } from "../common/MainIcons";
 import { buildVisualizeDragPayload } from "../../visualize/dragPayload";
+import { prepareVisualizationForVisualizeSync } from "../../visualize/prepareForVisualize";
 import { VISUALIZE_DRAG_MIME } from "../../visualize/constants";
 import {
   detectTextDirection,
@@ -30,9 +31,11 @@ export default function MessageBubble({
   visualizeDragContext = null,
   onVisualizeDragStart,
   onVisualizeDragEnd,
+  onSendToVisualize,
 }) {
   const [copied, setCopied] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [sendingToVisualize, setSendingToVisualize] = useState(false);
 
   const isUser = msg.role === "user";
   const preferDir = language?.startsWith("ar") ? "rtl" : "ltr";
@@ -77,13 +80,16 @@ export default function MessageBubble({
       event.preventDefault();
       return;
     }
+    const fullVisualization = visualization
+      ? prepareVisualizationForVisualizeSync(visualization)
+      : null;
     const payload = buildVisualizeDragPayload({
       queryId: visualizeDragContext.queryId,
       messageId: msg.id,
       question: visualizeDragContext.question,
       text: msg.text,
-      visualization,
-      vizType: visualization?.visual_type || pendingVizType,
+      visualization: fullVisualization,
+      vizType: fullVisualization?.visual_type || visualization?.visual_type || pendingVizType,
       createdAt: visualizeDragContext.createdAt,
     });
     event.dataTransfer.setData(VISUALIZE_DRAG_MIME, JSON.stringify(payload));
@@ -99,6 +105,37 @@ export default function MessageBubble({
     visualization,
     pendingVizType,
     onVisualizeDragStart,
+  ]);
+
+  const handleSendToVisualize = useCallback(async () => {
+    if (!canDragToVisualize || sendingToVisualize || !onSendToVisualize) return;
+    setSendingToVisualize(true);
+    try {
+      const fullVisualization = visualization
+        ? prepareVisualizationForVisualizeSync(visualization)
+        : null;
+      const payload = buildVisualizeDragPayload({
+        queryId: visualizeDragContext.queryId,
+        messageId: msg.id,
+        question: visualizeDragContext.question,
+        text: msg.text,
+        visualization: fullVisualization,
+        vizType: fullVisualization?.visual_type || visualization?.visual_type || pendingVizType,
+        createdAt: visualizeDragContext.createdAt,
+      });
+      await onSendToVisualize(payload);
+    } finally {
+      setSendingToVisualize(false);
+    }
+  }, [
+    canDragToVisualize,
+    sendingToVisualize,
+    onSendToVisualize,
+    visualizeDragContext,
+    msg.id,
+    msg.text,
+    visualization,
+    pendingVizType,
   ]);
 
   const handleDragEnd = useCallback(() => {
@@ -143,18 +180,40 @@ export default function MessageBubble({
               </button>
             ) : null}
             {canDragToVisualize ? (
-              <span
-                className="ooa-message__action ooa-message__action--drag"
-                draggable
-                onDragStart={handleDragStart}
-                onDragEnd={handleDragEnd}
-                role="button"
-                tabIndex={0}
-                aria-label="Drag to Visualize panel"
-                title="Drag to Visualize"
-              >
-                <IconGrip size={16} />
-              </span>
+              <>
+                <button
+                  type="button"
+                  className={`ooa-message__action ooa-message__action--visualize${
+                    sendingToVisualize ? " ooa-message__action--busy" : ""
+                  }`}
+                  disabled={sendingToVisualize}
+                  onClick={handleSendToVisualize}
+                  aria-label={
+                    sendingToVisualize
+                      ? "Sending to Visualize"
+                      : "Send full response to Visualize"
+                  }
+                  title={
+                    sendingToVisualize
+                      ? "Preparing full data…"
+                      : "Send to Visualize (all records)"
+                  }
+                >
+                  <IconVisualize size={16} />
+                </button>
+                <span
+                  className="ooa-message__action ooa-message__action--drag"
+                  draggable
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Drag to Visualize panel"
+                  title="Drag to Visualize"
+                >
+                  <IconGrip size={16} />
+                </span>
+              </>
             ) : null}
           </div>
         ) : null}

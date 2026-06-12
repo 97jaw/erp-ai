@@ -288,6 +288,11 @@ textarea {
   gap: 10px;
 }
 
+.ooa-response-card .ooa-message__content,
+.ooa-chat-thread .ooa-response-card .ooa-message__content {
+  max-width: 100%;
+}
+
 .ooa-message__toolbar {
   display: flex;
   align-items: center;
@@ -334,6 +339,27 @@ textarea {
 
 .ooa-message__action--drag:active {
   cursor: grabbing;
+}
+
+.ooa-message__action--visualize {
+  color: color-mix(in srgb, #b91c1c 85%, var(--ooa-text-muted));
+}
+
+.ooa-message__action--visualize:hover:not(:disabled) {
+  color: #b91c1c;
+  border-color: color-mix(in srgb, #f87171 45%, transparent);
+  background: color-mix(in srgb, #fca5a5 12%, transparent);
+}
+
+.ooa-message__action--busy {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+@media (min-width: 769px) {
+  .ooa-message__action--visualize {
+    display: inline-flex;
+  }
 }
 
 .ooa-message--dragging {

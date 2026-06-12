@@ -117,3 +117,26 @@ class QueryPageStore:
                 "sort_dir": sort_dir,
             },
         }
+
+    @classmethod
+    def get_full(cls, query_id: str) -> dict[str, Any]:
+        """Return all cached rows for Visualize export (no pagination cap)."""
+        payload = cls.get(query_id)
+        if not payload:
+            raise KeyError(query_id)
+
+        headers = list(payload.get("headers") or [])
+        rows = [
+            list(row) if isinstance(row, (list, tuple)) else row
+            for row in payload.get("rows") or []
+        ]
+        total = len(rows)
+        return {
+            "query_id": query_id,
+            "label": payload.get("label") or "",
+            "visual_type": payload.get("visual_type") or "DATA_TABLE",
+            "headers": headers,
+            "rows": rows,
+            "meta": payload.get("meta") or {},
+            "total_records": total,
+        }

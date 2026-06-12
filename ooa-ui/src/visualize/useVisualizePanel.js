@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { VISUALIZE_OPEN_EVENT } from "./constants";
 import { isDuplicateDrop, parseVisualizeDragPayload } from "./dragPayload";
+import { prepareVisualizationForVisualize } from "./prepareForVisualize";
 
 export default function useVisualizePanel() {
   const [open, setOpen] = useState(false);
@@ -40,19 +41,43 @@ export default function useVisualizePanel() {
     setIsDraggingOver(false);
   }, []);
 
-  const handleDrop = useCallback((event) => {
+  const handleDrop = useCallback(async (event) => {
     event.preventDefault();
     setIsDraggingOver(false);
     setIsDraggingFromChat(false);
 
     const raw = event.dataTransfer.getData("application/x-ooa-visualize")
       || event.dataTransfer.getData("application/json");
-    const payload = parseVisualizeDragPayload(raw);
+    let payload = parseVisualizeDragPayload(raw);
     if (!payload) return;
+
+    if (payload.visualization) {
+      payload = {
+        ...payload,
+        visualization: await prepareVisualizationForVisualize(payload.visualization),
+      };
+    }
 
     setDroppedItems((prev) => {
       if (isDuplicateDrop(prev, payload)) return prev;
       return [...prev, payload];
+    });
+    setLastDropAt(Date.now());
+    setOpen(true);
+  }, []);
+
+  const addItem = useCallback(async (payload) => {
+    if (!payload || !payload.id) return;
+    let enriched = payload;
+    if (payload.visualization) {
+      enriched = {
+        ...payload,
+        visualization: await prepareVisualizationForVisualize(payload.visualization),
+      };
+    }
+    setDroppedItems((prev) => {
+      if (isDuplicateDrop(prev, enriched)) return prev;
+      return [...prev, enriched];
     });
     setLastDropAt(Date.now());
     setOpen(true);
@@ -82,5 +107,6 @@ export default function useVisualizePanel() {
     handleDrop,
     removeItem,
     clearItems,
+    addItem,
   };
 }
