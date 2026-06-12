@@ -40,6 +40,25 @@ export function IconChats({ size = 20 }) {
   );
 }
 
+export function IconClock({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8" {...stroke} />
+      <path d="M12 8v5l3 2" {...stroke} />
+    </svg>
+  );
+}
+
+export function IconAudit({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3l8 4v5c0 5-3.5 8.5-8 9-4.5-.5-8-4-8-9V7l8-4z" {...stroke} />
+      <circle cx="12" cy="11" r="2.5" {...stroke} />
+      <path d="M12 13.5V16" {...stroke} />
+    </svg>
+  );
+}
+
 export function IconBell({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
@@ -173,6 +192,9 @@ const QUICK_ACTION_ICONS = {
   mic: IconMic,
   clipboard: IconClipboard,
   search: IconSearch,
+  chats: IconChats,
+  clock: IconClock,
+  audit: IconAudit,
 };
 
 export function QuickActionIcon({ name, size = 20 }) {

@@ -2623,6 +2623,76 @@ def _intelligent_progress_steps(language: str, *, deep_think: bool = False) -> l
     ]
 
 
+@app.post("/audit/stream")
+async def audit_stream(
+    request: ChatRequest,
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+):
+    """Audit/Analyze agent — separate from chat."""
+    from gateway.audit.handler import AuditHandler
+
+    chat_user = await require_chat_user(
+        http_request, credentials, session_id=request.session_id
+    )
+    session_id = request.session_id or str(uuid4())
+
+    async def generate():
+        set_request_user(chat_user)
+        stream_started = time.perf_counter()
+        stream_status = "success"
+        language = _detect_language(request.message)
+        ai_streaming_connections.inc()
+        try:
+            try:
+                adapter = get_adapter()
+            except ConnectionError as exc:
+                stream_status = "error"
+                message = str(exc)
+                yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'text': message, 'session_id': session_id})}\n\n"
+                return
+
+            handler = AuditHandler(adapter)
+            async for chunk in handler.handle_stream(
+                request.message,
+                chat_user,
+                session_id,
+            ):
+                yield chunk
+        except Exception as exc:
+            stream_status = "error"
+            logger.error("[/audit/stream] Audit handler error: %s", exc)
+            message = (
+                "عذراً، حدث خطأ. يرجى المحاولة مرة أخرى."
+                if language == "ar"
+                else "Sorry, I encountered an error. Please try again."
+            )
+            yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'text': message, 'session_id': session_id})}\n\n"
+        finally:
+            ai_streaming_connections.dec()
+            chat_stream_duration.labels(status=stream_status).observe(
+                time.perf_counter() - stream_started
+            )
+            record_ai_query(
+                endpoint="/audit/stream",
+                language=language,
+                status=stream_status,
+            )
+            set_request_user(None)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
 @app.post("/chat/stream")
 async def chat_stream(
     request: ChatRequest,

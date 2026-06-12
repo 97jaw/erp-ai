@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { IconDiamond, QuickActionIcon } from "../../components/common/MainIcons";
 import { formatQueryAge } from "../../utils/layoutContent";
-import { QUICK_ACTION_ITEMS } from "./quickActions";
+import { AUDIT_NAV_ITEM, SIDEBAR_NAV_ITEMS } from "./quickActions";
 import PastChatsPanel from "./PastChatsPanel";
 
 export default function QuickActionsSidebar({
   queries = [],
   activeQueryId,
-  onQuickAction,
+  mainView = "chat",
+  onNavAction,
   onSelectHistory,
   onExpandedChange,
   pastChats = [],
@@ -29,30 +30,40 @@ export default function QuickActionsSidebar({
     });
   };
 
+  const handleNav = (item) => {
+    if (item.action === "sessions") {
+      setExpanded(true);
+      onExpandedChange?.(true);
+    }
+    onNavAction?.(item);
+  };
+
   return (
     <aside
       className={`ooa-quick-sidebar${expanded ? " ooa-quick-sidebar--expanded" : ""}`}
-      aria-label="Quick actions"
+      aria-label="Main navigation"
     >
       <button
         type="button"
         className="ooa-quick-sidebar__logo"
         onClick={toggleExpanded}
         aria-expanded={expanded}
-        title={expanded ? "Collapse sidebar" : "Expand sidebar — Past chats"}
+        title={expanded ? "Collapse sidebar" : "Expand sidebar — sessions"}
       >
         <IconDiamond size={18} />
         {expanded ? <span className="ooa-quick-sidebar__logo-text">OOA</span> : null}
       </button>
 
-      <nav className="ooa-quick-sidebar__nav">
-        {QUICK_ACTION_ITEMS.map((item) => (
+      <nav className="ooa-quick-sidebar__nav" aria-label="Chat navigation">
+        {SIDEBAR_NAV_ITEMS.map((item) => (
           <button
             key={item.id}
             type="button"
-            className="ooa-quick-sidebar__item"
+            className={`ooa-quick-sidebar__item${
+              item.action === "sessions" && expanded ? " ooa-quick-sidebar__item--active" : ""
+            }`}
             title={item.label}
-            onClick={() => onQuickAction?.(item)}
+            onClick={() => handleNav(item)}
           >
             <span className="ooa-quick-sidebar__icon" aria-hidden="true">
               <QuickActionIcon name={item.icon} size={20} />
@@ -101,6 +112,24 @@ export default function QuickActionsSidebar({
           </ul>
         </section>
       ) : null}
+
+      <div className="ooa-quick-sidebar__footer">
+        <button
+          type="button"
+          className={`ooa-quick-sidebar__item ooa-quick-sidebar__item--audit${
+            mainView === "audit" ? " ooa-quick-sidebar__item--active" : ""
+          }`}
+          title={AUDIT_NAV_ITEM.label}
+          onClick={() => onNavAction?.(AUDIT_NAV_ITEM)}
+        >
+          <span className="ooa-quick-sidebar__icon" aria-hidden="true">
+            <QuickActionIcon name={AUDIT_NAV_ITEM.icon} size={20} />
+          </span>
+          {expanded ? (
+            <span className="ooa-quick-sidebar__label">{AUDIT_NAV_ITEM.label}</span>
+          ) : null}
+        </button>
+      </div>
     </aside>
   );
 }

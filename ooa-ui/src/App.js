@@ -26,6 +26,17 @@ function AuthenticatedApp({ auth, pendingQuery, onLogout }) {
         }
       />
       <Route
+        path="/audit"
+        element={
+          <ChatScreen
+            user={auth}
+            initialSpotlightQuery={pendingQuery}
+            initialMainView="audit"
+            onLogout={onLogout}
+          />
+        }
+      />
+      <Route
         path="*"
         element={
           <ChatScreen

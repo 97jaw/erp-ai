@@ -1,9 +1,14 @@
-export const QUICK_ACTION_ITEMS = [
-  { id: "pl", icon: "chart", label: "P&L", query: "Show me profit and loss this month" },
-  { id: "projects", icon: "projects", label: "Projects", query: "Show active projects" },
-  { id: "cash", icon: "cash", label: "Cash", query: "Show cash flow this month" },
-  { id: "reports", icon: "trend", label: "Reports", query: "Generate monthly report" },
-  { id: "voice", icon: "mic", label: "Voice", query: "", action: "voice" },
-  { id: "tasks", icon: "clipboard", label: "Tasks", query: "Show my pending tasks" },
-  { id: "search", icon: "search", label: "Search", query: "", action: "focus" },
+/** Primary sidebar navigation — chat lane only (no quick-action queries). */
+export const SIDEBAR_NAV_ITEMS = [
+  { id: "search", icon: "search", label: "Search", action: "focus" },
+  { id: "chat-list", icon: "chats", label: "Chat List", action: "chat-list" },
+  { id: "sessions", icon: "clock", label: "Sessions", action: "sessions" },
 ];
+
+/** Audit lane — pinned at bottom of the sidebar. */
+export const AUDIT_NAV_ITEM = {
+  id: "audit",
+  icon: "audit",
+  label: "Audit",
+  action: "audit",
+};

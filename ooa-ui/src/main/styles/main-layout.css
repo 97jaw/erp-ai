@@ -251,6 +251,44 @@
   background: color-mix(in srgb, var(--ooa-glass-bg) 95%, var(--ooa-gold));
 }
 
+.ooa-quick-sidebar__item--active {
+  background: color-mix(in srgb, var(--ooa-cyan) 14%, transparent);
+}
+
+.ooa-quick-sidebar__item--active .ooa-quick-sidebar__icon {
+  color: var(--ooa-cyan);
+}
+
+.ooa-quick-sidebar__footer {
+  margin-top: auto;
+  width: 100%;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--ooa-glass-border) 60%, transparent);
+}
+
+.ooa-quick-sidebar__item--audit .ooa-quick-sidebar__icon {
+  color: var(--ooa-cyan);
+}
+
+.ooa-main-chat--audit {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+}
+
+.ooa-main-view-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+
+.ooa-main-view-pane--hidden {
+  display: none !important;
+}
+
 .ooa-quick-sidebar__icon {
   display: grid;
   place-items: center;

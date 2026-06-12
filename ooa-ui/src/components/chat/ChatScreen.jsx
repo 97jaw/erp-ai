@@ -32,6 +32,8 @@ import ChatsSheet from "../../main/sidebar/ChatsSheet";
 import ChatScrollView from "../../main/chat/ChatScrollView";
 import ChatInputBar from "../../main/chat/ChatInputBar";
 import VoiceStatusBanner from "../../main/chat/VoiceStatusBanner";
+import { AuditPanel } from "../../audit";
+import "../../audit/styles/audit.css";
 import { buildClarificationQuery, buildConfirmedEntities } from "../../utils/clarify";
 import { apiFetch } from "../../config/api";
 
@@ -51,6 +53,7 @@ function loadStoredQueries() {
 export default function ChatScreen({
   user,
   initialSpotlightQuery = "",
+  initialMainView = "chat",
   onLogout,
 }) {
   const [chatThreadId, setChatThreadIdState] = useState(() => getChatThreadId());
@@ -62,6 +65,9 @@ export default function ChatScreen({
   const [pastChatsLoading, setPastChatsLoading] = useState(false);
   const [pastChatsError, setPastChatsError] = useState(null);
   const [input, setInput] = useState("");
+  const [mainView, setMainView] = useState(
+    () => (initialMainView === "audit" ? "audit" : "chat"),
+  );
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [chatsSheetOpen, setChatsSheetOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -153,8 +159,13 @@ export default function ChatScreen({
     }
   }, [sidebarExpanded, user, fetchPastChats]);
 
+  const switchToChat = useCallback(() => {
+    setMainView("chat");
+  }, []);
+
   const handleLoadPastChat = useCallback(async (conversation) => {
     if (!conversation?.id) return;
+    setMainView("chat");
     setError(null);
     setPastChatsLoading(true);
     try {
@@ -231,11 +242,29 @@ export default function ChatScreen({
   ]);
 
   const focusInput = useCallback((seed = "") => {
+    setMainView("chat");
     if (seed) setInput(seed);
     window.requestAnimationFrame(() => {
       chatInputRef.current?.focus();
     });
   }, []);
+
+  const handleSidebarNav = useCallback(
+    (item) => {
+      if (item?.action === "audit") {
+        setMainView("audit");
+        setChatsSheetOpen(false);
+        return;
+      }
+      setMainView("chat");
+      if (item?.action === "focus") {
+        focusInput();
+      } else if (item?.action === "chat-list") {
+        setChatsSheetOpen(true);
+      }
+    },
+    [focusInput],
+  );
 
   useEffect(() => {
     if (!initialSpotlightQuery?.trim()) return;
@@ -718,7 +747,10 @@ export default function ChatScreen({
           onLogout={handleLogout}
           onClearConversation={clearConversation}
           onNewChat={handleNewChat}
-          onOpenChats={() => setChatsSheetOpen(true)}
+          onOpenChats={() => {
+            switchToChat();
+            setChatsSheetOpen(true);
+          }}
           soundEnabled={soundEnabled}
           volume={volume}
           onToggleSound={toggleSound}
@@ -742,18 +774,12 @@ export default function ChatScreen({
         <QuickActionsSidebar
           queries={queries}
           activeQueryId={activeQueryId}
-          onQuickAction={(item) => {
-            if (item?.action === "focus") {
-              focusInput();
-              return;
-            }
-            if (item?.action === "voice") {
-              startRecording();
-              return;
-            }
-            if (item?.query) sendMessage(item.query);
+          mainView={mainView}
+          onNavAction={handleSidebarNav}
+          onSelectHistory={(queryId) => {
+            switchToChat();
+            setActiveQueryId(queryId);
           }}
-          onSelectHistory={(queryId) => setActiveQueryId(queryId)}
           onExpandedChange={setSidebarExpanded}
           pastChats={pastChats}
           pastChatsLoading={pastChatsLoading}
@@ -761,58 +787,79 @@ export default function ChatScreen({
           activeConversationId={activeConversationId}
           onLoadPastChat={handleLoadPastChat}
           onRefreshPastChats={fetchPastChats}
-          onNewChat={handleNewChat}
+          onNewChat={() => {
+            switchToChat();
+            handleNewChat();
+          }}
           onDeleteChat={handleDeleteChat}
         />
 
-        <main className="ooa-main-chat" id="ooa-chat-main">
-          {!hasChat ? (
-            <WelcomeScreen
-              onOpenSpotlight={() => focusInput()}
-              onSeedQuery={(query) => {
-                if (typeof query === "string" && query.trim()) {
-                  sendMessage(query);
-                } else {
-                  focusInput();
-                }
-              }}
-            />
-          ) : (
-            <ChatScrollView
-              queries={queries}
-              activeQueryId={activeQueryId}
+        <main
+          className={`ooa-main-chat${mainView === "audit" ? " ooa-main-chat--audit" : ""}`}
+          id="ooa-chat-main"
+        >
+          <div
+            className={`ooa-main-view-pane ooa-main-view-pane--audit${
+              mainView !== "audit" ? " ooa-main-view-pane--hidden" : ""
+            }`}
+            aria-hidden={mainView !== "audit"}
+          >
+            <AuditPanel user={user} embedded />
+          </div>
+          <div
+            className={`ooa-main-view-pane ooa-main-view-pane--chat${
+              mainView !== "chat" ? " ooa-main-view-pane--hidden" : ""
+            }`}
+            aria-hidden={mainView !== "chat"}
+          >
+            {!hasChat ? (
+              <WelcomeScreen
+                onOpenSpotlight={() => focusInput()}
+                onSeedQuery={(query) => {
+                  if (typeof query === "string" && query.trim()) {
+                    sendMessage(query);
+                  } else {
+                    focusInput();
+                  }
+                }}
+              />
+            ) : (
+              <ChatScrollView
+                queries={queries}
+                activeQueryId={activeQueryId}
+                loading={loading}
+                loadingStage={loadingStage}
+                pendingVizType={pendingVizType}
+                toolSteps={toolSteps}
+                language={user?.language || "en"}
+                onSuggestion={sendMessage}
+                onClarificationSelect={handleClarificationSelect}
+                onClarificationSkip={handleClarificationSelect}
+                onShowMoreSuggestions={() => handleShowMoreSuggestions(activeQueryId)}
+                loadingMoreSuggestions={loadingMoreSuggestions}
+                onVisualizeDragStart={visualize.notifyDragStart}
+                onVisualizeDragEnd={visualize.notifyDragEnd}
+              />
+            )}
+            <VoiceStatusBanner phase={voicePhase} />
+            <ChatInputBar
+              input={input}
+              inputRef={chatInputRef}
               loading={loading}
-              loadingStage={loadingStage}
-              pendingVizType={pendingVizType}
-              toolSteps={toolSteps}
-              language={user?.language || "en"}
-              onSuggestion={sendMessage}
-              onClarificationSelect={handleClarificationSelect}
-              onClarificationSkip={handleClarificationSelect}
-              onShowMoreSuggestions={() => handleShowMoreSuggestions(activeQueryId)}
-              loadingMoreSuggestions={loadingMoreSuggestions}
-              onVisualizeDragStart={visualize.notifyDragStart}
-              onVisualizeDragEnd={visualize.notifyDragEnd}
+              recording={recording}
+              voicePhase={voicePhase}
+              rtlInput={isArabic(input)}
+              onInputChange={handleInputChange}
+              onKeyDown={handleInputKeyDown}
+              onSend={() => sendMessage(input)}
+              onStartRecording={startRecording}
+              onStopRecording={stopRecording}
+              onSelectSuggestion={sendMessage}
+              deepThink={deepThink}
+              deepThinkEligible={deepThinkEligible}
+              onToggleDeepThink={() => setDeepThink((value) => !value)}
             />
-          )}
-          <VoiceStatusBanner phase={voicePhase} />
-          <ChatInputBar
-            input={input}
-            inputRef={chatInputRef}
-            loading={loading}
-            recording={recording}
-            voicePhase={voicePhase}
-            rtlInput={isArabic(input)}
-            onInputChange={handleInputChange}
-            onKeyDown={handleInputKeyDown}
-            onSend={() => sendMessage(input)}
-            onStartRecording={startRecording}
-            onStopRecording={stopRecording}
-            onSelectSuggestion={sendMessage}
-            deepThink={deepThink}
-            deepThinkEligible={deepThinkEligible}
-            onToggleDeepThink={() => setDeepThink((value) => !value)}
-          />
+          </div>
         </main>
       </div>
 
