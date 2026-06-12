@@ -28,6 +28,15 @@ export default function VisualizePanel({
 
   return (
     <>
+      {open ? (
+        <button
+          type="button"
+          className="ooa-visualize-backdrop"
+          aria-label="Close Visualize panel"
+          onClick={onClose}
+        />
+      ) : null}
+
       <VisualizeToggle
         open={open}
         itemCount={droppedItems.length}

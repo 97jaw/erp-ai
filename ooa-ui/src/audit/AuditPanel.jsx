@@ -33,7 +33,7 @@ function viewLabel(auditData, narrative) {
   return "Previous results";
 }
 
-export default function AuditPanel({ user, embedded = false }) {
+export default function AuditPanel({ user, embedded = false, onCloseToChat }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
@@ -180,7 +180,18 @@ export default function AuditPanel({ user, embedded = false }) {
   return (
     <div className={`ooa-audit-panel${embedded ? " ooa-audit-panel--embedded" : ""}`}>
       <header className="ooa-audit-panel__header">
-        <div>
+        {embedded && onCloseToChat ? (
+          <button
+            type="button"
+            className="ooa-audit-panel__close-chat"
+            onClick={onCloseToChat}
+            aria-label="Back to chat"
+            title="Back to chat"
+          >
+            ×
+          </button>
+        ) : null}
+        <div className="ooa-audit-panel__header-text">
           <p className="ooa-audit-panel__eyebrow">Investigate</p>
           <h1 className="ooa-audit-panel__title">Audit Agent</h1>
           <p className="ooa-audit-panel__subtitle">

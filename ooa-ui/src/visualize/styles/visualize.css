@@ -732,7 +732,8 @@
 
 @media (max-width: 900px) {
   .ooa-visualize-panel {
-    width: min(100vw - 48px, 320px);
+    width: 100%;
+    max-width: none;
   }
 
   .ooa-viz-rail__collapse {
@@ -741,5 +742,22 @@
 
   .ooa-layout--visualize-open .ooa-layout__main {
     padding-left: 24px;
+  }
+}
+
+@media (max-width: 768px) {
+  .ooa-viz-rail,
+  .ooa-viz-rail__collapse {
+    display: none;
+  }
+
+  .ooa-viz-agent__primary-action,
+  .ooa-viz-agent__input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ooa-viz-agent__primary-btn {
+    width: 100%;
   }
 }

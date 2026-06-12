@@ -735,29 +735,32 @@ export default function ChatScreen({
 
   const shellClass = [
     "ooa-main-shell-wrap",
-    visualize.open ? "ooa-main-shell-wrap--viz-open" : "",
+    mainView === "audit" ? "ooa-main-shell-wrap--audit-view" : "",
+    visualize.open && mainView !== "audit" ? "ooa-main-shell-wrap--viz-open" : "",
     sidebarExpanded ? "ooa-main-shell-wrap--sidebar-expanded" : "",
-    `ooa-main-shell-wrap--viz-${vizBorderState}`,
+    mainView !== "audit" ? `ooa-main-shell-wrap--viz-${vizBorderState}` : "",
   ].filter(Boolean).join(" ");
 
   return (
     <div className={shellClass}>
-      <VisualizePanel
-        open={visualize.open}
-        borderState={vizBorderState}
-        droppedItems={visualize.droppedItems}
-        isDraggingOver={visualize.isDraggingOver}
-        isDraggingFromChat={visualize.isDraggingFromChat}
-        lastDropAt={visualize.lastDropAt}
-        chatSessionId={chatThreadId}
-        onToggle={visualize.togglePanel}
-        onClose={visualize.closePanel}
-        onDragOver={visualize.handleDragOver}
-        onDragLeave={visualize.handleDragLeave}
-        onDrop={visualize.handleDrop}
-        onRemoveItem={visualize.removeItem}
-        onClear={visualize.clearItems}
-      />
+      {mainView !== "audit" ? (
+        <VisualizePanel
+          open={visualize.open}
+          borderState={vizBorderState}
+          droppedItems={visualize.droppedItems}
+          isDraggingOver={visualize.isDraggingOver}
+          isDraggingFromChat={visualize.isDraggingFromChat}
+          lastDropAt={visualize.lastDropAt}
+          chatSessionId={chatThreadId}
+          onToggle={visualize.togglePanel}
+          onClose={visualize.closePanel}
+          onDragOver={visualize.handleDragOver}
+          onDragLeave={visualize.handleDragLeave}
+          onDrop={visualize.handleDrop}
+          onRemoveItem={visualize.removeItem}
+          onClear={visualize.clearItems}
+        />
+      ) : null}
 
       <div className="ooa-main-shell">
         <MainTopBar
@@ -768,6 +771,7 @@ export default function ChatScreen({
           onClearConversation={clearConversation}
           onNewChat={handleNewChat}
           onOpenAudit={openAuditView}
+          onCloseAudit={switchToChat}
           onToggleVisualize={handleToggleVisualize}
           onBuildDashboard={() => setDashboardModalOpen(true)}
           onOpenChats={() => {
@@ -826,7 +830,7 @@ export default function ChatScreen({
             }`}
             aria-hidden={mainView !== "audit"}
           >
-            <AuditPanel user={user} embedded />
+            <AuditPanel user={user} embedded onCloseToChat={switchToChat} />
           </div>
           <div
             className={`ooa-main-view-pane ooa-main-view-pane--chat${
