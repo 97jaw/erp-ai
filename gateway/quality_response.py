@@ -9,7 +9,11 @@ from gateway.quality_formatting import (
     humanize_group_label,
 )
 from gateway.quality_intent import detect_query_intent
-from gateway.quality_narrative import generate_narrative, is_legacy_period_expense_text
+from gateway.quality_narrative import (
+    generate_narrative,
+    is_legacy_period_expense_text,
+    is_orchestration_meta_text,
+)
 from gateway.quality_validation import validate_response_quality
 from gateway.progressive_disclosure import apply_progressive_disclosure
 from gateway.core.project_expense_routing import is_project_expense_tool_result
@@ -193,12 +197,16 @@ def polish_agent_response(
             in {"PROJECT_EXPENSE_SUMMARY", "PROJECT_EXPENSE_BREAKDOWN"}
         )
     )
+    if is_orchestration_meta_text(clean_text):
+        clean_text = ""
     if should_refresh_expense_text and visualization:
         narrative = generate_narrative(user_message, visualization, tool_results, language)
         if narrative:
             clean_text = narrative
-    elif not clean_text.strip():
-        clean_text = generate_narrative(user_message, visualization, tool_results, language)
+    elif not clean_text.strip() or is_orchestration_meta_text(clean_text):
+        narrative = generate_narrative(user_message, visualization, tool_results, language)
+        if narrative:
+            clean_text = narrative
 
     for result in reversed(tool_results):
         if isinstance(result, dict) and result.get("quality_warning") and not clean_text.strip():

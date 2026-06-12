@@ -9,11 +9,15 @@ from gateway.core.execution_orchestrator import ExecutionResult
 from gateway.core.intent_analyzer import Intent
 from gateway.core.project_expense_routing import is_project_expense_tool_result
 from gateway.quality_narrative import (
+    narrate_financial_report,
     narrate_project_expense_breakdown,
+    narrate_project_expense_comparison,
     narrate_project_expense_summary,
     narrate_project_activity,
     narrate_project_profile,
     narrate_project_records,
+    narrate_universal_aggregate,
+    narrate_universal_query,
 )
 from gateway.tools.project_activity import ACTIVITY_SOURCE
 from gateway.tools.project_expense import PROJECT_EXPENSE_TOOL_NAMES, SUMMARY_SOURCES
@@ -52,6 +56,18 @@ class ResultSynthesizer:
         if composed is not None:
             return self._from_composed_report(composed, intent)
 
+        universal = self._find_universal_tool_result(execution_result.results, intent)
+        if universal is not None:
+            return universal
+
+        financial = self._find_financial_report(execution_result.results, intent)
+        if financial is not None:
+            return financial
+
+        comparison = self._find_project_expense_comparison(execution_result.results, intent)
+        if comparison is not None:
+            return comparison
+
         aggregate_tables = self._collect_aggregate_tables(execution_result.results)
         if len(aggregate_tables) >= 2:
             return self._from_parallel_aggregates(aggregate_tables, intent)
@@ -74,16 +90,6 @@ class ResultSynthesizer:
             project_summary = self._find_legacy_project_expense_kpi(execution_result.results)
             if project_summary is not None:
                 return project_summary
-
-        if execution_result.results:
-            step_count = len(execution_result.results)
-            failure_count = len(execution_result.failures)
-            return SynthesizedResult(
-                text=(
-                    f"Completed {step_count} orchestrated step(s) for: {intent.specific_intent}. "
-                    f"{failure_count} step(s) failed."
-                ),
-            )
 
         return SynthesizedResult(
             text="No data found for that request. Please try narrowing the period or filters.",
@@ -233,6 +239,60 @@ class ResultSynthesizer:
         return None
 
     @staticmethod
+    def _find_universal_tool_result(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            source = str(payload.get("_source") or "")
+            if source == "universal_odoo_query" and payload.get("status") == "success":
+                return SynthesizedResult(
+                    text=narrate_universal_query(payload, user_message=intent.specific_intent),
+                )
+            if source == "universal_odoo_aggregate" and payload.get("status") == "success":
+                return SynthesizedResult(
+                    text=narrate_universal_aggregate(payload, user_message=intent.specific_intent),
+                )
+        return None
+
+    @staticmethod
+    def _find_financial_report(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if not isinstance(payload.get("kpis"), dict):
+                continue
+            text = narrate_financial_report(payload, user_message=intent.specific_intent)
+            if text:
+                return SynthesizedResult(text=text)
+        return None
+
+    @staticmethod
+    def _find_project_expense_comparison(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if payload.get("_source") != "compare_project_expenses":
+                continue
+            if payload.get("status") != "success":
+                continue
+            text = narrate_project_expense_comparison(payload, user_message=intent.specific_intent)
+            if text:
+                return SynthesizedResult(text=text)
+        return None
+
+    @staticmethod
     def _find_legacy_project_expense_kpi(results: dict[int, Any]) -> SynthesizedResult | None:
         for step_number in sorted(results.keys()):
             payload = results[step_number]
@@ -286,6 +346,8 @@ class ResultSynthesizer:
         for step_number in sorted(results.keys()):
             payload = results[step_number]
             if not isinstance(payload, dict):
+                continue
+            if payload.get("_source") in {"universal_odoo_query", "universal_odoo_aggregate"}:
                 continue
             rows = payload.get("rows") or payload.get("groups") or payload.get("data")
             if isinstance(rows, list) and rows:

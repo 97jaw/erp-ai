@@ -189,16 +189,18 @@ async def test_r1_12_arabic_employee_count_not_out_of_scope() -> None:
     assert IntelligentQueryHandler._requires_deep_think("كم عدد الموظفين", intent)
 
 
-def test_r1_strategy_planner_routes_hr_to_query_odoo() -> None:
+def test_r1_strategy_planner_routes_hr_count_to_aggregate_odoo() -> None:
     intent = Intent(
         primary_action="fetch_data",
         subject_area="hr",
         specific_intent="how many employees",
         entities=[],
+        expected_output="number",
     )
     tool, payload = StrategyPlanner._resolve_universal_read_tool(intent)
-    assert tool == "query_odoo"
+    assert tool == "aggregate_odoo"
     assert payload["model"] == "hr.employee"
+    assert payload["group_by"] == ["department_id"]
 
 
 def test_r1_strategy_planner_routes_purchase_orders_to_query_odoo() -> None:

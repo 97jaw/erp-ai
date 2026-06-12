@@ -118,6 +118,11 @@ def tool_results_from_execution(results: dict[int, Any]) -> list[Any]:
 
 def has_meaningful_tool_data(tool_results: list[Any]) -> bool:
     """Return True when tool payloads contain non-zero business values."""
+    for payload in tool_results:
+        if isinstance(payload, dict) and payload.get("status") == "error":
+            if payload.get("error_code") in {"permission_denied", "query_failed", "model_forbidden"}:
+                return True
+
     scalar_keys = (
         "total_expenses",
         "total_cost",
@@ -143,7 +148,22 @@ def has_meaningful_tool_data(tool_results: list[Any]) -> bool:
             return True
         if payload.get("_source") == "project_activity" and payload.get("status") == "success":
             return True
+        if payload.get("_source") == "compare_project_expenses" and payload.get("status") == "success":
+            if len(payload.get("projects") or []) >= 2:
+                return True
+        source = str(payload.get("_source") or "")
+        if source == "universal_odoo_query" and payload.get("status") == "success":
+            if int(payload.get("record_count") or 0) > 0 and payload.get("records"):
+                return True
+        if source == "universal_odoo_aggregate" and payload.get("status") == "success":
+            if int(payload.get("group_count") or 0) > 0:
+                return True
+        if source in {"introspect_models", "introspect_fields"} and payload.get("status") == "success":
+            if int(payload.get("model_count") or payload.get("field_count") or 0) > 0:
+                return True
         if payload.get("candidates"):
+            return True
+        if int(payload.get("record_count") or 0) > 0 and payload.get("records"):
             return True
         for key in scalar_keys:
             value = payload.get(key)
@@ -188,6 +208,20 @@ def no_data_message(
     tool_results: list[Any] | None = None,
 ) -> str:
     """Honest empty-data response — never fabricate figures."""
+    for payload in reversed(tool_results or []):
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("status") == "error":
+            message = str(payload.get("message") or "").strip()
+            code = str(payload.get("error_code") or "")
+            if code == "permission_denied":
+                model = payload.get("model") or "that model"
+                return f"You don't have access to read {model}."
+            if code == "model_forbidden":
+                return "That data is restricted in this assistant."
+            if message:
+                return f"The Odoo query did not complete: {message[:240]}"
+
     tool_name = _resolve_tool_name(tool_names, tool_results)
     if tool_name == "get_project_expense_breakdown":
         summary_message = _breakdown_empty_with_prior_summary_message(

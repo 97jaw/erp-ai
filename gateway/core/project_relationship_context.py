@@ -60,5 +60,45 @@ COMMON RELATIONSHIP QUERIES:
   "agreements expiring this month"
     → query agreement where end_date in current month range
 
+=== MULTI-STEP QUERY COMPOSITION ===
+
+For relationship queries, compose multiple tool calls. Do NOT answer in one vague search.
+
+PATTERN 1: "projects with no [thing]"
+  Step 1: aggregate_odoo("project.attachment", [], ["project_id"], ["id:count"])
+  Step 2: extract project_ids from step 1
+  Step 3: query_odoo("project.project",
+             [["id","not in", ids], ["active","=",true]],
+             ["id","name","partner_id"], limit=50)
+  Step 4: narrate the list
+
+PATTERN 2: "agreement/contract for [project]"
+  Step 1: query_odoo("project.project", [["name","ilike", name]],
+             ["id","name","agreement_id","partner_id"])
+  Step 2: query_odoo("agreement", [["id","=", agreement_id]],
+             ["code","name","partner_id","amount","start_date","end_date","state"])
+  Step 3: narrate agreement details
+
+PATTERN 3: "all projects for [client]"
+  Step 1: query_odoo("res.partner",
+             [["name","ilike", client], ["customer_rank",">",0]],
+             ["id","name"], limit=5)
+  Step 2: query_odoo("project.project",
+             [["partner_id","=", partner_id], ["active","=",true]],
+             ["id","name","agreement_id"], limit=50)
+
+PATTERN 4: "attachments for [project]"
+  Step 1: resolve project_id
+  Step 2: query_odoo("project.attachment", [["project_id","=", project_id]],
+             ["name","lead_attachment_type","create_date"])
+
+PATTERN 5: "[entity] details for [project]" (client, agreement, etc.)
+  Step 1: read linking field from project.project
+  Step 2: query related model
+  Step 3: narrate
+
+CRITICAL: When a query needs 2+ models, ALWAYS use multiple tool calls.
+Each step's result feeds the next step's domain filter.
+
 === END RELATIONSHIP CONTEXT ===
 """

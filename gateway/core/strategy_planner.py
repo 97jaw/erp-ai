@@ -189,6 +189,10 @@ class StrategyPlanner:
         company_report = self._plan_company_report_if_applicable(intent, context)
         if company_report is not None:
             strategy = company_report
+        elif self._is_relationship_composition_query(intent):
+            strategy = await self.plan_complex(intent, context)
+        elif self._resolve_universal_read_tool(intent) is not None:
+            strategy = self.plan_simple(intent, context)
         elif intent.primary_action == "search_entity" or self._needs_project_entity_search(
             intent,
             context,
@@ -665,6 +669,10 @@ class StrategyPlanner:
                     "date_to": date_to,
                 }
 
+        universal = self._resolve_universal_read_tool(intent)
+        if universal is not None:
+            return universal
+
         if intent.primary_action in {"search_entity", "fetch_data"} and intent.subject_area == "project":
             from gateway.core.entity_gate import EntityGate
             from gateway.core.project_expense_routing import is_project_expense_query
@@ -683,10 +691,6 @@ class StrategyPlanner:
         if intent.primary_action == "search_entity":
             return "search_odoo", {"model": "project.project", "query": intent.specific_intent}
 
-        universal = self._resolve_universal_read_tool(intent)
-        if universal is not None:
-            return universal
-
         raise StrategyException(
             f"No simple tool mapping found for intent action={intent.primary_action} "
             f"subject={intent.subject_area}",
@@ -702,17 +706,44 @@ class StrategyPlanner:
 
         query = f"{intent.specific_intent} {intent.subject_area}".lower().replace("_", " ")
 
+        if any(token in query for token in ("contract", "agreement")) and "employee" not in query:
+            return "query_odoo", {
+                "model": "agreement",
+                "domain": [],
+                "fields": ["name", "code", "partner_id", "amount", "start_date", "end_date", "state"],
+                "limit": 50,
+                "order": "end_date desc",
+            }
+
         if intent.subject_area == "hr" or any(
-            token in query for token in ("employee", "staff", "manager", "payroll", "contract")
+            token in query for token in ("employee", "staff", "manager", "payroll")
         ):
             domain: list[Any] = [["active", "=", True]]
             if "manager" in query:
                 domain.append(["child_ids", "!=", False])
+            if "department" in query or "per department" in query or "grouped" in query:
+                return "aggregate_odoo", {
+                    "model": "hr.employee",
+                    "domain": domain,
+                    "group_by": ["department_id"],
+                    "aggregates": ["id:count"],
+                    "limit": 200,
+                }
+            if "how many" in query or "count" in query or intent.expected_output == "number":
+                return "aggregate_odoo", {
+                    "model": "hr.employee",
+                    "domain": domain,
+                    "group_by": ["department_id"],
+                    "aggregates": ["id:count"],
+                    "limit": 200,
+                }
+            if "civil" in query:
+                domain.append(["department_id.name", "ilike", "civil"])
             return "query_odoo", {
                 "model": "hr.employee",
                 "domain": domain,
                 "fields": ["name", "job_id", "department_id"],
-                "limit": 500 if "how many" in query or "count" in query else 50,
+                "limit": 50,
             }
 
         if any(
@@ -760,8 +791,32 @@ class StrategyPlanner:
             payload["project_name"] = str(confirmed["name"])
         return payload
 
+    @staticmethod
+    def _is_relationship_composition_query(intent: Intent) -> bool:
+        """True when the query needs multi-model query_odoo composition."""
+        query = f"{intent.specific_intent} {intent.subject_area}".lower().replace("_", " ")
+        markers = (
+            "no attachment",
+            "without attachment",
+            "missing attachment",
+            "agreement for",
+            "contract for",
+            "projects for",
+            "projects for",
+            "attachment type",
+            "expiring",
+            "without project",
+            "per client",
+            "wo document",
+            "client for",
+            "client name for",
+        )
+        return any(marker in query for marker in markers)
+
     def _build_complex_prompt(self, intent: Intent, context: ContextStack) -> str:
         """Build a focused Claude prompt for multi-step strategy planning."""
+        from gateway.core.project_relationship_context import PROJECT_RELATIONSHIP_PROMPT_SECTION
+
         entities = [entity.to_dict() for entity in intent.entities]
         return (
             "You are a strategy planner for an ERP assistant.\n"
@@ -784,7 +839,10 @@ class StrategyPlanner:
             "keep total steps under 10; keep descriptions and fallbacks concise.\n"
             "For revenue-by-client period comparisons, use two parallel group_and_aggregate "
             "steps on account.move with group_by=['partner_id'], aggregates=['amount_total:sum'], "
-            "date_from/date_to per period — do not chain get_financial_report before group_and_aggregate."
+            "date_from/date_to per period — do not chain get_financial_report before group_and_aggregate.\n"
+            "For project relationship queries, use 2-4 sequential query_odoo / aggregate_odoo steps. "
+            "Never answer with a single project.project text search.\n"
+            f"{PROJECT_RELATIONSHIP_PROMPT_SECTION}"
         )
 
     @staticmethod

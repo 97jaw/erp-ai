@@ -657,12 +657,196 @@ def _bar_chart_rows(visualization: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _format_odoo_field_value(value: Any) -> str:
+    if isinstance(value, (list, tuple)) and len(value) >= 2 and isinstance(value[0], int):
+        return str(value[1])
+    if value in (False, None, ""):
+        return "—"
+    return str(value)
+
+
+def narrate_universal_query(
+    payload: dict[str, Any],
+    *,
+    user_message: str = "",
+    language: str = "en",
+) -> str:
+    """Narrate query_odoo list results."""
+    model = str(payload.get("model") or "record")
+    entity = model.split(".")[-1].replace("_", " ")
+    count = int(payload.get("record_count") or 0)
+    records = payload.get("records") or []
+    if count == 0 or not records:
+        if language == "ar":
+            return f"لم يتم العثور على سجلات {entity} مطابقة لهذا الطلب."
+        return f"No {entity} records found matching that criteria."
+
+    truncated = bool(payload.get("truncated"))
+    suffix = "+" if truncated else ""
+    if language == "ar":
+        lead = f"تم العثور على {count}{suffix} سجل {entity}."
+    else:
+        lead = f"Found {count}{suffix} {entity} record{'s' if count != 1 else ''}."
+
+    sample_fields = [
+        key
+        for key in records[0].keys()
+        if key not in {"id", "__last_update", "display_name"}
+    ][:4]
+    lines: list[str] = []
+    for record in records[:10]:
+        if not isinstance(record, dict):
+            continue
+        label = _format_odoo_field_value(record.get("name"))
+        if label == "—" and sample_fields:
+            label = " · ".join(
+                part
+                for part in (_format_odoo_field_value(record.get(field)) for field in sample_fields)
+                if part != "—"
+            )
+        if label == "—":
+            label = str(record.get("id", "record"))
+        lines.append(f"- {label}")
+
+    body = "\n".join(lines)
+    if count > 10:
+        more = count - 10
+        body += f"\n…and {more} more." if language != "ar" else f"\n…و{more} أخرى."
+    return f"{lead}\n{body}"
+
+
+def narrate_universal_aggregate(
+    payload: dict[str, Any],
+    *,
+    user_message: str = "",
+    language: str = "en",
+) -> str:
+    """Narrate aggregate_odoo grouped results."""
+    groups = payload.get("groups") or []
+    model = str(payload.get("model") or "record")
+    entity = model.split(".")[-1].replace("_", " ")
+    if not groups:
+        return f"No grouped {entity} results found for that criteria."
+
+    lines: list[str] = []
+    total_count = 0
+    for group in groups[:15]:
+        if not isinstance(group, dict):
+            continue
+        label = "—"
+        for key, value in group.items():
+            if key.startswith("__") or key.endswith("_count") or key.endswith(":count"):
+                continue
+            label = humanize_group_label(value)
+            if label != "Unassigned":
+                break
+        count_value = group.get("__count")
+        if count_value is None:
+            for key, value in group.items():
+                if key.endswith("_count") or key.endswith(":count"):
+                    count_value = value
+                    break
+        try:
+            count_int = int(float(count_value or 0))
+        except (TypeError, ValueError):
+            count_int = 0
+        total_count += count_int
+        count_text = f"{count_int:,}"
+        lines.append(f"- {label}: {count_text}")
+
+    if "employee" in entity and total_count > 0:
+        lead = f"Elrace has {total_count:,} active employees across {len(groups)} department{'s' if len(groups) != 1 else ''}."
+    else:
+        lead = f"Grouped {entity} results ({len(groups)} group{'s' if len(groups) != 1 else ''}, total {total_count:,}):"
+    return f"{lead}\n" + "\n".join(lines)
+
+
+def narrate_financial_report(
+    payload: dict[str, Any],
+    *,
+    user_message: str = "",
+    language: str = "en",
+) -> str:
+    """Narrate company financial report KPIs."""
+    kpis = payload.get("kpis") or {}
+    if not isinstance(kpis, dict) or not kpis:
+        return ""
+
+    income = float(kpis.get("total_income") or 0)
+    expense = float(kpis.get("total_expense") or 0)
+    profit = float(kpis.get("net_profit") or kpis.get("total_cost") or (income - expense))
+    date_from = payload.get("date_from") or ""
+    date_to = payload.get("date_to") or ""
+    period = f"{date_from} to {date_to}".strip(" to")
+
+    if language == "ar":
+        return (
+            f"ملخص الأرباح والخسائر ({period}): "
+            f"الإيرادات {format_currency(income)}، "
+            f"المصروفات {format_currency(expense)}، "
+            f"صافي الربح {format_currency(profit)}."
+        )
+    return (
+        f"P&L summary ({period}): revenue {format_currency(income)}, "
+        f"expenses {format_currency(expense)}, net profit {format_currency(profit)}."
+    )
+
+
+def narrate_project_expense_comparison(
+    payload: dict[str, Any],
+    *,
+    user_message: str = "",
+    language: str = "en",
+) -> str:
+    """Narrate compare_project_expenses side-by-side results."""
+    projects = payload.get("projects") or []
+    if len(projects) < 2:
+        return ""
+    lines: list[str] = []
+    for project in projects[:10]:
+        if not isinstance(project, dict):
+            continue
+        name = project.get("project_name") or f"Project {project.get('project_id')}"
+        total = float(project.get("total_expenses") or 0)
+        lines.append(f"- {name}: {format_currency(total)}")
+    lead = "Project expense comparison:"
+    return f"{lead}\n" + "\n".join(lines)
+
+
+_ORCHESTRATION_META_RE = re.compile(
+    r"Completed\s+\d+\s+orchestrated\s+step",
+    re.IGNORECASE,
+)
+
+
+def is_orchestration_meta_text(text: str) -> bool:
+    """True when synthesizer leaked pipeline metadata into user text."""
+    return bool(_ORCHESTRATION_META_RE.search(text or ""))
+
+
 def generate_narrative(
     user_message: str,
     visualization: dict[str, Any] | None,
     tool_results: list[Any],
     language: str = "en",
 ) -> str:
+    for result in reversed(tool_results):
+        if not isinstance(result, dict) or result.get("error"):
+            continue
+        source = str(result.get("_source") or "")
+        if source == "universal_odoo_query" and result.get("status") == "success":
+            return narrate_universal_query(result, user_message=user_message, language=language)
+        if source == "universal_odoo_aggregate" and result.get("status") == "success":
+            return narrate_universal_aggregate(result, user_message=user_message, language=language)
+        if result.get("kpis") and result.get("report_lines") is not None:
+            text = narrate_financial_report(result, user_message=user_message, language=language)
+            if text:
+                return text
+        if source == "compare_project_expenses" and result.get("status") == "success":
+            text = narrate_project_expense_comparison(result, user_message=user_message, language=language)
+            if text:
+                return text
+
     if not visualization:
         for result in reversed(tool_results):
             if not isinstance(result, dict) or result.get("error"):
@@ -754,6 +938,27 @@ def generate_narrative(
         if unit.upper() == "AED":
             return f"{label}: {format_currency(value)}."
         return f"{label}: {format_number(value)}." if value is not None else f"{label} is ready."
+
+    if visual_type == "FINANCIAL_REPORT":
+        for result in reversed(tool_results):
+            if isinstance(result, dict) and isinstance(result.get("kpis"), dict):
+                text = narrate_financial_report(result, user_message=user_message, language=language)
+                if text:
+                    return text
+        kpis = visualization.get("kpis") or {}
+        if isinstance(kpis, dict) and kpis:
+            return narrate_financial_report(
+                {"kpis": kpis, "date_from": visualization.get("date_from"), "date_to": visualization.get("date_to")},
+                user_message=user_message,
+                language=language,
+            )
+
+    if visual_type == "PROJECT_EXPENSE_COMPARISON":
+        for result in reversed(tool_results):
+            if isinstance(result, dict) and result.get("_source") == "compare_project_expenses":
+                text = narrate_project_expense_comparison(result, user_message=user_message, language=language)
+                if text:
+                    return text
 
     if visual_type == "GROUPED_TABLE":
         groups = (visualization.get("data") or {}).get("groups") or []

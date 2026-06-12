@@ -96,6 +96,88 @@ def test_strip_raw_syntax_removes_odoo_artifacts() -> None:
     assert "[54, 'Partner Name']" not in cleaned
 
 
+def test_has_meaningful_tool_data_universal_query() -> None:
+    assert has_meaningful_tool_data([
+        {
+            "status": "success",
+            "_source": "universal_odoo_query",
+            "record_count": 500,
+            "records": [{"id": 1, "name": "Employee A"}],
+        },
+    ]) is True
+    assert has_meaningful_tool_data([
+        {
+            "status": "success",
+            "_source": "universal_odoo_query",
+            "record_count": 0,
+            "records": [],
+        },
+    ]) is False
+
+
+def test_has_meaningful_tool_data_universal_aggregate() -> None:
+    assert has_meaningful_tool_data([
+        {
+            "status": "success",
+            "_source": "universal_odoo_aggregate",
+            "group_count": 17,
+            "groups": [{"department_id": [1, "Civil"], "__count": 1131}],
+        },
+    ]) is True
+
+
+def test_build_quality_response_preserves_universal_query_narration() -> None:
+    response = build_quality_response(
+        message="how many employees",
+        text="Completed 1 orchestrated step(s) for: count employees. 0 step(s) failed.",
+        visualization=None,
+        tool_names=["query_odoo"],
+        tool_results=[
+            {
+                "status": "success",
+                "_source": "universal_odoo_query",
+                "model": "hr.employee",
+                "record_count": 3,
+                "records": [
+                    {"id": 1, "name": "Alice"},
+                    {"id": 2, "name": "Bob"},
+                    {"id": 3, "name": "Carol"},
+                ],
+            },
+        ],
+        language="en",
+        intent=_intent(subject_area="hr", specific_intent="how many employees"),
+    )
+    assert not response.text.startswith(NO_DATA_PREFIX)
+    assert "Alice" in response.text or "Found 3" in response.text
+
+
+def test_build_quality_response_financial_report_regression() -> None:
+    response = build_quality_response(
+        message="P&L this year",
+        text="Completed 1 orchestrated step(s) for: P&L. 0 step(s) failed.",
+        visualization=None,
+        tool_names=["get_financial_report"],
+        tool_results=[
+            {
+                "status": "success",
+                "kpis": {
+                    "total_income": 5_000_000.0,
+                    "total_expense": 3_200_000.0,
+                    "net_profit": 1_800_000.0,
+                },
+                "report_lines": [],
+                "date_from": "2026-01-01",
+                "date_to": "2026-06-12",
+            },
+        ],
+        language="en",
+        intent=_intent(),
+    )
+    assert not response.text.startswith(NO_DATA_PREFIX)
+    assert "profit" in response.text.lower() or "revenue" in response.text.lower()
+
+
 @pytest.mark.asyncio
 async def test_build_quality_response_honest_when_tool_data_empty() -> None:
     response = build_quality_response(

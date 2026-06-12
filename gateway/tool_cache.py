@@ -98,6 +98,12 @@ def build_tool_cache_key(
         "date_to",
         "limit",
         "offset",
+        # Universal Odoo reads — without these every query_odoo call collides.
+        "model",
+        "domain",
+        "fields",
+        "aggregates",
+        "order",
     )
     variant = {
         field: payload[field]
