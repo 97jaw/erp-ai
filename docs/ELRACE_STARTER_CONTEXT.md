@@ -257,6 +257,12 @@ When in doubt: introspect, query a sample, confirm with the user.
 
 ---
 
+# PROJECT RELATIONAL MODEL (query composition)
+
+See injected `=== PROJECT RELATIONAL MODEL ===` block in the live system prompt for the full relationship graph and multi-step query patterns (`project.attachment`, `agreement`, `res.partner`, WO document checks, agreements expiring, etc.). Compose those reads with `query_odoo` and `aggregate_odoo`.
+
+---
+
 This document is the floor of Claude's Elrace knowledge.
 Everything else — Claude discovers as it goes.
 
