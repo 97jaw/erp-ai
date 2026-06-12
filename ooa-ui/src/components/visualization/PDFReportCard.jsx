@@ -1,8 +1,9 @@
-import { API_BASE } from "../../utils/chat";
+import { resolveApiBase } from "../../config/api";
 
 export default function PDFReportCard({ data, label }) {
-  const pdfUrl = data?.pdf_url ? `${API_BASE}${data.pdf_url}` : null;
-  const previewUrl = data?.preview_image ? `${API_BASE}${data.preview_image}` : null;
+  const apiBase = resolveApiBase();
+  const pdfUrl = data?.pdf_url ? `${apiBase}${data.pdf_url}` : null;
+  const previewUrl = data?.preview_image ? `${apiBase}${data.preview_image}` : null;
   const sizeKb = data?.size_bytes ? Math.round(data.size_bytes / 1024) : null;
 
   if (!pdfUrl) return null;

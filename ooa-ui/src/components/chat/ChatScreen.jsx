@@ -31,7 +31,6 @@ import QuickActionsSidebar from "../../main/sidebar/QuickActionsSidebar";
 import ChatsSheet from "../../main/sidebar/ChatsSheet";
 import ChatScrollView from "../../main/chat/ChatScrollView";
 import ChatInputBar from "../../main/chat/ChatInputBar";
-import DeepThinkConsentModal from "../../main/chat/DeepThinkConsentModal";
 import ComingSoonFeatureModal from "../../main/chat/ComingSoonFeatureModal";
 import VoiceStatusBanner from "../../main/chat/VoiceStatusBanner";
 import { AuditPanel } from "../../audit";
@@ -71,7 +70,6 @@ export default function ChatScreen({
     () => (initialMainView === "audit" ? "audit" : "chat"),
   );
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
-  const [deepThinkConsent, setDeepThinkConsent] = useState(null);
   const [dashboardModalOpen, setDashboardModalOpen] = useState(false);
   const [chatsSheetOpen, setChatsSheetOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -304,7 +302,7 @@ export default function ChatScreen({
         });
         const eligible = Boolean(payload?.eligible);
         setDeepThinkEligible(eligible);
-        if (!eligible) setDeepThink(false);
+        setDeepThink(eligible);
       } catch {
         /* keep current state on transient errors */
       }
@@ -318,7 +316,7 @@ export default function ChatScreen({
 
     const useDeepThink = options.deepThink !== undefined
       ? Boolean(options.deepThink)
-      : deepThink;
+      : deepThink && deepThinkEligible;
 
     setError(null);
     setInput("");
@@ -490,43 +488,18 @@ export default function ChatScreen({
       setPendingVizType(null);
       setToolSteps([]);
     }
-  }, [loading, chatThreadId, updateQuery, visualize, deepThink]);
+  }, [loading, chatThreadId, updateQuery, visualize, deepThink, deepThinkEligible]);
 
   const requestSend = useCallback((text, options = {}) => {
     const trimmed = String(text || "").trim();
     if (!trimmed || loading) return;
-    const useDeepThink = options.deepThink !== undefined
-      ? Boolean(options.deepThink)
-      : deepThink;
-    if (useDeepThink) {
-      setDeepThinkConsent({
-        mode: "send",
-        payload: { text: trimmed, options: { ...options, deepThink: true } },
-      });
-      return;
-    }
     sendMessage(trimmed, options);
-  }, [deepThink, loading, sendMessage]);
+  }, [loading, sendMessage]);
 
   const handleDeepThinkToggle = useCallback(() => {
-    if (deepThink) {
-      setDeepThink(false);
-      return;
-    }
-    setDeepThinkConsent({ mode: "enable" });
-  }, [deepThink]);
-
-  const handleDeepThinkConsentConfirm = useCallback(() => {
-    if (!deepThinkConsent) return;
-    if (deepThinkConsent.mode === "enable") {
-      setDeepThink(true);
-      setDeepThinkConsent(null);
-      return;
-    }
-    const { text, options } = deepThinkConsent.payload || {};
-    setDeepThinkConsent(null);
-    if (text) sendMessage(text, options || {});
-  }, [deepThinkConsent, sendMessage]);
+    if (!deepThinkEligible || loading) return;
+    setDeepThink((prev) => !prev);
+  }, [deepThinkEligible, loading]);
 
   const handleClarificationSelect = useCallback((option, originalQuery) => {
     // Clarifications continue the original turn — preserve its Deep Think mode.
@@ -921,16 +894,9 @@ export default function ChatScreen({
         </div>
       ) : null}
 
-      <DeepThinkConsentModal
-        open={Boolean(deepThinkConsent)}
-        mode={deepThinkConsent?.mode || "send"}
-        onConfirm={handleDeepThinkConsentConfirm}
-        onCancel={() => setDeepThinkConsent(null)}
-      />
-
       <ComingSoonFeatureModal
         open={dashboardModalOpen}
-        title="Build My Dashboard"
+        title="Build Dashboard"
         body="Personalized executive dashboards are under development. You will be able to pin KPIs, projects, and reports here soon."
         onClose={() => setDashboardModalOpen(false)}
       />

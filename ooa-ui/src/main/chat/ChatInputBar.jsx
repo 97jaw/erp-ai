@@ -103,25 +103,32 @@ export default function ChatInputBar({
           aria-label="Chat message"
         />
         <div className="ooa-chat-input-bar__trailing">
-          {deepThinkEligible ? (
-            <button
-              type="button"
-              className={`ooa-chat-input-bar__deepthink${
-                deepThink ? " ooa-chat-input-bar__deepthink--active" : ""
-              }`}
-              disabled={loading}
-              onClick={() => onToggleDeepThink?.()}
-              aria-pressed={deepThink}
-              aria-label={deepThink ? "Deep Think on — will pull live Odoo data" : "Enable Deep Think"}
-              title={
-                deepThink
-                  ? "Deep Think on: pulls actual figures from Odoo"
-                  : "Deep Think: pull actual figures from Odoo"
-              }
-            >
-              <IconDeepThink size={18} />
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className={`ooa-chat-input-bar__deepthink${
+              deepThink && deepThinkEligible ? " ooa-chat-input-bar__deepthink--active" : ""
+            }${!deepThinkEligible ? " ooa-chat-input-bar__deepthink--unavailable" : ""}`}
+            disabled={!deepThinkEligible || loading}
+            onClick={() => onToggleDeepThink?.()}
+            aria-pressed={deepThink && deepThinkEligible}
+            aria-label={
+              deepThinkEligible
+                ? deepThink
+                  ? "Deep think on — pulls live Odoo data"
+                  : "Deep think off — tap to enable live Odoo data"
+                : "Deep think unavailable for this query"
+            }
+            title={
+              deepThinkEligible
+                ? deepThink
+                  ? "Deep think on: live figures from Odoo"
+                  : "Deep think off: tap to pull live Odoo data"
+                : "Deep think activates for financial and Odoo data queries"
+            }
+          >
+            <IconDeepThink size={16} />
+            <span className="ooa-chat-input-bar__deepthink-label">Deep think</span>
+          </button>
           <button
             type="button"
             className="ooa-chat-input-bar__send"

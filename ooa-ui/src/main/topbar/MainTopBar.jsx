@@ -143,12 +143,12 @@ export default function MainTopBar({
           <button
             type="button"
             className="ooa-main-topbar__ai-btn ooa-main-topbar__ai-btn--dashboard"
-            aria-label="Build My Dashboard"
-            title="Build My Dashboard (coming soon)"
+            aria-label="Build Dashboard"
+            title="Build Dashboard (coming soon)"
             onClick={onBuildDashboard}
           >
             <IconDashboard size={18} />
-            <span className="ooa-main-topbar__btn-label">Dashboard</span>
+            <span className="ooa-main-topbar__btn-label">Build Dashboard</span>
           </button>
         ) : null}
         {onNewChat ? (

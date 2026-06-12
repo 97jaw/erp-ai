@@ -1,4 +1,4 @@
-import { authFetch, parseErrorResponse } from "../config/api";
+import { authFetch, parseErrorResponse, resolveApiBase } from "../config/api";
 
 export async function startVisualizeSession(items, chatSessionId = null) {
   const res = await authFetch("/visualize/start", {
@@ -124,11 +124,22 @@ export async function buildVisualizeReport({
   return body.output;
 }
 
+function rewriteLocalhostUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") {
+      return url;
+    }
+    return `${resolveApiBase()}${parsed.pathname}${parsed.search}`;
+  } catch {
+    return url;
+  }
+}
+
 export function resolveOutputUrl(output) {
   if (!output) return null;
   const path = output.pdf_url || output.excel_url || output.download_url;
   if (!path) return null;
-  if (path.startsWith("http")) return path;
-  const base = process.env.REACT_APP_API_BASE || "http://localhost:8000";
-  return `${base}${path}`;
+  if (path.startsWith("http")) return rewriteLocalhostUrl(path);
+  return `${resolveApiBase()}${path}`;
 }
