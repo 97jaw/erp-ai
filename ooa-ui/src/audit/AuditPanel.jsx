@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { streamAuditChat } from "./api";
-import { AUDIT_SUGGESTIONS } from "./auditUtils";
+import { AUDIT_SUGGESTIONS, buildSummaryFromAuditData } from "./auditUtils";
 import AuditActivityLog from "./AuditActivityLog";
 import AuditSummaryBar from "./AuditSummaryBar";
 import AuditTimeline from "./AuditTimeline";
@@ -25,12 +25,21 @@ function persistAuditSessionId(sessionId) {
   }
 }
 
+function viewLabel(auditData, narrative) {
+  const summary = buildSummaryFromAuditData(auditData);
+  if (summary?.label) return summary.label;
+  const preview = String(narrative || "").trim().split(/\n/)[0];
+  if (preview) return preview.slice(0, 48);
+  return "Previous results";
+}
+
 export default function AuditPanel({ user, embedded = false }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [narrative, setNarrative] = useState("");
   const [auditData, setAuditData] = useState(null);
+  const [viewStack, setViewStack] = useState([]);
   const [sessionId] = useState(() => readAuditSessionId());
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
@@ -44,10 +53,46 @@ export default function AuditPanel({ user, embedded = false }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [narrative, auditData, loading]);
 
+  const goBack = useCallback(() => {
+    setViewStack((prev) => {
+      if (!prev.length) return prev;
+      const next = [...prev];
+      const frame = next.pop();
+      setNarrative(frame.narrative || "");
+      setAuditData(frame.auditData || null);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!viewStack.length) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape" && !loading) {
+        event.preventDefault();
+        goBack();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [goBack, loading, viewStack.length]);
+
   const sendQuery = useCallback(
-    async (message) => {
+    async (message, options = {}) => {
       const trimmed = String(message || "").trim();
       if (!trimmed || loading) return;
+
+      if (options.pushHistory && (auditData || narrative)) {
+        setViewStack((prev) => [
+          ...prev,
+          {
+            narrative,
+            auditData,
+            label: options.historyLabel || viewLabel(auditData, narrative),
+          },
+        ]);
+      } else if (!options.pushHistory) {
+        setViewStack([]);
+      }
 
       setLoading(true);
       setStatus("Analyzing audit trail...");
@@ -86,7 +131,7 @@ export default function AuditPanel({ user, embedded = false }) {
         setStatus("");
       }
     },
-    [loading, sessionId],
+    [auditData, loading, narrative, sessionId],
   );
 
   const handleSubmit = (event) => {
@@ -97,8 +142,15 @@ export default function AuditPanel({ user, embedded = false }) {
   };
 
   const handleRecordSelect = ({ model, recordId, name }) => {
-    sendQuery(`Show audit trail for ${name || model} (${model}, id ${recordId})`);
+    sendQuery(`Show audit trail for ${name || model} (${model}, id ${recordId})`, {
+      pushHistory: true,
+      historyLabel: name || model,
+    });
   };
+
+  const backTargetLabel = viewStack.length
+    ? viewStack[viewStack.length - 1]?.label
+    : null;
 
   const showEmpty = !loading && !narrative && !auditData;
 
@@ -139,6 +191,23 @@ export default function AuditPanel({ user, embedded = false }) {
                 </button>
               ))}
             </div>
+          </div>
+        ) : null}
+
+        {viewStack.length > 0 ? (
+          <div className="ooa-audit-panel__nav">
+            <button
+              type="button"
+              className="ooa-audit-panel__nav-back"
+              onClick={goBack}
+            >
+              ← Back to {backTargetLabel || "previous"}
+            </button>
+            {viewStack.length > 1 ? (
+              <span className="ooa-audit-panel__nav-depth">
+                {viewStack.length} level{viewStack.length === 1 ? "" : "s"} deep
+              </span>
+            ) : null}
           </div>
         ) : null}
 
