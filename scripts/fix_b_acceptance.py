@@ -14,12 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv
+import os
 
-load_dotenv(ROOT / ".env")
+from scripts.api_test_utils import api_base, load_test_env, login as api_login, wait_for_health
 
-API_BASE = "http://127.0.0.1:8000"
-FILE_ID = "2721"
+load_test_env()
+
+API_BASE = api_base()
+FILE_ID = os.environ.get("OOA_FILE_ID", "2721")
 VILLA_34 = [{"type": "project", "id": 15157, "name": "Villa Maintenance No. 34"}]
 
 CASES = [
@@ -34,10 +36,6 @@ CASES = [
     ("RQ-9", "project count per client", ["client", "project", "count"], 1),
     ("RQ-10", "Villa 34 agreement amount and client", ["villa", "agreement", "client", "amount", "aed"], 1),
 ]
-
-
-def login(client: httpx.Client) -> str:
-    return client.post(f"{API_BASE}/auth/login", json={"file_id": FILE_ID}, timeout=30).json()["access_token"]
 
 
 def chat(client: httpx.Client, token: str, message: str, *, confirmed: list | None = None) -> dict:
@@ -69,8 +67,8 @@ def judge(text: str, tokens: list[str]) -> bool:
 def main() -> int:
     results: list[tuple[str, bool, str, list]] = []
     with httpx.Client() as client:
-        client.get(f"{API_BASE}/health", timeout=10).raise_for_status()
-        token = login(client)
+        wait_for_health(client)
+        token = api_login(client)
         for case_id, message, tokens, _ in CASES:
             confirmed = VILLA_34 if "Villa 34" in message else None
             body = chat(client, token, message, confirmed=confirmed)

@@ -14,12 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv
+import os
 
-load_dotenv(ROOT / ".env")
+from scripts.api_test_utils import api_base, load_test_env, login as api_login, wait_for_health
 
-API_BASE = "http://127.0.0.1:8000"
-FILE_ID = "2721"
+load_test_env()
+
+API_BASE = api_base()
+FILE_ID = os.environ.get("OOA_FILE_ID", "2721")
 VILLA_34_ID = 15157
 ZAYIDIA_BOYS_ID = 14549
 
@@ -27,12 +29,6 @@ NO_DATA = re.compile(r"no data found", re.I)
 META = re.compile(r"completed\s+\d+\s+orchestrated\s+step", re.I)
 
 CASES: list[tuple[str, str, dict, callable]] = []
-
-
-def login(client: httpx.Client) -> str:
-    res = client.post(f"{API_BASE}/auth/login", json={"file_id": FILE_ID}, timeout=30)
-    res.raise_for_status()
-    return res.json()["access_token"]
 
 
 def chat(
@@ -90,8 +86,8 @@ def main() -> int:
     ]
 
     with httpx.Client() as client:
-        client.get(f"{API_BASE}/health", timeout=10).raise_for_status()
-        token = login(client)
+        wait_for_health(client)
+        token = api_login(client)
 
         for case_id, message, opts in queries:
             body = chat(

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -17,12 +18,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv
+from scripts.api_test_utils import api_base, load_test_env, login as api_login, wait_for_health
 
-load_dotenv(ROOT / ".env")
+load_test_env()
 
-API_BASE = "http://127.0.0.1:8000"
-FILE_ID = "2721"
+API_BASE = api_base()
+FILE_ID = os.environ.get("OOA_FILE_ID", "2721")
 VILLA_34_ID = 15157
 ZAYIDIA_BOYS_ID = 14549
 
@@ -32,15 +33,6 @@ FORBIDDEN_REGRESSION = (
     "connection issue",
     "try again later",
 )
-
-
-def login(client: httpx.Client) -> str:
-    res = client.post(f"{API_BASE}/auth/login", json={"file_id": FILE_ID}, timeout=30)
-    res.raise_for_status()
-    token = res.json().get("access_token")
-    if not token:
-        raise RuntimeError("login failed")
-    return token
 
 
 def parse_sse(raw: str) -> list[dict[str, Any]]:
@@ -157,8 +149,8 @@ def main() -> int:
     audit_session = f"r6-audit-{uuid.uuid4()}"
 
     with httpx.Client() as client:
-        client.get(f"{API_BASE}/health", timeout=10).raise_for_status()
-        token = login(client)
+        wait_for_health(client)
+        token = api_login(client)
 
         # --- SECTION A ---
         a1 = chat_intelligent(client, token, "how many employees", str(uuid.uuid4()), deep_think=True)
