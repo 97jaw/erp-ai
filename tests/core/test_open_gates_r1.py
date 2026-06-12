@@ -9,7 +9,7 @@ import pytest
 from gateway.core.capability_manifest import CAPABILITY_MANIFEST
 from gateway.core.intent_analyzer import Intent, IntentAnalyzer
 from gateway.core.project_expense_routing import select_project_expense_tool
-from gateway.core.strategy_planner import match_company_report
+from gateway.core.strategy_planner import StrategyPlanner, match_company_report
 from gateway.intelligent_handler import IntelligentQueryHandler
 from tests.core.test_context_stack import _make_context_stack
 from tests.core.test_intent_analyzer import MockJsonClient
@@ -187,6 +187,42 @@ async def test_r1_12_arabic_employee_count_not_out_of_scope() -> None:
     )
     assert intent.out_of_scope is False
     assert IntelligentQueryHandler._requires_deep_think("كم عدد الموظفين", intent)
+
+
+def test_r1_strategy_planner_routes_hr_to_query_odoo() -> None:
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="hr",
+        specific_intent="how many employees",
+        entities=[],
+    )
+    tool, payload = StrategyPlanner._resolve_universal_read_tool(intent)
+    assert tool == "query_odoo"
+    assert payload["model"] == "hr.employee"
+
+
+def test_r1_strategy_planner_routes_purchase_orders_to_query_odoo() -> None:
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="other",
+        specific_intent="retrieve_recent_purchase_orders",
+        entities=[],
+    )
+    tool, payload = StrategyPlanner._resolve_universal_read_tool(intent)
+    assert tool == "query_odoo"
+    assert payload["model"] == "purchase.order"
+
+
+def test_r1_strategy_planner_routes_fleet_to_query_odoo() -> None:
+    intent = Intent(
+        primary_action="fetch_data",
+        subject_area="general",
+        specific_intent="fleet vehicles",
+        entities=[],
+    )
+    tool, payload = StrategyPlanner._resolve_universal_read_tool(intent)
+    assert tool == "query_odoo"
+    assert payload["model"] == "fleet.vehicle"
 
 
 @pytest.mark.asyncio

@@ -683,10 +683,67 @@ class StrategyPlanner:
         if intent.primary_action == "search_entity":
             return "search_odoo", {"model": "project.project", "query": intent.specific_intent}
 
+        universal = self._resolve_universal_read_tool(intent)
+        if universal is not None:
+            return universal
+
         raise StrategyException(
             f"No simple tool mapping found for intent action={intent.primary_action} "
             f"subject={intent.subject_area}",
         )
+
+    @staticmethod
+    def _resolve_universal_read_tool(intent: Intent) -> tuple[str, dict[str, Any]] | None:
+        """Route open-gate HR/inventory/fleet reads to query_odoo."""
+        if intent.primary_action not in {"fetch_data", "search_entity"}:
+            return None
+        if intent.out_of_scope:
+            return None
+
+        query = f"{intent.specific_intent} {intent.subject_area}".lower().replace("_", " ")
+
+        if intent.subject_area == "hr" or any(
+            token in query for token in ("employee", "staff", "manager", "payroll", "contract")
+        ):
+            domain: list[Any] = [["active", "=", True]]
+            if "manager" in query:
+                domain.append(["child_ids", "!=", False])
+            return "query_odoo", {
+                "model": "hr.employee",
+                "domain": domain,
+                "fields": ["name", "job_id", "department_id"],
+                "limit": 500 if "how many" in query or "count" in query else 50,
+            }
+
+        if any(
+            token in query
+            for token in ("purchase order", "purchase orders", " po", "po ", "vendor order")
+        ) or (intent.subject_area == "inventory" and "stock" not in query):
+            return "query_odoo", {
+                "model": "purchase.order",
+                "domain": [],
+                "fields": ["name", "partner_id", "date_order", "amount_total", "state"],
+                "limit": 20,
+                "order": "date_order desc",
+            }
+
+        if "stock" in query or "inventory" in query:
+            return "query_odoo", {
+                "model": "stock.quant",
+                "domain": [],
+                "fields": ["product_id", "quantity", "location_id"],
+                "limit": 50,
+            }
+
+        if "fleet" in query or "vehicle" in query:
+            return "query_odoo", {
+                "model": "fleet.vehicle",
+                "domain": [],
+                "fields": ["name", "license_plate", "model_id", "driver_id"],
+                "limit": 50,
+            }
+
+        return None
 
     @staticmethod
     def _build_project_expenses_input(intent: Intent, context: ContextStack) -> dict[str, Any]:

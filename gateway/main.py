@@ -2903,7 +2903,11 @@ async def chat_intelligent(
         set_request_user(None)
 
     user_id = chat_user.id if chat_user else None
-    history = await ConversationStore.get(session_id, user_id=user_id)
+    try:
+        history = await ConversationStore.get(session_id, user_id=user_id)
+    except Exception as exc:
+        logger.warning("[/chat/intelligent] history fetch failed: %s", exc)
+        history = []
 
     return IntelligentChatResponse(
         session_id=session_id,

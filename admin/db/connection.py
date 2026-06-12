@@ -121,6 +121,8 @@ def _split_sql_statements(sql: str) -> list[str]:
 
 async def init_admin_db(dsn: str | None = None, *, run_migrations: bool = True) -> AdminDatabase:
     global _pool
+    if _pool is not None:
+        return AdminDatabase(_pool)
     db = await AdminDatabase.create(dsn)
     _pool = db._pool
     if run_migrations:
