@@ -32,7 +32,6 @@ import ChatsSheet from "../../main/sidebar/ChatsSheet";
 import ChatScrollView from "../../main/chat/ChatScrollView";
 import ChatInputBar from "../../main/chat/ChatInputBar";
 import ComingSoonFeatureModal from "../../main/chat/ComingSoonFeatureModal";
-import VoiceStatusBanner from "../../main/chat/VoiceStatusBanner";
 import { AuditPanel } from "../../audit";
 import "../../audit/styles/audit.css";
 import { buildClarificationQuery, buildConfirmedEntities } from "../../utils/clarify";
@@ -629,7 +628,7 @@ export default function ChatScreen({
         chunksRef.current = [];
         if (blob.size < 1024) {
           setVoicePhase("idle");
-          setError("Recording was too short. Hold the microphone a little longer and try again.");
+          setError("Recording was too short. Speak a little longer, then tap the mic again to finish.");
           return;
         }
         setVoicePhase("transcribing");
@@ -650,6 +649,14 @@ export default function ChatScreen({
       recorder.requestData();
       recorder.stop();
     }
+  };
+
+  const toggleRecording = async () => {
+    if (recording || voicePhase === "recording") {
+      stopRecording();
+      return;
+    }
+    await startRecording();
   };
 
   const stopVoicePlayback = () => {
@@ -889,7 +896,6 @@ export default function ChatScreen({
                 onSendToVisualize={handleSendToVisualize}
               />
             )}
-            <VoiceStatusBanner phase={voicePhase} />
             <div className="ooa-chat-input-dock">
               <ChatInputBar
                 input={input}
@@ -901,8 +907,7 @@ export default function ChatScreen({
                 onInputChange={handleInputChange}
                 onKeyDown={handleInputKeyDown}
                 onSend={() => requestSend(input)}
-                onStartRecording={startRecording}
-                onStopRecording={stopRecording}
+                onToggleRecording={toggleRecording}
                 onSelectSuggestion={requestSend}
                 deepThink={deepThink}
                 deepThinkEligible={deepThinkEligible}
