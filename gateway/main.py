@@ -3373,10 +3373,12 @@ async def _voice_pipeline(
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-        text     = result.text or "I could not process your request."
-        language = result.language or "en"
-        suggestions = getattr(result, "suggestions", None) or []
-        deep_think_available = bool(getattr(result, "deep_think_available", False))
+        text                  = result.text or "I could not process your request."
+        language              = result.language or "en"
+        suggestions           = getattr(result, "suggestions", None) or []
+        deep_think_available  = bool(getattr(result, "deep_think_available", False))
+        awaiting_clarification = bool(getattr(result, "awaiting_clarification", False))
+        clarification         = getattr(result, "clarification", None)
 
         # Step 3: Streaming TTS via ElevenLabs /stream endpoint
         tts = get_tts()
@@ -3390,12 +3392,17 @@ async def _voice_pipeline(
                     yield chunk
             except Exception as exc:
                 logger.exception("[/voice] TTS streaming failed: %s", exc)
-                # Nothing we can do mid-stream; log and stop
 
-        suggestions_header = ""
+        suggestions_header    = ""
+        clarification_header  = ""
         try:
             if suggestions:
                 suggestions_header = _ascii_header(_json.dumps(suggestions, ensure_ascii=False))
+        except Exception:
+            pass
+        try:
+            if clarification:
+                clarification_header = _utf8_header(_json.dumps(clarification, ensure_ascii=False))
         except Exception:
             pass
 
@@ -3404,14 +3411,16 @@ async def _voice_pipeline(
             _audio_stream(),
             media_type = "audio/mpeg",
             headers    = {
-                "X-Session-Id"           : session_id,
-                "X-Language"             : language,
-                "X-Transcript"           : _ascii_header(transcript),
-                "X-Response"             : _ascii_header(tts_text),
-                "X-Transcript-B64"       : _utf8_header(transcript),
-                "X-Response-B64"         : _utf8_header(text),
-                "X-Suggestions"          : suggestions_header,
-                "X-Deep-Think-Available" : "true" if deep_think_available else "false",
+                "X-Session-Id"              : session_id,
+                "X-Language"               : language,
+                "X-Transcript"             : _ascii_header(transcript),
+                "X-Response"               : _ascii_header(tts_text),
+                "X-Transcript-B64"         : _utf8_header(transcript),
+                "X-Response-B64"           : _utf8_header(text),
+                "X-Suggestions"            : suggestions_header,
+                "X-Deep-Think-Available"   : "true" if deep_think_available else "false",
+                "X-Awaiting-Clarification" : "true" if awaiting_clarification else "false",
+                "X-Clarification-B64"      : clarification_header,
             },
         )
 
