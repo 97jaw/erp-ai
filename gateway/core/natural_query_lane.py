@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -55,6 +56,15 @@ _CROSS_ENTITY_SIGNALS: frozenset[str] = frozenset(
         "insurance", "renewal",
         "allocation", "allocations",
     }
+)
+
+# Pronoun references to payslip session context ("that payslip", "this payslip").
+# When detected alongside session last_payslip_scope, route to fast lane to
+# resolve using session data rather than treating as a new payroll search.
+_PAYSLIP_PRONOUN_RE = re.compile(
+    r"\b(?:that|this|the\s+(?:same|above|previous|last))\s+payslip\b"
+    r"|\bfrom\s+(?:that|this|the\s+same)\s+payslip\b",
+    re.IGNORECASE,
 )
 
 FAST_LANE_SYSTEM_PROMPT = """\
@@ -96,6 +106,13 @@ IMPORTANT — VEHICLE LOOKUP PATTERN:
     ["|", ["employee_id","=", <id>], ["driver_id","=", <id>]]
   If that returns nothing, try:
     [["employee_id.name","ilike","<name>"]]
+
+IMPORTANT — PAYSLIP PRONOUN RESOLUTION:
+  When the query contains "that payslip", "this payslip", or "the same payslip" AND the
+  session context includes "Last payslip scope", use those session values directly:
+    - employee_id from the scope to filter hr.payslip
+    - date_from / date_to if available
+  Do NOT ask for clarification — resolve from the session context.
 
 IMPORTANT — DO NOT:
   - Re-search all employees when the user has already given you an ID.
@@ -164,6 +181,15 @@ def should_use_fast_lane(
         words = {w.lower().rstrip("s") for w in message.split()}
         if words & {w.rstrip("s") for w in _CROSS_ENTITY_SIGNALS}:
             return True
+
+    # Signal 3: pronoun reference to last payslip ("give me deduction for that payslip")
+    # Only fires when session actually has last_payslip_scope — otherwise let payroll handle it.
+    if _PAYSLIP_PRONOUN_RE.search(message):
+        if context is not None:
+            lps = context.working_memory.session_facts.get("last_payslip_scope")
+            if isinstance(lps, dict) and lps:
+                logger.debug("[FastLane] Signal 3 — payslip pronoun with session scope=%r", lps)
+                return True
 
     return False
 

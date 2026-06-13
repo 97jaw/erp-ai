@@ -337,6 +337,7 @@ class IntelligentQueryHandler:
                 return self._finalize_fast_lane_response(
                     text=fast_result["text"],
                     tools_called=fast_result["tools_called"],
+                    awaiting_clarification=fast_result["awaiting_clarification"],
                     context=context,
                     telemetry=telemetry,
                     resolved_session=resolved_session,
@@ -1898,6 +1899,7 @@ class IntelligentQueryHandler:
         *,
         text: str,
         tools_called: list[str],
+        awaiting_clarification: bool = False,
         context: ContextStack,
         telemetry: InteractionTelemetry,
         resolved_session: str,
@@ -1906,12 +1908,67 @@ class IntelligentQueryHandler:
         intent: Intent,
     ) -> IntelligentQueryResponse:
         """Build IntelligentQueryResponse from a fast-lane result."""
+        import re as _re
+
         duration_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
-            "[FastLane] Done query duration_ms=%d tools=%s",
+            "[FastLane] Done query duration_ms=%d tools=%s awaiting=%s",
             duration_ms,
             tools_called,
+            awaiting_clarification,
         )
+
+        suggestions: list[str] = []
+
+        if awaiting_clarification:
+            # Parse numbered disambiguation options from response text → clickable chips.
+            # Matches patterns: "1. Name", "1) Name", "1- Name"
+            option_matches = _re.findall(
+                r"^\s*\d+[.):\-]\s*(.+?)(?:\s*\(.*?\))?\s*$",
+                text,
+                _re.MULTILINE,
+            )
+            # Keep only short options that look like names/choices (< 80 chars, no markdown)
+            suggestions = [
+                m.strip()
+                for m in option_matches
+                if m.strip() and len(m.strip()) < 80 and not m.strip().startswith("#")
+            ][:5]
+            logger.info("[FastLane] Parsed %d disambiguation chips", len(suggestions))
+        else:
+            # Context-aware follow-up suggestions based on what was just looked up
+            tools_set = set(tools_called)
+            if "query_odoo" in tools_set:
+                # Infer what was returned from the system prompt hints stored in session
+                sf = context.working_memory.session_facts
+                pending = sf.get("fast_lane_pending") or {}
+                orig = (pending.get("original_query") or "").lower()
+                if any(w in orig for w in ("vehicle", "car", "fleet")):
+                    if language == "ar":
+                        suggestions = ["عرض تفاصيل التأمين", "عرض جميع المركبات", "تاريخ تجديد الترخيص"]
+                    else:
+                        suggestions = ["Show insurance details", "Show all assigned vehicles", "Check license renewal date"]
+                elif any(w in orig for w in ("visa", "passport", "insurance")):
+                    if language == "ar":
+                        suggestions = ["عرض تفاصيل الموظف", "التحقق من تواريخ انتهاء الإقامة", "الموظفون الآخرون"]
+                    else:
+                        suggestions = ["Show employee details", "Check all expiring documents", "View other employees"]
+                elif any(w in orig for w in ("attendance", "leave", "absent")):
+                    if language == "ar":
+                        suggestions = ["عرض سجل الحضور الكامل", "ملخص الإجازات", "موظفون غائبون اليوم"]
+                    else:
+                        suggestions = ["Show full attendance log", "Leave summary", "Employees absent today"]
+                elif any(w in orig for w in ("employee", "staff", "worker")):
+                    if language == "ar":
+                        suggestions = ["عرض بيانات الموظف", "معلومات المركبة", "سجل الحضور"]
+                    else:
+                        suggestions = ["Show employee details", "Check vehicle info", "View attendance record"]
+                else:
+                    if language == "ar":
+                        suggestions = ["طلب مزيد من التفاصيل", "تصفية حسب القسم", "تصدير النتائج"]
+                    else:
+                        suggestions = ["Request more details", "Filter by department", "View related records"]
+
         response = IntelligentQueryResponse(
             session_id=resolved_session,
             text=text,
@@ -1923,13 +1980,13 @@ class IntelligentQueryHandler:
             strategy_step_count=len(tools_called),
             tools_called=tools_called,
             execution_result=None,
-            suggestions=[],
+            suggestions=suggestions[:3],
             interaction_id=telemetry.interaction_id,
         )
         telemetry.finalize_response(
             response_text=response.text,
             visualization=None,
-            suggestions=[],
+            suggestions=suggestions,
             total_duration_ms=duration_ms,
             intent=intent,
         )

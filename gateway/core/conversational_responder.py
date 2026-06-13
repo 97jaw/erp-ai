@@ -37,6 +37,21 @@ _CAPABILITY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches "can you give me information about payslips?" — a capability/info question
+# that happens to contain a business domain word. These are NOT data queries; the user
+# is asking what the AI can do, not requesting ERP data. Must be checked BEFORE the
+# business-signal guard so they route to the conversational handler, not the pipeline.
+_CAPABILITY_INFO_RE = re.compile(
+    r"(?:"
+    r"can\s+you\s+(?:give|provide|show|tell|explain|share)\s+(?:me\s+)?(?:some\s+)?(?:information|info|details?)\s+(?:about|on|regarding|for)\b"
+    r"|what\s+(?:information|data|details?)\s+(?:can\s+you|do\s+you)\s+(?:provide|have|show|give|access)\b"
+    r"|can\s+you\s+(?:handle|do|manage|support|access|work\s+with)\s+(?:payslip|payroll|employee|vehicle|attendance|leave|salary|visa)\b"
+    r"|(?:are\s+you\s+able|is\s+it\s+possible)\s+to\s+(?:show|get|view|check|fetch|provide|give)\b"
+    r"|do\s+you\s+(?:have\s+access\s+to|support|handle|know\s+about)\b"
+    r")",
+    re.IGNORECASE,
+)
+
 # Business signals that must always go to the full pipeline, never conversational.
 _BUSINESS_SIGNAL_RE = re.compile(
     r"\b(expense|cost|revenue|profit|loss|p&l|pnl|balance|ledger|invoice|budget|"
@@ -66,6 +81,11 @@ def is_conversational_message(message: str) -> bool:
     text = (message or "").strip()
     if not text:
         return False
+    # Capability-info questions like "can you give me information about payslips?" must be
+    # handled conversationally even if they contain business domain words. Check BEFORE
+    # the business-signal guard so they don't fall through to the pipeline.
+    if _CAPABILITY_INFO_RE.search(text):
+        return True
     if _BUSINESS_SIGNAL_RE.search(text):
         return False
     if _GREETING_RE.match(text):
