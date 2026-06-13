@@ -114,6 +114,14 @@ PAYSLIP LOOKUP PATTERN:
     fields: ["name","date_from","date_to","net_wage","fine","advance","total_deductions"]
   Return a clean table. If no payslip found for that period, say so clearly.
 
+LEAVE / REQUEST LOOKUP PATTERN:
+  Model: employee.request (fields: employee_id, request_type, state, date_start, date_end, name)
+  After getting employee_id:
+    domain: [["employee_id","=",<id>], ["request_type","=","leave"],
+             ["date_start",">=","<period_start>"], ["date_start","<=","<period_end>"]]
+  For "how many leaves": use aggregate_odoo with count. For details: query_odoo.
+  Do NOT route leave queries to hr.payslip.
+
 IMPORTANT — VEHICLE LOOKUP PATTERN:
   After confirming employee_id, ALWAYS use this domain:
     ["|", ["employee_id","=", <id>], ["driver_id","=", <id>]]
@@ -216,14 +224,18 @@ def should_use_fast_lane(
         logger.debug("[FastLane] Signal 4 — payslip lookup with entity=%r", [e.value for e in intent.entities])
         return True
 
-    # Signal 5: attendance or leave lookup with a named entity.
-    # "jawad attendance this month" misfires through the HR route returning all employees;
-    # fast lane resolves the person first then fetches attendance correctly.
+    # Signal 5: attendance / leave / request lookup with a named entity.
+    # These queries misfire through HR/payroll pipelines; fast lane resolves the
+    # person first then fetches the correct model directly.
     if (
-        any(w in msg_lower for w in ("attendance", "absent", "check in", "check out", "check-in", "check-out"))
+        any(w in msg_lower for w in (
+            "attendance", "absent", "check in", "check out", "check-in", "check-out",
+            "leave", "leaves", "vacation", "day off", "annual leave",
+            "request", "requests", "loan", "advance", "mission",
+        ))
         and bool(intent.entities)
     ):
-        logger.debug("[FastLane] Signal 5 — attendance lookup with entity=%r", [e.value for e in intent.entities])
+        logger.debug("[FastLane] Signal 5 — HR-entity lookup with entity=%r", [e.value for e in intent.entities])
         return True
 
     # Signal 6: visa/passport/document expiry queries — best handled by fast lane
