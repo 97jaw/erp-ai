@@ -196,6 +196,22 @@ async def search_fleet_vehicles(
                 "note": f"Multiple employees match '{employee_name}'. Please specify file ID or full name.",
                 "_source": "search_fleet_vehicles",
             }
+        else:
+            return {
+                "vehicles": [],
+                "count": 0,
+                "employee_name": employee_name,
+                "note": f"No employee found matching **{employee_name}**.",
+                "_source": "search_fleet_vehicles",
+            }
+
+    if employee_id is None and not license_plate and not project_name:
+        return {
+            "vehicles": [],
+            "count": 0,
+            "note": "Please specify an employee name, file ID, license plate, or project for fleet lookup.",
+            "_source": "search_fleet_vehicles",
+        }
 
     available = adapter._get_model_fields(_FLEET_MODEL) or {}
     if employee_id is not None:

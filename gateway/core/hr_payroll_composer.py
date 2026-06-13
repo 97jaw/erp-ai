@@ -26,7 +26,11 @@ _FILLER_PREFIX_RE = re.compile(
     re.I,
 )
 _INLINE_FILE_ID_RE = re.compile(
-    r"\b(?:file\s*id|emp(?:loyee)?\s*id|emp_id)\s*[:\s]?\s*(\d{3,6})\b",
+    r"(?:file\s*id|fileid|emp(?:loyee)?\s*id|emp_id)\s*[:\s#-]*(\d{3,6})\b",
+    re.I,
+)
+_FILE_ID_PHRASE_RE = re.compile(
+    r"(?:file\s*id|fileid|emp(?:loyee)?\s*id|emp_id)\s*[:\s#-]*\d{3,6}\b",
     re.I,
 )
 _BARE_FILE_ID_RE = re.compile(r"^\s*(\d{3,6})\s*$")
@@ -102,7 +106,12 @@ _BLOCKED_NAME_TOKENS = frozenset(
         "calculation",
         "file",
         "id",
-        "recent",
+        "fileid",
+        "assigned",
+        "vehicle",
+        "vehicles",
+        "car",
+        "fleet",
         "employee",
         "request",
         "requests",
@@ -188,7 +197,7 @@ def normalize_month_typos(message: str) -> str:
 
 
 def extract_inline_file_id(message: str) -> str | None:
-    """Extract file id from inline phrases like 'file id 2721'."""
+    """Extract file id from inline phrases like 'file id 2721' or 'jawadfile id 2721'."""
     match = _INLINE_FILE_ID_RE.search(message or "")
     if match:
         return match.group(1)
@@ -196,6 +205,65 @@ def extract_inline_file_id(message: str) -> str | None:
     if bare:
         return bare.group(1)
     return None
+
+
+def strip_file_id_phrases(message: str) -> str:
+    """Remove file-id phrases so they are not parsed as employee names."""
+    return _FILE_ID_PHRASE_RE.sub("", message or "").strip(" ,")
+
+
+def inherit_payroll_session_slots(context: ContextStack | None) -> dict[str, Any]:
+    """Merge resolved employee/period from HR session for payslip follow-ups."""
+    if context is None:
+        return {}
+    resolved: dict[str, Any] = dict(get_pending_hr_context(context).get("resolved") or {})
+    facts = context.working_memory.session_facts or {}
+    last_scope = facts.get("last_payslip_scope") or {}
+    for key, value in last_scope.items():
+        if value not in (None, "", []):
+            resolved.setdefault(key, value)
+    legacy = facts.get("pending_entity_clarification") or {}
+    if legacy.get("payroll_context"):
+        period = parse_period_window(str(legacy.get("query") or ""), context)
+        if period and not resolved.get("date_from"):
+            resolved["date_from"] = period.date_from
+            resolved["date_to"] = period.date_to
+            resolved["label"] = period.label
+    return resolved
+
+
+def enrich_payroll_plan_from_session(
+    plan: HRPayrollQueryPlan,
+    context: ContextStack | None,
+) -> HRPayrollQueryPlan:
+    """Fill missing employee/period slots on a payslip plan from session memory."""
+    inherited = inherit_payroll_session_slots(context)
+    if not inherited:
+        return plan
+    tool_input = dict(plan.tool_input)
+    if not tool_input.get("employee_file_id") and inherited.get("employee_file_id"):
+        tool_input["employee_file_id"] = str(inherited["employee_file_id"])
+    if not tool_input.get("employee_name") and inherited.get("employee_name_hint"):
+        tool_input["employee_name"] = str(inherited["employee_name_hint"])
+    if not tool_input.get("date_from") and inherited.get("date_from"):
+        tool_input["date_from"] = str(inherited["date_from"])
+    if not tool_input.get("date_to") and inherited.get("date_to"):
+        tool_input["date_to"] = str(inherited["date_to"])
+    needs = list(plan.needs_clarification)
+    if tool_input.get("employee_file_id") or tool_input.get("employee_name"):
+        needs = [slot for slot in needs if slot != "employee"]
+    return HRPayrollQueryPlan(
+        domain=plan.domain,
+        subtype=plan.subtype,
+        tool=plan.tool,
+        tool_input=tool_input,
+        employee_file_id=plan.employee_file_id or tool_input.get("employee_file_id"),
+        employee_name_hint=plan.employee_name_hint or tool_input.get("employee_name"),
+        period=plan.period,
+        request_type=plan.request_type,
+        needs_clarification=needs,
+        clarification_question=plan.clarification_question if needs else None,
+    )
 
 
 def extract_request_reference(message: str) -> tuple[int | None, str | None]:
@@ -233,6 +301,13 @@ def _clean_name_candidate(raw: str) -> str:
 def extract_employee_name(message: str) -> str:
     """Extract employee name from payroll or HR request phrasing."""
     cleaned = normalize_month_typos(strip_conversational_filler(message))
+    cleaned = strip_file_id_phrases(cleaned)
+    cleaned = re.sub(
+        r"\s+assigned\s+(?:vehicle|vehicles|car|cars|fleet)\b.*$",
+        "",
+        cleaned,
+        flags=re.I,
+    ).strip(" ,")
     cleaned = _MONTH_YEAR_RE.sub("", cleaned).strip(" ,")
     lowered = cleaned.lower()
     if any(
@@ -551,7 +626,9 @@ def classify_payslip_line_filter(message: str) -> str | None:
 def is_payslip_drill_down_query(message: str, context: ContextStack | None) -> bool:
     """True when a payslip session follow-up asks for lines, OT, deductions, etc."""
     pending = get_pending_hr_context(context)
-    if pending.get("domain") != "payroll":
+    from gateway.core.payroll_query_routing import _active_payroll_context
+
+    if pending.get("domain") != "payroll" and not _active_payroll_context(context):
         return False
     blob = normalize_month_typos(message).lower()
     if classify_payslip_line_filter(message):
@@ -691,7 +768,16 @@ def is_hr_request_detail_query(message: str, context: ContextStack | None = None
     if request_id is not None or request_name:
         return True
     if any(token in blob for token in detail_tokens):
-        return "request" in blob or pending.get("domain") == "hr"
+        if pending.get("domain") == "hr":
+            return True
+        if pending.get("subtype") in {"hr_request_list", "hr_request_detail"}:
+            return True
+        resolved = pending.get("resolved") or {}
+        if resolved.get("recent_request_ids"):
+            return True
+        if "validation status" in blob:
+            return bool(resolved.get("recent_request_ids") or pending.get("domain") == "hr")
+        return "request" in blob
     if pending.get("domain") == "hr" and re.fullmatch(r"\d{1,8}", (message or "").strip()):
         return True
     return False
@@ -779,12 +865,18 @@ def compose_payroll_plan(
     ):
         return None
 
-    resolved = pending.get("resolved") or {}
+    resolved = pending.get("resolved") or inherit_payroll_session_slots(context)
     subtype = resolve_payroll_subtype(message, context)
 
     file_id = extract_inline_file_id(message) or resolved.get("employee_file_id")
     name_hint = extract_employee_name(message) or resolved.get("employee_name_hint")
     period = parse_period_window(message, context)
+    if not period and resolved.get("date_from") and resolved.get("date_to"):
+        period = PeriodWindow(
+            date_from=str(resolved["date_from"]),
+            date_to=str(resolved["date_to"]),
+            label=str(resolved.get("label") or ""),
+        )
     if payroll_follow_up or is_payslip_drill_down_query(message, context):
         if not file_id:
             file_id = resolved.get("employee_file_id")

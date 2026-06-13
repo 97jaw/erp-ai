@@ -53,6 +53,8 @@ _ATTRIBUTE_STATUS_SIGNALS = ("status", "client", "customer")
 def is_project_attribute_query(query: str) -> bool:
     """Return True when the user asks about project metadata, not finances."""
     lowered = f" {query.lower()} "
+    if "validation status" in lowered or "validation" in lowered and "approval" in lowered:
+        return False
     if any(signal in lowered for signal in FINANCIAL_QUERY_SIGNALS):
         return False
     if any(signal in lowered for signal in NON_FINANCIAL_ATTRIBUTE_SIGNALS):

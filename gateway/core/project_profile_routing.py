@@ -132,21 +132,25 @@ def is_project_profile_text(message: str) -> bool:
     return bool(_PROJECT_CONTEXT_RE.search(text))
 
 
-def is_project_profile_query(message: str, intent) -> bool:
+def is_project_profile_query(message: str, intent, context=None) -> bool:
     """Profile detection with intent context."""
     if getattr(intent, "out_of_scope", False):
         return False
     from gateway.core.hr_query_routing import is_hr_orchestration_query
     from gateway.core.payroll_query_routing import is_payroll_orchestration_query
 
-    if is_hr_orchestration_query(message, intent):
+    if is_hr_orchestration_query(message, intent, context):
         return False
-    if is_payroll_orchestration_query(message, intent):
+    if is_payroll_orchestration_query(message, intent, context):
         return False
     if is_project_profile_text(message):
         return True
     # Follow-ups like "who manages it" — active project supplies context.
     if getattr(intent, "subject_area", "") == "project_attribute":
+        from gateway.core.hr_payroll_composer import is_hr_request_detail_query
+
+        if is_hr_request_detail_query(message, context):
+            return False
         return True
     return False
 

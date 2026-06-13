@@ -403,15 +403,19 @@ class IntelligentQueryHandler:
                     or has_active_project
                 )
             )
-            hr_orchestration_query = is_hr_orchestration_query(message, intent)
+            hr_orchestration_query = is_hr_orchestration_query(message, intent, context)
+            from gateway.core.hr_payroll_composer import is_hr_request_detail_query
+
+            hr_request_detail_query = is_hr_request_detail_query(message, context)
             profile_query = (
                 not records_query
                 and not activity_query
                 and not hr_project_staff_query
                 and not hr_orchestration_query
+                and not hr_request_detail_query
                 and not payroll_orchestration_query
                 and not fleet_orchestration_query
-                and is_project_profile_query(message, intent)
+                and is_project_profile_query(message, intent, context)
             )
 
             # Project profile/record/activity/payroll/HR lanes are served by direct ORM reads —
@@ -423,6 +427,7 @@ class IntelligentQueryHandler:
                 and not activity_query
                 and not payroll_orchestration_query
                 and not hr_orchestration_query
+                and not hr_request_detail_query
                 and not fleet_orchestration_query
             ):
                 return self._finalize_failure(
@@ -438,7 +443,7 @@ class IntelligentQueryHandler:
             if profile_query and not records_query and not activity_query:
                 profile_intent = self._prepare_profile_intent(message, intent, context)
                 if profile_intent is None:
-                    if intent.subject_area == "project_attribute":
+                    if intent.subject_area == "project_attribute" and not hr_request_detail_query:
                         return self._finalize_project_attribute_response(
                             message=message,
                             context=context,
@@ -833,6 +838,24 @@ class IntelligentQueryHandler:
                         expected_output=intent.expected_output or "summary",
                     )
                     logger.info("[PayrollRouting] Forcing %s for %r", tool_name, message[:80])
+
+            if (
+                effective_strategy_override is None
+                and hr_request_detail_query
+                and not profile_query
+                and not records_query
+                and not activity_query
+            ):
+                routed = resolve_hr_tool(message, intent, context)
+                if routed is not None:
+                    tool_name, tool_input = routed
+                    effective_strategy_override = build_single_tool_strategy(
+                        tool=tool_name,
+                        tool_input=tool_input,
+                        description=f"HR request detail: {message}",
+                        expected_output=intent.expected_output or "summary",
+                    )
+                    logger.info("[HRRequestDetail] Forcing %s for %r", tool_name, message[:80])
 
             if (
                 effective_strategy_override is None
@@ -1349,20 +1372,46 @@ class IntelligentQueryHandler:
         """Keep employee, period, and subtype in session for payslip drill-downs."""
         from gateway.core.hr_payroll_composer import (
             classify_payroll_subtype,
+            extract_employee_name,
             parse_period_window,
             resolve_payroll_subtype,
         )
 
+        def _store_last_payslip_scope(resolved: dict[str, Any]) -> None:
+            if not resolved:
+                return
+            scope = {
+                key: resolved[key]
+                for key in ("employee_file_id", "employee_name_hint", "date_from", "date_to", "label")
+                if resolved.get(key)
+            }
+            if scope:
+                context.working_memory.session_facts["last_payslip_scope"] = scope
+
         for step in execution_result.strategy_used.steps:
             result = execution_result.results.get(step.step_number)
-            if not isinstance(result, dict) or result.get("_source") != "get_payslip_detail":
+            if not isinstance(result, dict):
                 continue
-            if result.get("note") and not result.get("payslip"):
+            source = str(result.get("_source") or "")
+            if source == "get_payslip_detail":
+                if result.get("note") and not result.get("payslip"):
+                    continue
+            elif source == "get_employee_payslips":
+                if not result.get("payslips"):
+                    continue
+            elif step.tool == "query_odoo" and result.get("model") == "hr.payslip":
+                records = result.get("records") or []
+                if not records:
+                    continue
+            else:
                 continue
+
             pending = dict(context.working_memory.session_facts.get("pending_hr_context") or {})
             resolved = dict(pending.get("resolved") or {})
             if result.get("employee_file_id"):
                 resolved["employee_file_id"] = str(result["employee_file_id"])
+            elif result.get("file_id"):
+                resolved["employee_file_id"] = str(result["file_id"])
             if result.get("employee_name"):
                 resolved["employee_name_hint"] = str(result["employee_name"])
             period = parse_period_window(message, context)
@@ -1370,12 +1419,24 @@ class IntelligentQueryHandler:
                 resolved["date_from"] = period.date_from
                 resolved["date_to"] = period.date_to
                 resolved["label"] = period.label
-            elif resolved.get("date_from"):
-                pass
             payslip = result.get("payslip") or {}
             if payslip.get("date_from") and payslip.get("date_to") and not resolved.get("date_from"):
                 resolved["date_from"] = str(payslip["date_from"])
                 resolved["date_to"] = str(payslip["date_to"])
+            elif source == "get_employee_payslips":
+                rows = result.get("payslips") or []
+                if rows and rows[0].get("date_from") and rows[0].get("date_to"):
+                    resolved["date_from"] = str(rows[0]["date_from"])
+                    resolved["date_to"] = str(rows[0]["date_to"])
+            elif step.tool == "query_odoo" and result.get("records"):
+                row = result["records"][0]
+                if isinstance(row, dict):
+                    if row.get("date_from") and row.get("date_to"):
+                        resolved["date_from"] = str(row["date_from"])
+                        resolved["date_to"] = str(row["date_to"])
+                    employee = row.get("employee_id")
+                    if isinstance(employee, (list, tuple)) and len(employee) > 1:
+                        resolved["employee_name_hint"] = str(employee[1])
             subtype = resolve_payroll_subtype(message, context)
             if subtype == "payslip_header":
                 subtype = classify_payroll_subtype(message) or "payslip_header"
@@ -1389,6 +1450,7 @@ class IntelligentQueryHandler:
                 }
             )
             context.working_memory.session_facts["pending_hr_context"] = pending
+            _store_last_payslip_scope(resolved)
             return
 
     @staticmethod
@@ -2180,6 +2242,7 @@ class IntelligentQueryHandler:
         """Return structured clarification when HR tools find multiple employee matches."""
         from gateway.core.hr_clarification import build_employee_disambiguation_clarification
         from gateway.core.hr_payroll_composer import (
+            extract_employee_name,
             get_pending_hr_context,
             parse_period_window,
             resolve_payroll_subtype,
@@ -2201,15 +2264,15 @@ class IntelligentQueryHandler:
             if subtype == "payslip_header":
                 subtype = resolve_payroll_subtype(message, context)
             name_hint = str(payload.get("employee_name") or "").strip()
-            query_label = name_hint or prior_query
+            query_label = extract_employee_name(prior_query) or name_hint or prior_query
             clarification = build_employee_disambiguation_clarification(
-                query=prior_query,
+                query=query_label,
                 employees=ambiguous,
                 domain=str(domain),
                 subtype=subtype,
                 language=language,
             )
-            if name_hint and name_hint.lower() not in prior_query.lower():
+            if name_hint:
                 clarification["question"] = (
                     f"I found multiple employees matching **{name_hint}**.\n\n"
                     "Which employee do you mean? Pick a name below or reply with their File ID."

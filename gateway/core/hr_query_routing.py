@@ -75,11 +75,16 @@ def _query_blob(message: str, intent: Intent) -> str:
     return f"{message} {intent.specific_intent} {intent.subject_area}".lower().replace("_", " ")
 
 
-def is_hr_orchestration_query(message: str, intent: Intent) -> bool:
-    blob = _query_blob(message, intent)
+def is_hr_orchestration_query(message: str, intent: Intent, context: ContextStack | None = None) -> bool:
+    """True when HR orchestration should handle the message before generic lanes."""
+    from gateway.core.hr_payroll_composer import is_hr_request_detail_query
     from gateway.core.payroll_query_routing import is_payroll_orchestration_query
 
-    if is_payroll_orchestration_query(message, intent):
+    if is_hr_request_detail_query(message, context):
+        return True
+
+    blob = _query_blob(message, intent)
+    if is_payroll_orchestration_query(message, intent, context):
         return False
     if intent.subject_area == "hr":
         return True
@@ -169,7 +174,7 @@ def resolve_hr_tool(
     context: ContextStack | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     """Return (tool_name, payload) for HR queries, or None if not HR-routed."""
-    if not is_hr_orchestration_query(message, intent):
+    if not is_hr_orchestration_query(message, intent, context):
         return None
 
     blob = _query_blob(message, intent)

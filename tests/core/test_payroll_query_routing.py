@@ -123,12 +123,10 @@ def test_name_and_month_year_routes_to_payslip_query() -> None:
     )
     assert is_payroll_orchestration_query(message, intent, ctx)
     tool, payload = resolve_payroll_tool(message, intent, ctx)
-    assert tool == "query_odoo"
-    assert payload["model"] == "hr.payslip"
-    domain_text = str(payload["domain"])
-    assert "employee_id.name" in domain_text
-    assert "jawad" in domain_text.lower()
-    assert "2026" in domain_text
+    assert tool == "get_payslip_detail"
+    assert payload.get("employee_name", "").lower().startswith("jawad")
+    assert payload.get("date_from", "").startswith("2026-05")
+    assert payload.get("detail_type") == "header"
 
 
 def test_need_payslip_for_jawad_uses_jawad_not_need() -> None:
@@ -153,3 +151,44 @@ def test_payroll_follow_up_after_prior_payslip_turn() -> None:
     message = "jawad ur rehman, may 2026"
     intent = _intent(subject_area="other", specific_intent=message)
     assert is_payroll_orchestration_query(message, intent, ctx)
+
+
+def test_name_only_follow_up_routes_get_payslip_detail() -> None:
+    ctx = _make_context_stack()
+    ctx.working_memory.session_facts["pending_hr_context"] = {
+        "domain": "payroll",
+        "subtype": "payslip_header",
+        "prior_query": "need payslip may 2026 for jawad",
+        "awaiting": ["employee"],
+        "resolved": {
+            "date_from": "2026-05-01",
+            "date_to": "2026-05-31",
+            "label": "May 2026",
+        },
+    }
+    message = "jawad ur rehman"
+    intent = _intent(subject_area="other", specific_intent=message)
+    assert is_payroll_orchestration_query(message, intent, ctx)
+    tool, payload = resolve_payroll_tool(message, intent, ctx)
+    assert tool == "get_payslip_detail"
+    assert payload.get("employee_name", "").lower().startswith("jawad")
+    assert payload.get("detail_type") == "header"
+
+
+def test_overtime_follow_up_routes_payslip_detail_not_unscoped_list() -> None:
+    ctx = _make_context_stack()
+    ctx.working_memory.session_facts["pending_hr_context"] = {
+        "domain": "payroll",
+        "subtype": "payslip_header",
+        "resolved": {
+            "employee_file_id": "2721",
+            "date_from": "2026-05-01",
+            "date_to": "2026-05-31",
+        },
+    }
+    message = "show overtime on that payslip"
+    intent = _intent(subject_area="payroll", specific_intent=message)
+    tool, payload = resolve_payroll_tool(message, intent, ctx)
+    assert tool == "get_payslip_detail"
+    assert payload.get("line_filter") == "overtime"
+    assert payload.get("employee_file_id") == "2721"

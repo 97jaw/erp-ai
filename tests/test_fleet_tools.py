@@ -73,3 +73,23 @@ def test_hr_request_detail_query_detects_validation() -> None:
     assert plan is not None
     assert plan.tool == "get_employee_request_detail"
     assert plan.tool_input.get("request_id") == 8834
+
+
+def test_hr_request_detail_validation_status_alone() -> None:
+    ctx = _make_context_stack()
+    ctx.working_memory.session_facts["pending_hr_context"] = {
+        "domain": "hr",
+        "resolved": {"recent_request_ids": [39540]},
+    }
+    assert is_hr_request_detail_query("validation status", ctx)
+
+
+def test_fleet_routing_adil_khan_strips_assigned_vehicle() -> None:
+    from gateway.core.hr_payroll_composer import extract_employee_name
+
+    message = "adil khan assigned vehicle"
+    intent = _intent(specific_intent=message)
+    assert extract_employee_name(message).lower() == "adil khan"
+    tool, payload = resolve_fleet_tool(message, intent, _make_context_stack())
+    assert tool == "search_fleet_vehicles"
+    assert payload.get("employee_name", "").lower() == "adil khan"

@@ -51,6 +51,17 @@ def test_extract_employee_name_jawad_not_need() -> None:
 def test_extract_inline_file_id() -> None:
     assert extract_inline_file_id("need payslip distribution of rmay 2026 file id 2721") == "2721"
     assert extract_inline_file_id("2721") == "2721"
+    assert extract_inline_file_id("need payslip may 2026 for jawadfile id 2721") == "2721"
+
+
+def test_extract_employee_name_strips_concatenated_file_id() -> None:
+    name = extract_employee_name("need payslip may 2026 for jawadfile id 2721")
+    assert name.lower() == "jawad"
+    assert "file" not in name.lower()
+
+
+def test_extract_employee_name_strips_assigned_vehicle_phrase() -> None:
+    assert extract_employee_name("adil khan assigned vehicle").lower() == "adil khan"
 
 
 def test_compose_payroll_distribution_with_file_id() -> None:
@@ -225,3 +236,25 @@ def test_is_hr_request_query_broad_detection() -> None:
     )
     assert is_separation_count_query("how many employees terminated this month", _intent())
     assert not is_hr_request_query("pending leave requests", _intent(subject_area="hr"))
+
+
+def test_validation_status_follow_up_after_hr_request_list() -> None:
+    from gateway.core.hr_payroll_composer import compose_hr_request_detail_plan, is_hr_request_detail_query
+    from gateway.core.project_attribute_utils import is_project_attribute_query
+    from gateway.core.project_profile_routing import is_project_profile_query
+
+    ctx = _make_context_stack()
+    ctx.working_memory.session_facts["pending_hr_context"] = {
+        "domain": "hr",
+        "subtype": "hr_request_list",
+        "resolved": {
+            "employee_name_hint": "jawad ur rehman",
+            "recent_request_ids": [39540],
+        },
+    }
+    assert is_hr_request_detail_query("validation status", ctx)
+    assert not is_project_attribute_query("validation status")
+    assert not is_project_profile_query("validation status", _intent(subject_area="project_attribute"), ctx)
+    plan = compose_hr_request_detail_plan("validation status", _intent(subject_area="hr"), ctx)
+    assert plan is not None
+    assert plan.tool_input.get("request_id") == 39540

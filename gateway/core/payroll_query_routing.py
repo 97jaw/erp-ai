@@ -143,7 +143,14 @@ def _active_payroll_context(context: ContextStack | None) -> bool:
     """True when the prior turn was payroll/HR and this message is likely a follow-up."""
     if context is None:
         return False
+    from gateway.core.hr_payroll_composer import get_pending_hr_context
+
     facts = context.working_memory.session_facts or {}
+    hr_pending = get_pending_hr_context(context)
+    if hr_pending.get("domain") == "payroll":
+        return True
+    if facts.get("last_payslip_scope"):
+        return True
     pending = facts.get("pending_entity_clarification") or {}
     if pending.get("payroll_context"):
         return True
@@ -509,10 +516,11 @@ def resolve_payroll_tool(
     if not is_payroll_orchestration_query(message, intent, context):
         return None
 
-    from gateway.core.hr_payroll_composer import compose_payroll_plan, plan_to_route
+    from gateway.core.hr_payroll_composer import compose_payroll_plan, enrich_payroll_plan_from_session, plan_to_route
 
     composer_plan = compose_payroll_plan(message, intent, context)
     if composer_plan is not None:
+        composer_plan = enrich_payroll_plan_from_session(composer_plan, context)
         routed = plan_to_route(composer_plan)
         if routed is not None:
             return routed
@@ -764,8 +772,30 @@ def resolve_payroll_tool(
     ):
         from gateway.core.hr_payroll_composer import (
             build_employee_name_domain,
+            compose_payroll_plan,
+            enrich_payroll_plan_from_session,
+            inherit_payroll_session_slots,
             payslip_period_domain_from_dates,
+            plan_to_route,
         )
+
+        if "payslip" in blob and any(
+            token in blob
+            for token in ("overtime", "that payslip", "breakdown", "deduction", "line", "lines", "worked")
+        ):
+            detail_plan = compose_payroll_plan(message, intent, context)
+            if detail_plan is not None:
+                detail_plan = enrich_payroll_plan_from_session(detail_plan, context)
+                routed = plan_to_route(detail_plan)
+                if routed is not None:
+                    return routed
+
+        inherited = inherit_payroll_session_slots(context)
+        if not employee_hint:
+            employee_hint = str(inherited.get("employee_name_hint") or "")
+        if not employee_hint and not inherited.get("employee_file_id"):
+            if "payslip" in blob and _active_payroll_context(context):
+                return None
 
         ps_domain: list[Any] = []
         month_year = _parse_month_year(message)
@@ -788,6 +818,25 @@ def resolve_payroll_tool(
                 ps_domain = ["&"] + name_domain + ps_domain
             else:
                 ps_domain = name_domain
+        elif inherited.get("employee_file_id"):
+            return None
+        if "payslip" in blob and not ps_domain and not employee_hint:
+            return None
+        if employee_hint or inherited.get("employee_file_id"):
+            tool_input: dict[str, Any] = {"detail_type": "header"}
+            if inherited.get("employee_file_id"):
+                tool_input["employee_file_id"] = str(inherited["employee_file_id"])
+            if employee_hint:
+                tool_input["employee_name"] = employee_hint
+            if ps_domain and month_year:
+                month, year = month_year
+                last_day = calendar.monthrange(int(year), int(month))[1]
+                tool_input["date_from"] = f"{year}-{int(month):02d}-01"
+                tool_input["date_to"] = f"{year}-{int(month):02d}-{last_day:02d}"
+            elif inherited.get("date_from") and inherited.get("date_to"):
+                tool_input["date_from"] = str(inherited["date_from"])
+                tool_input["date_to"] = str(inherited["date_to"])
+            return "get_payslip_detail", tool_input
         return "query_odoo", {
             "model": "hr.payslip",
             "domain": ps_domain,
