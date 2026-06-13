@@ -3363,6 +3363,14 @@ async def _voice_pipeline(
             schedule_usage(track_voice_minutes(user_id, minutes))
 
         # Step 2: Run intelligent handler (same pipeline as text chat)
+        # Voice queries never go through the keystroke eligibility hook, so
+        # explicitly detect and promote deep_think here — the handler's internal
+        # auto-promotion is a safety net but a cache-hit can bypass it.
+        if not deep_think:
+            from gateway.core.deep_think import is_deep_think_eligible as _dte
+            if _dte(transcript):
+                deep_think = True
+                logger.info("[/voice] Auto-promoted to Deep Think for transcript: '%.80s'", transcript)
         try:
             result = await _run_intelligent_chat(
                 transcript,
@@ -3388,17 +3396,28 @@ async def _voice_pipeline(
             suggestions     = []
             suggestion_meta = None
         else:
-            tools_called, tool_payloads = _tool_payloads_from_intelligent_result(result)
-            clean_text, visualization, suggestions, suggestion_meta = _finalize_agent_response(
-                result.text or "",
-                result.visualization,
-                result.suggestions or [],
-                tools_called,
-                tool_payloads,
-                language,
-                transcript,
-                session_id,
-            )
+            try:
+                tools_called, tool_payloads = _tool_payloads_from_intelligent_result(result)
+                clean_text, visualization, suggestions, suggestion_meta = _finalize_agent_response(
+                    result.text or "",
+                    result.visualization,
+                    result.suggestions or [],
+                    tools_called,
+                    tool_payloads,
+                    language,
+                    transcript,
+                    session_id,
+                )
+                logger.info(
+                    "[/voice] Finalized: deep_think=%s tools=%s viz=%s text_len=%d",
+                    deep_think, tools_called, bool(visualization), len(clean_text),
+                )
+            except Exception as _fe:
+                logger.exception("[/voice] _finalize_agent_response failed: %s", _fe)
+                clean_text      = result.text or "I could not process your request."
+                visualization   = None
+                suggestions     = []
+                suggestion_meta = None
 
         # Step 3: Streaming TTS — synthesize the voice-optimised text
         tts = get_tts()
