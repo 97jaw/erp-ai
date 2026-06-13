@@ -344,8 +344,14 @@ class IntelligentQueryHandler:
                 derive_activity_type,
                 is_project_activity_query,
             )
+            from gateway.core.hr_query_routing import (
+                is_hr_orchestration_query,
+                is_hr_project_staff_query,
+                resolve_hr_tool,
+            )
 
             has_active_project = bool(active and active.project_id)
+            hr_project_staff_query = is_hr_project_staff_query(message)
             record_type = derive_record_type(message)
             activity_type = derive_activity_type(message)
             # Records lane fires on explicit "<type> of/for <project>" phrasing
@@ -374,9 +380,12 @@ class IntelligentQueryHandler:
                     or has_active_project
                 )
             )
+            hr_orchestration_query = is_hr_orchestration_query(message, intent)
             profile_query = (
                 not records_query
                 and not activity_query
+                and not hr_project_staff_query
+                and not hr_orchestration_query
                 and is_project_profile_query(message, intent)
             )
 
@@ -679,6 +688,42 @@ class IntelligentQueryHandler:
                         activity_project_id,
                         act_type,
                     )
+
+            if hr_project_staff_query and effective_strategy_override is None:
+                hr_project_id = self._resolved_project_id(context, entity_meta)
+                if hr_project_id is not None:
+                    routed = resolve_hr_tool(message, intent, context)
+                    if routed is not None:
+                        tool_name, tool_input = routed
+                        effective_strategy_override = build_single_tool_strategy(
+                            tool=tool_name,
+                            tool_input=tool_input,
+                            description=f"HR project staff: {message}",
+                            expected_output=intent.expected_output or "table",
+                        )
+                        logger.info(
+                            "[HRProjectStaff] Forcing %s project_id=%s",
+                            tool_name,
+                            hr_project_id,
+                        )
+
+            if (
+                effective_strategy_override is None
+                and hr_orchestration_query
+                and not profile_query
+                and not records_query
+                and not activity_query
+            ):
+                routed = resolve_hr_tool(message, intent, context)
+                if routed is not None:
+                    tool_name, tool_input = routed
+                    effective_strategy_override = build_single_tool_strategy(
+                        tool=tool_name,
+                        tool_input=tool_input,
+                        description=f"HR query: {message}",
+                        expected_output=intent.expected_output or "summary",
+                    )
+                    logger.info("[HRRouting] Forcing %s for %r", tool_name, message[:80])
 
             pipeline = await self._run_pipeline_orchestration(
                 message=message,
@@ -1143,6 +1188,21 @@ class IntelligentQueryHandler:
         meta = EntityResolutionMeta()
         if not EntityGate.intent_requires_entity_confirmation(message, intent, context):
             meta.entity_gate_status = "skipped"
+            if confirmed_entities:
+                confirmed_map: dict[str, dict[str, Any]] = {}
+                for item in confirmed_entities:
+                    confirmed_map[item.type] = {"id": item.id, "name": item.name}
+                    meta.resolved_entities.append(
+                        {
+                            "entity_type": item.type,
+                            "id": item.id,
+                            "name": item.name,
+                            "project_id": item.id if item.type == "project" else None,
+                            "project_name": item.name if item.type == "project" else None,
+                            "action": "user_confirmed",
+                        },
+                    )
+                EntityGate.apply_confirmed_entities(context, confirmed_map)
             return intent, meta
 
         confirmed_entities = self._try_repeat_query_entity_confirm(
@@ -1899,11 +1959,19 @@ class IntelligentQueryHandler:
                 }
             elif len(entity_meta.clarification_options) == 1:
                 label = entity_meta.clarification_options[0].get("label", "")
+                from gateway.core.hr_query_routing import is_hr_person_query
+
                 if profile_query:
                     question = (
                         f"I found **{label}**. Is this the project you mean?"
                         if language != "ar"
                         else f"هل تقصد **{label}**؟"
+                    )
+                elif is_hr_person_query(message):
+                    question = (
+                        f"I found **{label}**. Is this the employee you mean?"
+                        if language != "ar"
+                        else f"هل تقصد الموظف **{label}**؟"
                     )
                 else:
                     question = (

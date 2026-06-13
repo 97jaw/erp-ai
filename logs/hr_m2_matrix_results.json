@@ -1,0 +1,399 @@
+{
+  "hr_pass": 27,
+  "hr_total": 33,
+  "hr_threshold_met": true,
+  "regression_pass": 3,
+  "regression_total": 3,
+  "regression_ok": true,
+  "sample_employee": "AABID SADIK",
+  "results": [
+    {
+      "id": "HR-A1",
+      "category": "A",
+      "message": "how many employees do we have",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Elrace has 1,721 active employees across 17 departments. - Accounts: 17 - Administration: 12 - Aluminum Workshop: 15 - Civil: 1,132 - Design: 15 - Documentation: 26 - Electrical: 1"
+    },
+    {
+      "id": "HR-A2",
+      "category": "A",
+      "message": "how many labor vs staff",
+      "pass": false,
+      "tools": [
+        "aggregate_odoo",
+        "aggregate_odoo",
+        "group_and_aggregate",
+        "group_and_aggregate"
+      ],
+      "failure_mode": null,
+      "snippet": "The Odoo query did not complete: Both and aggregates are required."
+    },
+    {
+      "id": "HR-A3",
+      "category": "A",
+      "message": "employees in Civil department",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Elrace has 1,132 active employees across 1 department. - Civil: 1,132"
+    },
+    {
+      "id": "HR-A4",
+      "category": "A",
+      "message": "show me AABID SADIK details",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 1 employee record. - AABID SADIK"
+    },
+    {
+      "id": "HR-A5",
+      "category": "A",
+      "message": "employees who joined this year",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 50+ employee records. - Meera Khaled almeqbaali - Mahra khaled Khamis almeqbaali - Meera Jasem AL Mheri - Rouda Omar Al Subousi - NAGESH DARANGULA NAGAIAH DARANGULA - Rajaram"
+    },
+    {
+      "id": "HR-A6",
+      "category": "A",
+      "message": "managers in the company",
+      "pass": false,
+      "tools": [],
+      "failure_mode": null,
+      "snippet": "I can see we're talking about that project. I don't have access to project manager, deadline, or status data yet — I can currently show financial and expense data. Broader project "
+    },
+    {
+      "id": "HR-A7",
+      "category": "A",
+      "message": "foremen list",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 50+ employee records. - AABID SADIK - AANAND RAUT - ABDALLA ASHRAF FATHY ELGHARIB - ABDUR REHMAN JAMAL SAEED - ABHIJIT MANDAL - ADEEL AKASH MUHAMMAD ADALAT HUSSAIN - AHMAD UL"
+    },
+    {
+      "id": "HR-A8",
+      "category": "A",
+      "message": "كم عدد الموظفين",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Elrace has 1,721 active employees across 17 departments. - Accounts: 17 - Administration: 12 - Aluminum Workshop: 15 - Civil: 1,132 - Design: 15 - Documentation: 26 - Electrical: 1"
+    },
+    {
+      "id": "HR-B1",
+      "category": "B",
+      "message": "list all departments",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 22 department records. - Accounts - Administration - Aluminum Workshop - Civil - Cost Control - Design - Documentation - Electrical - General Manager - General Manager …and 1"
+    },
+    {
+      "id": "HR-B2",
+      "category": "B",
+      "message": "employees per department",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Elrace has 1,721 active employees across 17 departments. - Accounts: 17 - Administration: 12 - Aluminum Workshop: 15 - Civil: 1,132 - Design: 15 - Documentation: 26 - Electrical: 1"
+    },
+    {
+      "id": "HR-B3",
+      "category": "B",
+      "message": "biggest department",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Elrace has 1,721 active employees across 17 departments. - Accounts: 17 - Administration: 12 - Aluminum Workshop: 15 - Civil: 1,132 - Design: 15 - Documentation: 26 - Electrical: 1"
+    },
+    {
+      "id": "HR-B4",
+      "category": "B",
+      "message": "Civil department head",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 1 department record. - Civil"
+    },
+    {
+      "id": "HR-B5",
+      "category": "B",
+      "message": "branches we have",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Elrace has 1,756 active employees across 11 departments. - Al Hewar - Al Ain: 213 - Al Hewar - AUH: 30 - Al Hewar Envi.: 6 - Colors: 26 - Elrace - Al Ain: 1,240 - Elrace - AUH: 50 "
+    },
+    {
+      "id": "HR-C1",
+      "category": "C",
+      "message": "pending leave requests",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for that request. Please try narrowing the period or filters."
+    },
+    {
+      "id": "HR-C2",
+      "category": "C",
+      "message": "approved resignations this month",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for that request. Please try narrowing the period or filters."
+    },
+    {
+      "id": "HR-C3",
+      "category": "C",
+      "message": "transfers this year",
+      "pass": false,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 50+ employee records. - AABID SADIK - AANAND RAUT - ABDALLA ASHRAF FATHY ELGHARIB - ABDUR REHMAN JAMAL SAEED - ABHIJIT MANDAL - ADEEL AKASH MUHAMMAD ADALAT HUSSAIN - AHMAD UL"
+    },
+    {
+      "id": "HR-C4",
+      "category": "C",
+      "message": "loan requests",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for that request. Please try narrowing the period or filters."
+    },
+    {
+      "id": "HR-C5",
+      "category": "C",
+      "message": "who has unresolved requests",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for that request. Please try narrowing the period or filters. The available data may be incomplete for this period."
+    },
+    {
+      "id": "HR-C6",
+      "category": "C",
+      "message": "promotion requests last quarter",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for that request. Please try narrowing the period or filters."
+    },
+    {
+      "id": "HR-D1",
+      "category": "D",
+      "message": "today's attendance count",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for Get today's employee attendance count. I searched using: data search. Try a wider date range or confirm spelling of the client or project name."
+    },
+    {
+      "id": "HR-D2",
+      "category": "D",
+      "message": "who was absent yesterday",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 50+ attendance records. - Abdelrahman Mohamed Elsayed Mahmoud Ghoneim · 2026-06-12 04:00:00 · absent · True - Abdulhamid Nabil Abdulhamid · 2026-06-12 04:00:00 · absent · Tru"
+    },
+    {
+      "id": "HR-D3",
+      "category": "D",
+      "message": "AABID SADIK attendance this month",
+      "pass": false,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for . I searched using: data search. Try a wider date range or confirm spelling of the client or project name."
+    },
+    {
+      "id": "HR-D4",
+      "category": "D",
+      "message": "total work hours by department this month",
+      "pass": false,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "The Odoo query did not complete: <Fault 1: 'Traceback (most recent call last):\\n File \"/usr/lib/python3/dist-packages/odoo/addons/base/controllers/rpc.py\", line 88, in \\n response "
+    },
+    {
+      "id": "HR-D5",
+      "category": "D",
+      "message": "employees on leave today",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 50+ attendance records. - Alamzeb Khan Aurangzeb Khan · annual · 2026-06-12 04:00:00 - Mohammad Ahmadullah Sameem · annual · 2026-06-12 04:00:00 - NANDLAL Tuar · annual · 202"
+    },
+    {
+      "id": "HR-E1",
+      "category": "E",
+      "message": "visas expiring in 30 days",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 1 employee record. - Zakaria Naseer Zakaria Aly Awwad"
+    },
+    {
+      "id": "HR-E2",
+      "category": "E",
+      "message": "expired labour cards",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 50+ employee records. - AMARJEET SHARMA - AMJAD ALI MOHAMMAD PAN - ANOOP KUMAR SAH - Abdel Rahman Mahmour - Abdelrahman Khader Mohd Hussien - Abdelrahman M A Alshehri - Abdul"
+    },
+    {
+      "id": "HR-E3",
+      "category": "E",
+      "message": "employees missing documents",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 50+ employee records. - AABID SADIK - AANAND RAUT - ABDALLA ASHRAF FATHY ELGHARIB - ABDUR REHMAN JAMAL SAEED - ABHIJIT MANDAL - ADEEL AKASH MUHAMMAD ADALAT HUSSAIN - AHMAD UL"
+    },
+    {
+      "id": "HR-E4",
+      "category": "E",
+      "message": "passports expiring this year",
+      "pass": false,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for that request. Please try narrowing the period or filters."
+    },
+    {
+      "id": "HR-E5",
+      "category": "E",
+      "message": "EID renewal needed",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 1 employee record. - Zakaria Naseer Zakaria Aly Awwad"
+    },
+    {
+      "id": "HR-F1",
+      "category": "F",
+      "message": "who works on Villa 34",
+      "pass": true,
+      "tools": [],
+      "failure_mode": "tool_error",
+      "snippet": "Something went wrong while calling the requested tool. Error summary: No simple tool mapping found for intent action=ask_question subject=project_attribute. If you need broader acc"
+    },
+    {
+      "id": "HR-F2",
+      "category": "F",
+      "message": "AABID SADIK's assigned vehicle",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for Find the vehicle assigned to employee AABID SADIK. I searched using: data search. Try a wider date range or confirm spelling of the client or project name."
+    },
+    {
+      "id": "HR-F3",
+      "category": "F",
+      "message": "AABID SADIK's project history",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 1 employee record. - AABID SADIK"
+    },
+    {
+      "id": "HR-F4",
+      "category": "F",
+      "message": "department head count by project",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Elrace has 89 active employees across 119 departments. - Annual contract for preventive and remedial maintenance works for Dubai Police buildings located in the Zone (1): 2 - RCC -"
+    }
+  ],
+  "regression": [
+    {
+      "id": "R1",
+      "pass": true,
+      "tools": [
+        "get_project_expense_summary"
+      ],
+      "snippet": "Villa Maintenance No. 34 has AED 12,527 in recorded expenses, but no W.O budget is assigned in the system, so no spend percentage or budget status is available. Top trade categorie"
+    },
+    {
+      "id": "R2",
+      "pass": true,
+      "tools": [
+        "get_project_expense_breakdown"
+      ],
+      "snippet": "Villa Maintenance No. 34: GL expense breakdown totals AED 11,053 across 1 main group(s). Top main groups: Salary (AED 11,053). See the card for the full MG → SG → Account hierarchy"
+    },
+    {
+      "id": "R3",
+      "pass": true,
+      "tools": [
+        "get_financial_report"
+      ],
+      "snippet": "P&L summary (2026-01-01 to 2026-06-13): revenue AED 53.7M, expenses AED 113.7M, net profit AED -60.0M."
+    }
+  ]
+}

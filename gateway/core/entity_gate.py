@@ -340,6 +340,23 @@ class EntityGate:
         ):
             return []
 
+        from gateway.core.hr_query_routing import (
+            is_hr_orchestration_query,
+            is_hr_person_query,
+            is_hr_project_staff_query,
+        )
+
+        if is_hr_orchestration_query(message, intent):
+            if is_hr_person_query(message):
+                return []
+            if not is_hr_project_staff_query(message) and intent.subject_area == "hr":
+                return []
+            if not is_hr_project_staff_query(message) and not looks_like_project_cost_query(
+                f"{message} {intent.specific_intent}".lower(),
+                subject_area=intent.subject_area,
+            ):
+                return []
+
         required: list[tuple[str, str]] = []
         seen: set[tuple[str, str]] = set()
 
@@ -405,8 +422,23 @@ class EntityGate:
         context: ContextStack | None = None,
     ) -> bool:
         """Return True when this turn needs entity discovery/confirmation before KPI tools."""
+        from gateway.core.hr_query_routing import (
+            is_hr_cross_module_query,
+            is_hr_orchestration_query,
+            is_hr_person_query,
+            is_hr_project_staff_query,
+        )
+
         if intent.subject_area == "project_attribute":
             return False
+        if is_hr_person_query(message) or is_hr_cross_module_query(message):
+            return False
+        if is_hr_orchestration_query(message, intent) and not is_hr_project_staff_query(message):
+            if intent.subject_area == "hr" or not looks_like_project_cost_query(
+                f"{message} {intent.specific_intent}".lower(),
+                subject_area=intent.subject_area,
+            ):
+                return False
         if (
             context is not None
             and is_project_expense_follow_up(message)

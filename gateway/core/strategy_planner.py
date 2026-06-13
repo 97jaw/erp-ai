@@ -191,7 +191,7 @@ class StrategyPlanner:
             strategy = company_report
         elif self._is_relationship_composition_query(intent):
             strategy = await self.plan_complex(intent, context)
-        elif self._resolve_universal_read_tool(intent) is not None:
+        elif self._resolve_universal_read_tool(intent, context) is not None:
             strategy = self.plan_simple(intent, context)
         elif intent.primary_action == "search_entity" or self._needs_project_entity_search(
             intent,
@@ -669,7 +669,7 @@ class StrategyPlanner:
                     "date_to": date_to,
                 }
 
-        universal = self._resolve_universal_read_tool(intent)
+        universal = self._resolve_universal_read_tool(intent, context)
         if universal is not None:
             return universal
 
@@ -697,12 +697,26 @@ class StrategyPlanner:
         )
 
     @staticmethod
-    def _resolve_universal_read_tool(intent: Intent) -> tuple[str, dict[str, Any]] | None:
+    def _resolve_universal_read_tool(
+        intent: Intent,
+        context: ContextStack | None = None,
+    ) -> tuple[str, dict[str, Any]] | None:
         """Route open-gate HR/inventory/fleet reads to query_odoo."""
-        if intent.primary_action not in {"fetch_data", "search_entity"}:
+        if intent.primary_action not in {"fetch_data", "search_entity", "analyze"}:
             return None
         if intent.out_of_scope:
             return None
+
+        message = intent.specific_intent
+        if context is not None and context.conversation.message:
+            message = context.conversation.message
+
+        from gateway.core.hr_query_routing import is_hr_orchestration_query, resolve_hr_tool
+
+        if is_hr_orchestration_query(message, intent):
+            routed = resolve_hr_tool(message, intent, context)
+            if routed is not None:
+                return routed
 
         query = f"{intent.specific_intent} {intent.subject_area}".lower().replace("_", " ")
 

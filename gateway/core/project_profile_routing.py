@@ -136,6 +136,10 @@ def is_project_profile_query(message: str, intent) -> bool:
     """Profile detection with intent context."""
     if getattr(intent, "out_of_scope", False):
         return False
+    from gateway.core.hr_query_routing import is_hr_orchestration_query
+
+    if is_hr_orchestration_query(message, intent):
+        return False
     if is_project_profile_text(message):
         return True
     # Follow-ups like "who manages it" — active project supplies context.
