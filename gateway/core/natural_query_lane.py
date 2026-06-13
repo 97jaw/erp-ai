@@ -237,9 +237,24 @@ def should_use_fast_lane(
 
 
 def _response_is_question(text: str) -> bool:
-    """True when Claude's response ends with a question (disambiguation still pending)."""
+    """True when Claude's response contains a disambiguation question.
+
+    Claude sometimes phrases the closing sentence as a statement after the "?"
+    (e.g. "Which one? Please let me know.") so a fixed-length tail check misses it.
+    We treat ANY response that both contains a "?" and has a numbered option list
+    (1. / 2.) as a pending disambiguation, regardless of where the "?" appears.
+    """
+    import re as _re
     stripped = text.rstrip()
-    return stripped.endswith("?") or "?" in stripped[-150:]
+    # Direct: response ends with a question mark
+    if stripped.endswith("?"):
+        return True
+    # Indirect: question mark somewhere in the text AND numbered options present
+    # (Claude listed choices then added a closing sentence/instruction)
+    if "?" in stripped and _re.search(r"^\s*[1-9][.)]\s+", stripped, _re.MULTILINE):
+        return True
+    # Fallback: question mark within the last 300 chars
+    return "?" in stripped[-300:]
 
 
 class NaturalQueryLane:
