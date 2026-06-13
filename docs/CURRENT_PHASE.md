@@ -8,7 +8,7 @@
 
 **File:** HR + Payroll Rollout — Phase M6 (Payroll module certification)
 
-**Status:** Sprint C + D implemented locally — HR request detail + fleet vehicle reads
+**Status:** Sprint C + D hotfix deployed to EC2 (`f40885ed`) — UI smoke routing fixes
 
 | Piece | Description | Code | Tests |
 |-------|-------------|------|-------|
@@ -18,8 +18,9 @@
 | HR request detail | `get_employee_request_detail` — validation chain, leave period, approvers | ✅ | ✅ |
 | Fleet reads | `search_fleet_vehicles` — driver, File ID, mobile, project, location | ✅ | ✅ |
 | Session context | HR request + fleet follow-up via `pending_hr_context` | ✅ | ✅ |
+| Smoke hotfix | File ID concat, name follow-up, OT drill-down, validation status, fleet scope | ✅ | ✅ |
 
-**Next:** Deploy to EC2, then full UI smoke across Sprints A–D.
+**Next:** Re-run full UI smoke script on http://13.203.223.70:8000 (Sprints A–D queries).
 
 ---
 
