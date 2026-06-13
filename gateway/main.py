@@ -2911,6 +2911,96 @@ async def audit_stream(
     )
 
 
+@app.post("/reports/stream")
+async def reports_stream(
+    request: ChatRequest,
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+):
+    """Reports agent — interactive report generation via adaptive UI."""
+    from gateway.reports.handler import get_or_create_handler
+
+    chat_user = await require_chat_user(
+        http_request, credentials, session_id=request.session_id
+    )
+    session_id = request.session_id or str(uuid4())
+
+    async def generate():
+        set_request_user(chat_user)
+        stream_started = time.perf_counter()
+        stream_status = "success"
+        language = _detect_language(request.message)
+        ai_streaming_connections.inc()
+        try:
+            try:
+                adapter = get_adapter()
+            except ConnectionError as exc:
+                stream_status = "error"
+                message = str(exc)
+                yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'text': message, 'session_id': session_id})}\n\n"
+                return
+
+            handler = get_or_create_handler(session_id, adapter)
+            async for chunk in handler.handle_stream(request.message, chat_user, session_id):
+                yield chunk
+        except Exception as exc:
+            stream_status = "error"
+            logger.error("[/reports/stream] error: %s", exc)
+            message = "Sorry, I encountered an error generating the report. Please try again."
+            yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'text': message, 'session_id': session_id})}\n\n"
+        finally:
+            ai_streaming_connections.dec()
+            chat_stream_duration.labels(status=stream_status).observe(
+                time.perf_counter() - stream_started
+            )
+            record_ai_query(
+                endpoint="/reports/stream",
+                language=language,
+                status=stream_status,
+            )
+            set_request_user(None)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+@app.get("/reports/download/{report_id}")
+async def reports_download(report_id: str):
+    """Serve a generated report file (PDF or Excel)."""
+    from fastapi.responses import FileResponse
+
+    # Sanitize: only hex chars allowed
+    if not all(c in "0123456789abcdef" for c in report_id):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Invalid report_id")
+
+    reports_dir = REPORTS_DIR
+    # Try PDF first, then Excel
+    for ext, content_type in [
+        ("pdf", "application/pdf"),
+        ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    ]:
+        path = reports_dir / f"{report_id}.{ext}"
+        if path.exists():
+            return FileResponse(
+                str(path),
+                media_type=content_type,
+                filename=f"report.{ext}",
+            )
+
+    from fastapi import HTTPException
+    raise HTTPException(status_code=404, detail="Report not found")
+
+
 @app.post("/chat/stream")
 async def chat_stream(
     request: ChatRequest,

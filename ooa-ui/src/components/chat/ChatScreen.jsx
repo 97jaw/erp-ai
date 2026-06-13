@@ -34,6 +34,8 @@ import ChatInputBar from "../../main/chat/ChatInputBar";
 import ComingSoonFeatureModal from "../../main/chat/ComingSoonFeatureModal";
 import { AuditPanel } from "../../audit";
 import "../../audit/styles/audit.css";
+import { ReportsPanel } from "../../reports";
+import "../../reports/reports.css";
 import { buildClarificationQuery, buildConfirmedEntities } from "../../utils/clarify";
 import { apiFetch } from "../../config/api";
 
@@ -66,7 +68,12 @@ export default function ChatScreen({
   const [pastChatsError, setPastChatsError] = useState(null);
   const [input, setInput] = useState("");
   const [mainView, setMainView] = useState(
-    () => (initialMainView === "audit" ? "audit" : "chat"),
+    () =>
+      initialMainView === "audit"
+        ? "audit"
+        : initialMainView === "reports"
+          ? "reports"
+          : "chat",
   );
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [dashboardModalOpen, setDashboardModalOpen] = useState(false);
@@ -250,8 +257,26 @@ export default function ChatScreen({
     });
   }, []);
 
+  const openAuditView = useCallback(() => {
+    setMainView("audit");
+    setChatsSheetOpen(false);
+    visualize.closePanel();
+  }, [visualize]);
+
+  const openReportsView = useCallback(() => {
+    setMainView("reports");
+    setChatsSheetOpen(false);
+    visualize.closePanel();
+  }, [visualize]);
+
   const handleSidebarNav = useCallback(
     (item) => {
+      if (item?.action === "reports") {
+        setMainView("reports");
+        setChatsSheetOpen(false);
+        visualize.closePanel();
+        return;
+      }
       setMainView("chat");
       if (item?.action === "focus") {
         focusInput();
@@ -259,14 +284,8 @@ export default function ChatScreen({
         setChatsSheetOpen(true);
       }
     },
-    [focusInput],
+    [focusInput, visualize],
   );
-
-  const openAuditView = useCallback(() => {
-    setMainView("audit");
-    setChatsSheetOpen(false);
-    visualize.closePanel();
-  }, [visualize]);
 
   const handleToggleVisualize = useCallback(() => {
     setMainView("chat");
@@ -793,17 +812,20 @@ export default function ChatScreen({
     onLogout?.();
   };
 
+  const isNonChatView = mainView === "audit" || mainView === "reports";
+
   const shellClass = [
     "ooa-main-shell-wrap",
     mainView === "audit" ? "ooa-main-shell-wrap--audit-view" : "",
-    visualize.open && mainView !== "audit" ? "ooa-main-shell-wrap--viz-open" : "",
+    mainView === "reports" ? "ooa-main-shell-wrap--audit-view" : "", // reuse audit layout
+    visualize.open && !isNonChatView ? "ooa-main-shell-wrap--viz-open" : "",
     sidebarExpanded ? "ooa-main-shell-wrap--sidebar-expanded" : "",
-    mainView !== "audit" ? `ooa-main-shell-wrap--viz-${vizBorderState}` : "",
+    !isNonChatView ? `ooa-main-shell-wrap--viz-${vizBorderState}` : "",
   ].filter(Boolean).join(" ");
 
   return (
     <div className={shellClass}>
-      {mainView !== "audit" ? (
+      {!isNonChatView ? (
         <VisualizePanel
           open={visualize.open}
           borderState={vizBorderState}
@@ -881,7 +903,7 @@ export default function ChatScreen({
         />
 
         <main
-          className={`ooa-main-chat${mainView === "audit" ? " ooa-main-chat--audit" : ""}`}
+          className={`ooa-main-chat${isNonChatView ? " ooa-main-chat--audit" : ""}`}
           id="ooa-chat-main"
         >
           <div
@@ -891,6 +913,14 @@ export default function ChatScreen({
             aria-hidden={mainView !== "audit"}
           >
             <AuditPanel user={user} embedded onCloseToChat={switchToChat} />
+          </div>
+          <div
+            className={`ooa-main-view-pane ooa-main-view-pane--audit${
+              mainView !== "reports" ? " ooa-main-view-pane--hidden" : ""
+            }`}
+            aria-hidden={mainView !== "reports"}
+          >
+            <ReportsPanel user={user} embedded onCloseToChat={switchToChat} />
           </div>
           <div
             className={`ooa-main-view-pane ooa-main-view-pane--chat${

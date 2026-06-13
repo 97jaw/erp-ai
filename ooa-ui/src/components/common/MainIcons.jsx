@@ -190,6 +190,16 @@ export function IconClipboard({ size = 20 }) {
   );
 }
 
+export function IconReports({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6z" {...stroke} />
+      <path d="M14 3v6h6" {...stroke} />
+      <path d="M8 13h8M8 17h5" {...stroke} />
+    </svg>
+  );
+}
+
 /** Six-dot grip — drag handle for Visualize panel only (not whole message). */
 export function IconGrip({ size = 20 }) {
   return (
@@ -215,6 +225,7 @@ const QUICK_ACTION_ICONS = {
   chats: IconChats,
   clock: IconClock,
   audit: IconAudit,
+  reports: IconReports,
 };
 
 export function QuickActionIcon({ name, size = 20 }) {
