@@ -361,6 +361,13 @@ class IntelligentQueryHandler:
             has_active_project = bool(active and active.project_id)
             hr_project_staff_query = is_hr_project_staff_query(message)
             payroll_orchestration_query = is_payroll_orchestration_query(message, intent, context)
+            from gateway.core.project_expense_routing import is_project_expense_query
+
+            project_expense_query = is_project_expense_query(message, intent, context)
+            if resolve_payroll_tool(message, intent, context) is not None:
+                payroll_orchestration_query = True
+            if "payslip" in message.lower() or "salary slip" in message.lower():
+                payroll_orchestration_query = True
             record_type = derive_record_type(message)
             activity_type = derive_activity_type(message)
             # Records lane fires on explicit "<type> of/for <project>" phrasing
@@ -515,6 +522,7 @@ class IntelligentQueryHandler:
                 and not broad_search_query
                 and not hr_orchestration_query
                 and not payroll_orchestration_query
+                and not project_expense_query
                 and not is_active_follow_up
                 and effective_strategy_override is None
                 and self._requires_deep_think(message, intent)

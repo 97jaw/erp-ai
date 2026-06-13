@@ -82,6 +82,10 @@ class ResultSynthesizer:
         if mobile_summary is not None:
             return mobile_summary
 
+        payslip_payload = self._find_hr_payslip_payload(execution_result.results, intent)
+        if payslip_payload is not None:
+            return payslip_payload
+
         entity_candidates = self._find_entity_candidates(execution_result.results, intent)
         if entity_candidates is not None:
             return entity_candidates
@@ -200,6 +204,51 @@ class ResultSynthesizer:
                 user_message=intent.specific_intent,
             )
             return SynthesizedResult(text=text, visualization=None)
+        return None
+
+    @staticmethod
+    def _find_hr_payslip_payload(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        """Narrate get_employee_payslips / get_my_payslips tool payloads."""
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if "payslips" not in payload:
+                continue
+            payslips = payload.get("payslips") or []
+            file_id = payload.get("file_id") or ""
+            employee_name = payload.get("employee_name") or ""
+            if not payslips:
+                label = employee_name or (f"File ID {file_id}" if file_id else "that employee")
+                return SynthesizedResult(
+                    text=(
+                        f"No payslip found for {label} for the requested period. "
+                        "The slip may not be generated yet, or try last month."
+                    ),
+                )
+            lines = []
+            for row in payslips[:5]:
+                if not isinstance(row, dict):
+                    continue
+                title = str(row.get("name") or row.get("number") or "Payslip").strip()
+                amount = row.get("amount") or row.get("net_wage") or row.get("net_salary")
+                period = ""
+                if row.get("date_from") and row.get("date_to"):
+                    period = f" ({row['date_from']} to {row['date_to']})"
+                if amount is not None:
+                    lines.append(f"- {title}{period}: AED {amount:,.2f}")
+                else:
+                    lines.append(f"- {title}{period}")
+            header = f"Found {len(payslips)} payslip record(s)"
+            if employee_name:
+                header += f" for **{employee_name}**"
+            elif file_id:
+                header += f" for File ID **{file_id}**"
+            return SynthesizedResult(text=f"{header}.\n" + "\n".join(lines))
+
         return None
 
     @staticmethod
