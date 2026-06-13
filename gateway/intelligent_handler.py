@@ -285,8 +285,11 @@ class IntelligentQueryHandler:
             # Auto-promote to Deep Think when the query requires predefined Odoo
             # methods (financial reports, comparisons, etc.) and the user hasn't
             # already toggled it on. Applies equally to text and voice queries.
+            # Also skip period-picker clarifications — Deep Think's strategy planner
+            # resolves date ranges itself via resolve_report_date_range.
             if not deep_think and self._requires_deep_think(message, intent):
                 deep_think = True
+                skip_clarification = True
                 logger.info("[Handler] Auto-promoted to Deep Think for: %.80s", message)
 
             # ----------------------------------------------------------------
