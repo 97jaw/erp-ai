@@ -3267,6 +3267,7 @@ async def voice(
     audio: UploadFile = File(...),
     session_id: str | None = Form(None),
     language_hint: str | None = Form(None),
+    deep_think: str | None = Form(None),
     credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
 ):
     """
@@ -3274,6 +3275,7 @@ async def voice(
 
     Accepts : audio file (wav, mp3, m4a, webm, ogg)
               language_hint (optional) — 'en', 'ar', or 'ur'
+              deep_think    (optional) — 'true' to enable Deep Think mode
     Returns : audio/mpeg stream (spoken response)
 
     Pipeline:
@@ -3292,6 +3294,7 @@ async def voice(
             user_id=chat_user.id if chat_user else None,
             extension_from_filename=audio.filename or "audio.webm",
             language_hint=language_hint,
+            deep_think=str(deep_think or "").lower() == "true",
         )
     finally:
         set_request_user(None)
@@ -3305,6 +3308,7 @@ async def _voice_pipeline(
     user_id: int | None = None,
     extension_from_filename: str,
     language_hint: str | None = None,
+    deep_think: bool = False,
 ) -> StreamingResponse:
     import json as _json
 
@@ -3364,6 +3368,7 @@ async def _voice_pipeline(
                 transcript,
                 session_id,
                 chat_user,
+                deep_think=deep_think,
             )
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -3371,6 +3376,7 @@ async def _voice_pipeline(
         text     = result.text or "I could not process your request."
         language = result.language or "en"
         suggestions = getattr(result, "suggestions", None) or []
+        deep_think_available = bool(getattr(result, "deep_think_available", False))
 
         # Step 3: Streaming TTS via ElevenLabs /stream endpoint
         tts = get_tts()
@@ -3398,13 +3404,14 @@ async def _voice_pipeline(
             _audio_stream(),
             media_type = "audio/mpeg",
             headers    = {
-                "X-Session-Id"     : session_id,
-                "X-Language"       : language,
-                "X-Transcript"     : _ascii_header(transcript),
-                "X-Response"       : _ascii_header(tts_text),
-                "X-Transcript-B64" : _utf8_header(transcript),
-                "X-Response-B64"   : _utf8_header(text),
-                "X-Suggestions"    : suggestions_header,
+                "X-Session-Id"           : session_id,
+                "X-Language"             : language,
+                "X-Transcript"           : _ascii_header(transcript),
+                "X-Response"             : _ascii_header(tts_text),
+                "X-Transcript-B64"       : _utf8_header(transcript),
+                "X-Response-B64"         : _utf8_header(text),
+                "X-Suggestions"          : suggestions_header,
+                "X-Deep-Think-Available" : "true" if deep_think_available else "false",
             },
         )
 
