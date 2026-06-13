@@ -134,6 +134,16 @@ _NON_PAYROLL_MARKERS = (
     "receivables aging",
     "payables ageing",
     "payables aging",
+    # Report generation queries — never payroll even if prior session had payslip context
+    "financial report",
+    "generate a report",
+    "generate report",
+    "pdf report",
+    "generate a pdf",
+    "export report",
+    "download report",
+    "profit & loss report",
+    "income statement",
 )
 _MONTH_YEAR_RE = re.compile(
     r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
@@ -207,6 +217,11 @@ def _looks_like_employee_name_fragment(message: str) -> bool:
             "payable",
             "ageing",
             "aging",
+            "report",
+            "generate",
+            "export",
+            "download",
+            "pdf",
             "client",
             "terminated",
             "termination",
