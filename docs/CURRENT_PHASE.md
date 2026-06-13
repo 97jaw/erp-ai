@@ -8,16 +8,14 @@
 
 **File:** HR + Payroll Rollout — Phase M6 (Payroll module certification)
 
-**Status:** M6.2 complete — **24/24 PASS** payroll matrix; **7/7 PR-E flagship**; PR-PERM ✅; R-CHAT ✅
+**Status:** M6.2 complete + **Session Context / Payroll Smartness** deployed (`8e9a8c46`)
 
 | Piece | Description | Code | Tests |
 |-------|-------------|------|-------|
-| M6.1 Payroll context | `gateway/core/payroll_module_context.py` → system prompt after HR | ✅ | ✅ |
-| M6.2 Payroll routing | `gateway/core/payroll_query_routing.py` + entity_gate + handler force + narration | ✅ | ✅ 7 routing tests |
-| Matrix runner | `scripts/payroll_m6_matrix.py` — 24 payroll + PR-PERM + R-CHAT | ✅ | 24/24 live |
-| PR-E1 verify | Odoo truth AED 11,053.16 vs gateway AED 11,053 — **match** | ✅ | ✅ |
+| Session payroll smartness | Employee name/file-ID routing, payroll stickiness, topic-shift domain, contextual suggestions | ✅ | ✅ 25 unit tests |
+| Production smoke (4-query session) | Villa labor → payslip jawad → file ID 2721 → National Guard expense | ✅ | ✅ EC2 verified |
 
-**Key fixes:** breakdown detection uses user message only (not LLM intent blob); default payroll month for cost.allocation; E6 `cost across projects` bypasses entity gate; cost.allocation narration (trend / by employee / by project).
+**Key fixes (session context):** `_employee_name_hint` no longer extracts `"need"`; removed ≤10-word payroll catch-all; `2721` → `get_employee_payslips`; `payslip` in business-signal regex; empty payslip payloads treated as meaningful in quality pipeline.
 
 **Next:** Optional HR matrix cleanup (6 remaining M2 cases) or next module per `docs/ELRACE_HR_PAYROLL_PLAN.md`.
 
