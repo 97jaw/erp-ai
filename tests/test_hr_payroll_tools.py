@@ -2,7 +2,8 @@ from unittest.mock import MagicMock
 
 from admin.auth.principal import CurrentUser
 from gateway.hr_identity import resolve_employee_by_file_id
-from gateway.hr_payroll_tools import _present_payslip
+from gateway.hr_payroll_tools import _and_domain, _present_payslip
+from gateway.core.hr_payroll_composer import payslip_period_domain_from_dates
 
 
 def test_present_payslip_amount_prefers_net_wage():
@@ -96,3 +97,12 @@ def test_fetch_recent_payslips_returns_rows():
     out = fetch_recent_payslips(adapter, limit=5)
     assert out["count"] == 1
     assert out["payslips"][0]["employee_name"] == "Jane"
+
+
+def test_and_domain_merges_employee_with_payslip_period() -> None:
+    period = payslip_period_domain_from_dates("2026-05-01", "2026-05-31")
+    domain = _and_domain([["employee_id", "=", 4255]], period)
+    assert domain[0] == "&"
+    assert domain[1] == ["employee_id", "=", 4255]
+    assert "|" in domain
+    assert ["name", "ilike", "May-2026"] in domain

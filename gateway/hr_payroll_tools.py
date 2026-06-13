@@ -99,21 +99,52 @@ def _payslip_read_fields(adapter: OdooV14Adapter) -> list[str]:
     return [f for f in _PAYSLIP_FIELD_CANDIDATES if f in available]
 
 
+def _normalize_domain_fragment(part: list[Any]) -> list[Any]:
+    """Normalize a domain fragment for safe merging."""
+    if not part:
+        return []
+    if isinstance(part[0], str) and part[0] in ("&", "|", "!"):
+        return list(part)
+    if (
+        len(part) == 3
+        and isinstance(part[0], str)
+        and part[0] not in ("&", "|", "!")
+    ):
+        return [list(part)]
+    if (
+        len(part) == 1
+        and isinstance(part[0], (list, tuple))
+        and len(part[0]) == 3
+        and isinstance(part[0][0], str)
+        and part[0][0] not in ("&", "|", "!")
+    ):
+        return [list(part[0])]
+    if all(
+        isinstance(item, (list, tuple))
+        and len(item) == 3
+        and isinstance(item[0], str)
+        and item[0] not in ("&", "|", "!")
+        for item in part
+    ):
+        return [list(item) for item in part]
+    return list(part)
+
+
 def _and_domain(*parts: list[Any]) -> list[Any]:
     """Prefix-AND Odoo domains (each part is one leaf triple or nested domain)."""
-    clauses: list[Any] = []
+    domains: list[list[Any]] = []
     for part in parts:
-        if not part:
-            continue
-        if isinstance(part[0], str) and part[0] in ("&", "|", "!"):
-            clauses.extend(part)
-        else:
-            clauses.append(part)
-    if not clauses:
+        normalized = _normalize_domain_fragment(part)
+        if normalized:
+            domains.append(normalized)
+    if not domains:
         return []
-    if len(clauses) == 1:
-        return clauses
-    return ["&"] * (len(clauses) - 1) + clauses
+    if len(domains) == 1:
+        return domains[0]
+    merged = domains[0]
+    for extra in domains[1:]:
+        merged = ["&"] + merged + extra
+    return merged
 
 
 def _safe_payslip_order(adapter: OdooV14Adapter) -> str:
