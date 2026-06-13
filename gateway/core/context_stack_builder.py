@@ -89,6 +89,12 @@ class ContextStackBuilder:
                 working_memory.session_facts["last_payslip_scope"] = dict(
                     scope["last_payslip_scope"],
                 )
+            # Fast-lane pending state — must be loaded so Signal 0 fires on follow-ups
+            from gateway.core.natural_query_lane import FAST_LANE_SESSION_KEY
+            if scope.get(FAST_LANE_SESSION_KEY):
+                working_memory.session_facts[FAST_LANE_SESSION_KEY] = dict(
+                    scope[FAST_LANE_SESSION_KEY],
+                )
         return ContextStack(
             user=self._build_user_context(user),
             conversation=ConversationContext(

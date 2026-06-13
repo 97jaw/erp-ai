@@ -112,6 +112,19 @@ _NON_PAYROLL_MARKERS = (
     "national guard",
     "show me project",
     "cost of project",
+    # Vague/general questions that mention payroll words but are not payslip requests
+    "information for payslip",
+    "information about payslip",
+    "info about payslip",
+    "tell me about payslip",
+    "what is payslip",
+    "how many department",
+    "how many employees",
+    "how many staff",
+    "count of department",
+    "number of department",
+    "list of department",
+    "all department",
 )
 _MONTH_YEAR_RE = re.compile(
     r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
