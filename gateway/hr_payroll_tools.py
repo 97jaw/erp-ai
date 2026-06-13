@@ -259,6 +259,8 @@ def fetch_payslips_by_file_id(
     *,
     limit: int = 10,
     employee: dict[str, Any] | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> dict[str, Any]:
     """
     Search payslips using every safe strategy until records are found.
@@ -290,7 +292,12 @@ def fetch_payslips_by_file_id(
     plans = _payslip_search_plans(adapter, normalized or file_id, employee_id=employee_id)
 
     for plan_name, base_domain in plans:
-        for state_name, domain in _payslip_state_domains(adapter, base_domain):
+        period_domain = list(base_domain)
+        if date_from:
+            period_domain.append(["date_from", ">=", date_from])
+        if date_to:
+            period_domain.append(["date_to", "<=", date_to])
+        for state_name, domain in _payslip_state_domains(adapter, period_domain):
             label = f"{plan_name}/{state_name}"
             searches_tried.append(label)
             try:
@@ -425,6 +432,8 @@ async def get_employee_payslips(
     *,
     employee_file_id: str,
     limit: int = 5,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> dict[str, Any]:
     target = normalize_employee_file_id(employee_file_id)
     if not can_access_employee_file_id(user, target):
@@ -434,9 +443,257 @@ async def get_employee_payslips(
             "note": "You may only view your own HR records without admin Odoo access.",
         }
 
-    payload = fetch_payslips_by_file_id(adapter, target, limit=limit)
+    payload = fetch_payslips_by_file_id(
+        adapter,
+        target,
+        limit=limit,
+        date_from=date_from,
+        date_to=date_to,
+    )
     payload["scope"] = "other" if target != normalize_employee_file_id(user.file_id) else "self"
+    payload["_source"] = "get_employee_payslips"
     return payload
+
+
+def _search_employees_by_name(
+    adapter: OdooV14Adapter,
+    name_hint: str,
+    *,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    parts = [part for part in name_hint.split() if len(part) > 1]
+    if not parts:
+        return []
+    domain: list[Any] = [["active", "=", True], ["name", "ilike", parts[0]]]
+    if len(parts) > 1:
+        domain.append(["name", "ilike", parts[-1]])
+    try:
+        return adapter.search_read(
+            model="hr.employee",
+            domain=domain,
+            fields=["id", "name", "emp_id", "department_id"],
+            limit=limit,
+            order="name asc",
+        )
+    except Exception as exc:
+        logger.warning("[HR] employee name search failed: %s", exc)
+        return []
+
+
+def _resolve_payslip_for_employee(
+    adapter: OdooV14Adapter,
+    *,
+    employee_id: int | None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict[str, Any] | None:
+    if not employee_id:
+        return None
+    model = _payslip_model(adapter)
+    if not model:
+        return None
+    domain: list[Any] = [["employee_id", "=", employee_id]]
+    if date_from:
+        domain.append(["date_from", ">=", date_from])
+    if date_to:
+        domain.append(["date_to", "<=", date_to])
+    fields = _payslip_read_fields(adapter) + [
+        "fine",
+        "advance",
+        "total_deductions",
+        "net_salary",
+        "labor_snapshot_total_salary",
+        "staff_snapshot_total_salary",
+        "weekend_ot_hours",
+        "normal_ot_hours",
+        "holiday_ot_hours",
+        "total_over_time",
+        "sick_leave_full_paid_amount",
+        "sick_leave_half_paid_amount",
+        "sick_leave_unpaid_amount",
+    ]
+    available = adapter._get_model_fields("hr.payslip") or {}
+    fields = [field for field in fields if field in available or field in ("id", "name", "employee_id")]
+    try:
+        rows = adapter.search_read(
+            model=model,
+            domain=domain,
+            fields=fields,
+            limit=1,
+            order=_safe_payslip_order(adapter),
+        )
+    except Exception as exc:
+        logger.warning("[HR] payslip resolve failed: %s", exc)
+        return None
+    return rows[0] if rows else None
+
+
+async def get_payslip_detail(
+    adapter: OdooV14Adapter,
+    user: CurrentUser,
+    *,
+    employee_file_id: str | None = None,
+    employee_name: str | None = None,
+    detail_type: str = "lines",
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Return payslip salary lines or project cost allocation for one employee."""
+    employee: dict[str, Any] | None = None
+    employee_id: int | None = None
+    resolved_file_id = normalize_employee_file_id(employee_file_id) if employee_file_id else None
+
+    if resolved_file_id:
+        if not can_access_employee_file_id(user, resolved_file_id):
+            return {
+                "detail_type": detail_type,
+                "lines": [],
+                "allocations": [],
+                "count": 0,
+                "note": "You may only view your own HR records without admin Odoo access.",
+                "_source": "get_payslip_detail",
+            }
+        employee, _ = resolve_employee_by_file_id(adapter, resolved_file_id)
+        if employee:
+            employee_id = int(employee["id"])
+
+    if employee_id is None and employee_name:
+        matches = _search_employees_by_name(adapter, employee_name, limit=5)
+        if len(matches) == 1:
+            employee = matches[0]
+            employee_id = int(employee["id"])
+        elif len(matches) > 1:
+            return {
+                "detail_type": detail_type,
+                "lines": [],
+                "allocations": [],
+                "count": 0,
+                "employee_name": employee_name,
+                "ambiguous_employees": [
+                    {
+                        "id": row.get("id"),
+                        "name": row.get("name"),
+                        "emp_id": row.get("emp_id"),
+                    }
+                    for row in matches
+                ],
+                "note": f"Multiple employees match '{employee_name}'. Please specify file ID or full name.",
+                "_source": "get_payslip_detail",
+            }
+
+    payslip = _resolve_payslip_for_employee(
+        adapter,
+        employee_id=employee_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    if not payslip:
+        label = employee_name or resolved_file_id or "that employee"
+        return {
+            "detail_type": detail_type,
+            "lines": [],
+            "allocations": [],
+            "count": 0,
+            "employee_name": (employee or {}).get("name") or employee_name,
+            "employee_file_id": resolved_file_id,
+            "note": f"No payslip found for **{label}** for the requested period.",
+            "_source": "get_payslip_detail",
+        }
+
+    payslip_id = int(payslip["id"])
+    employee_label = (employee or {}).get("name") or employee_name
+    header = _present_payslip(payslip)
+
+    if detail_type == "distribution":
+        month = None
+        year = None
+        date_to_val = str(payslip.get("date_to") or "")
+        if len(date_to_val) >= 7:
+            year = date_to_val[:4]
+            month = str(int(date_to_val[5:7]))
+        alloc_domain: list[Any] = [["employee_id", "=", employee_id or payslip.get("employee_id")[0]]]
+        if month and year:
+            alloc_domain.extend([["month", "=", month], ["year", "=", year]])
+        try:
+            rows = adapter.search_read(
+                model="hr.payslip.cost.allocation",
+                domain=alloc_domain,
+                fields=["project_id", "allocation", "amount", "total_salary", "month", "year"],
+                limit=limit,
+                order="amount desc",
+            )
+        except Exception as exc:
+            return {
+                "detail_type": detail_type,
+                "payslip": header,
+                "allocations": [],
+                "count": 0,
+                "employee_name": employee_label,
+                "note": f"Could not load payslip distribution: {exc}",
+                "_source": "get_payslip_detail",
+            }
+        allocations = []
+        for row in rows:
+            project = row.get("project_id")
+            project_name = (
+                project[1] if isinstance(project, (list, tuple)) and len(project) > 1 else project
+            )
+            allocations.append(
+                {
+                    "project_name": project_name,
+                    "allocation": row.get("allocation"),
+                    "amount": row.get("amount"),
+                    "total_salary": row.get("total_salary"),
+                }
+            )
+        return {
+            "detail_type": detail_type,
+            "payslip": header,
+            "allocations": allocations,
+            "count": len(allocations),
+            "employee_name": employee_label,
+            "employee_file_id": resolved_file_id,
+            "_source": "get_payslip_detail",
+        }
+
+    line_fields = ["name", "code", "amount", "quantity", "rate", "category_id"]
+    available_lines = adapter._get_model_fields("hr.payslip.line") or {}
+    line_fields = [field for field in line_fields if field in available_lines or field in ("name", "code", "amount")]
+    try:
+        lines = adapter.search_read(
+            model="hr.payslip.line",
+            domain=[["slip_id", "=", payslip_id]],
+            fields=line_fields,
+            limit=limit,
+            order="sequence asc, id asc",
+        )
+    except Exception as exc:
+        return {
+            "detail_type": detail_type,
+            "payslip": header,
+            "lines": [],
+            "count": 0,
+            "employee_name": employee_label,
+            "note": f"Could not load payslip lines: {exc}",
+            "_source": "get_payslip_detail",
+        }
+
+    return {
+        "detail_type": detail_type,
+        "payslip": header,
+        "lines": lines,
+        "count": len(lines),
+        "employee_name": employee_label,
+        "employee_file_id": resolved_file_id,
+        "deductions_summary": {
+            "fine": payslip.get("fine"),
+            "advance": payslip.get("advance"),
+            "total_deductions": payslip.get("total_deductions"),
+            "net_salary": payslip.get("net_salary"),
+        },
+        "_source": "get_payslip_detail",
+    }
 
 
 async def list_recent_payslips(
@@ -460,6 +717,7 @@ __all__ = [
     "fetch_recent_payslips",
     "get_employee_payslips",
     "get_my_payslips",
+    "get_payslip_detail",
     "list_recent_payslips",
     "resolve_odoo_user_id",
 ]

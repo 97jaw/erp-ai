@@ -84,6 +84,8 @@ TOOL_STATUS_LABELS = {
     "search_entities"         : "Searching for matching records...",
     "get_my_payslips"         : "Loading your payslips...",
     "get_employee_payslips"   : "Loading employee payslips...",
+    "get_payslip_detail"      : "Loading payslip breakdown...",
+    "list_employee_requests"  : "Loading employee requests...",
     "list_recent_payslips"    : "Listing recent payslips...",
 }
 
@@ -1202,6 +1204,47 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "get_payslip_detail",
+        "description": (
+            "Salary calculation breakdown or project payslip distribution for one employee. "
+            "Use for payslip lines, deductions, overtime breakdown, or cost allocation by project."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "employee_file_id": {"type": "string", "description": "Employee File ID / emp_id."},
+                "employee_name": {"type": "string", "description": "Employee name when file ID unknown."},
+                "detail_type": {
+                    "type": "string",
+                    "enum": ["lines", "distribution"],
+                    "description": "lines = salary calculation; distribution = project allocation.",
+                },
+                "date_from": {"type": "string"},
+                "date_to": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+        },
+    },
+    {
+        "name": "list_employee_requests",
+        "description": (
+            "List HR workflow requests (employee.request) for an employee with optional "
+            "request type and date filters. Use for leave, resignation, loan, transfer, clearance."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "employee_file_id": {"type": "string"},
+                "employee_name": {"type": "string"},
+                "request_type": {"type": "string", "description": "leave, loan, transfer, termination, etc."},
+                "date_from": {"type": "string"},
+                "date_to": {"type": "string"},
+                "status": {"type": "string", "enum": ["pending", "approved"]},
+                "limit": {"type": "integer"},
+            },
+        },
+    },
     *PROJECT_EXPENSE_TOOL_DEFINITIONS,
     *PROJECT_PROFILE_TOOL_DEFINITIONS,
     *PROJECT_RECORDS_TOOL_DEFINITIONS,
@@ -1547,6 +1590,51 @@ def execute_tool(
                         chat_user,
                         employee_file_id=tool_input.get("employee_file_id", ""),
                         limit=tool_input.get("limit", 5),
+                        date_from=tool_input.get("date_from"),
+                        date_to=tool_input.get("date_to"),
+                    )
+                )
+        elif tool_name == "get_payslip_detail":
+            import asyncio
+
+            from gateway.hr_payroll_tools import get_payslip_detail
+
+            chat_user = get_request_user()
+            if chat_user is None:
+                result = {"error": "not_authenticated", "lines": [], "allocations": []}
+            else:
+                result = asyncio.run(
+                    get_payslip_detail(
+                        adapter,
+                        chat_user,
+                        employee_file_id=tool_input.get("employee_file_id"),
+                        employee_name=tool_input.get("employee_name"),
+                        detail_type=tool_input.get("detail_type", "lines"),
+                        date_from=tool_input.get("date_from"),
+                        date_to=tool_input.get("date_to"),
+                        limit=tool_input.get("limit", 50),
+                    )
+                )
+        elif tool_name == "list_employee_requests":
+            import asyncio
+
+            from gateway.hr_request_tools import list_employee_requests
+
+            chat_user = get_request_user()
+            if chat_user is None:
+                result = {"error": "not_authenticated", "requests": []}
+            else:
+                result = asyncio.run(
+                    list_employee_requests(
+                        adapter,
+                        chat_user,
+                        employee_file_id=tool_input.get("employee_file_id"),
+                        employee_name=tool_input.get("employee_name"),
+                        request_type=tool_input.get("request_type"),
+                        date_from=tool_input.get("date_from"),
+                        date_to=tool_input.get("date_to"),
+                        status=tool_input.get("status"),
+                        limit=tool_input.get("limit", 50),
                     )
                 )
         elif tool_name == "list_recent_payslips":

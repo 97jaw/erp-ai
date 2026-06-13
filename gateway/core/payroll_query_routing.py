@@ -165,7 +165,24 @@ def _looks_like_employee_name_fragment(message: str) -> bool:
     lowered = cleaned.lower()
     if any(
         token in lowered
-        for token in ("villa", "maintenance", "project", "invoice", "p&l", "profit", "client")
+        for token in (
+            "villa",
+            "maintenance",
+            "project",
+            "invoice",
+            "p&l",
+            "profit",
+            "client",
+            "terminated",
+            "termination",
+            "how many",
+            "headcount",
+            "department",
+            "request",
+            "requests",
+            "attendance",
+            "visa",
+        )
     ):
         return False
     tokens = [token for token in re.split(r"[\s,]+", cleaned) if len(token) > 1]
@@ -201,11 +218,10 @@ def is_explicit_non_payroll_query(message: str) -> bool:
 
 
 def extract_employee_file_id(message: str) -> str | None:
-    """Return a bare employee File ID / emp_id when the message is numeric-only."""
-    match = _EMPLOYEE_FILE_ID_RE.match((message or "").strip())
-    if not match:
-        return None
-    return match.group(1)
+    """Return employee File ID from bare numeric or inline 'file id NNNN' messages."""
+    from gateway.core.hr_payroll_composer import extract_inline_file_id
+
+    return extract_inline_file_id(message)
 
 
 def is_payroll_file_id_follow_up(message: str, context: ContextStack | None) -> bool:
@@ -236,6 +252,11 @@ def is_payroll_orchestration_query(
     context: ContextStack | None = None,
 ) -> bool:
     """True when the question should use payroll models, not generic HR employee reads."""
+    from gateway.core.hr_payroll_composer import is_hr_request_query, is_separation_count_query
+
+    if is_separation_count_query(message, intent) or is_hr_request_query(message, intent):
+        return False
+
     if is_explicit_non_payroll_query(message):
         return False
 
@@ -257,8 +278,11 @@ def is_payroll_orchestration_query(
     msg = message.lower()
     if "across projects" in msg and ("cost" in msg or "labor" in msg or "labour" in msg):
         return True
-    if message_has_payroll_period(message) and (
-        _employee_name_hint(message) or _looks_like_employee_name_fragment(message)
+    if message_has_payroll_period(message) and _employee_name_hint(message):
+        return True
+    if message_has_payroll_period(message) and _looks_like_employee_name_fragment(message) and any(
+        token in blob
+        for token in ("payslip", "payslips", "salary", "payroll", "deduction", "overtime", "net salary")
     ):
         return True
     if context is not None and _active_payroll_context(context):
@@ -410,50 +434,9 @@ def _clean_name_candidate(raw: str) -> str:
 
 
 def _employee_name_hint(message: str) -> str:
-    cleaned = _MONTH_YEAR_RE.sub("", message).strip(" ,")
-    lowered = cleaned.lower()
-    if any(
-        token in lowered
-        for token in ("labor cost", "labour cost", "cost allocation", "villa maintenance", "villa no")
-    ):
-        return ""
-    if is_explicit_non_payroll_query(message):
-        return ""
+    from gateway.core.hr_payroll_composer import extract_employee_name
 
-    for_match = _NAME_AFTER_FOR_RE.search(cleaned)
-    if for_match:
-        candidate = _clean_name_candidate(for_match.group(1))
-        if candidate:
-            return candidate
-
-    payslip_match = _PAYSLIP_NAME_RE.search(cleaned)
-    if payslip_match:
-        candidate = _clean_name_candidate(payslip_match.group(1))
-        if candidate:
-            return candidate
-
-    leading_before_period = _MONTH_YEAR_RE.split(cleaned)[0].strip(" ,")
-    if leading_before_period:
-        candidate = _clean_name_candidate(leading_before_period)
-        if candidate:
-            return candidate
-
-    leading_cost = re.match(
-        r"^([A-Za-z][A-Za-z\s'.-]{2,50}?)\s+(?:cost|labor|labour)\s+across\b",
-        cleaned,
-        re.I,
-    )
-    if leading_cost:
-        candidate = _clean_name_candidate(leading_cost.group(1))
-        if candidate:
-            return candidate
-
-    if "'s" in cleaned:
-        candidate = _clean_name_candidate(cleaned.split("'s")[0])
-        if candidate:
-            return candidate
-
-    return ""
+    return extract_employee_name(message)
 
 
 def _payslip_period_payload(
@@ -463,6 +446,14 @@ def _payslip_period_payload(
     """Optional date bounds for get_employee_payslips filtering in synthesis."""
     month_year = _parse_month_year(message)
     if not month_year and context is not None:
+        from gateway.core.hr_payroll_composer import parse_period_window
+
+        period = parse_period_window(message, context)
+        if period:
+            return {
+                "date_from": period.date_from,
+                "date_to": period.date_to,
+            }
         pending = context.working_memory.session_facts.get("pending_entity_clarification") or {}
         prior_query = str(pending.get("query") or "")
         last_turn = context.working_memory.session_facts.get("last_turn") or {}
@@ -507,6 +498,14 @@ def resolve_payroll_tool(
     """Return (tool_name, payload) for payroll queries, or None if not payroll-routed."""
     if not is_payroll_orchestration_query(message, intent, context):
         return None
+
+    from gateway.core.hr_payroll_composer import compose_payroll_plan, plan_to_route
+
+    composer_plan = compose_payroll_plan(message, intent, context)
+    if composer_plan is not None:
+        routed = plan_to_route(composer_plan)
+        if routed is not None:
+            return routed
 
     file_id_route = _resolve_payslip_by_file_id(message, context)
     if file_id_route is not None:

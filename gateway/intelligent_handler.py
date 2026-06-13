@@ -492,10 +492,20 @@ class IntelligentQueryHandler:
                     )
 
             if payroll_orchestration_query and _employee_name_hint(message):
-                context.working_memory.session_facts["pending_entity_clarification"] = {
+                pending_ctx = {
                     "query": message,
                     "payroll_context": True,
                     "options": [],
+                }
+                context.working_memory.session_facts["pending_entity_clarification"] = pending_ctx
+                from gateway.core.hr_payroll_composer import classify_payroll_subtype
+
+                context.working_memory.session_facts["pending_hr_context"] = {
+                    "domain": "payroll",
+                    "subtype": classify_payroll_subtype(message),
+                    "prior_query": message,
+                    "awaiting": ["employee"],
+                    "resolved": {},
                 }
 
             broad_search_query = is_broad_project_search(message)

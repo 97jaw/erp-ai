@@ -86,6 +86,14 @@ class ResultSynthesizer:
         if payslip_payload is not None:
             return payslip_payload
 
+        payslip_detail = self._find_hr_payslip_detail(execution_result.results, intent)
+        if payslip_detail is not None:
+            return payslip_detail
+
+        hr_requests = self._find_hr_requests_payload(execution_result.results, intent)
+        if hr_requests is not None:
+            return hr_requests
+
         entity_candidates = self._find_entity_candidates(execution_result.results, intent)
         if entity_candidates is not None:
             return entity_candidates
@@ -249,6 +257,137 @@ class ResultSynthesizer:
                 header += f" for File ID **{file_id}**"
             return SynthesizedResult(text=f"{header}.\n" + "\n".join(lines))
 
+        return None
+
+    @staticmethod
+    def _find_hr_payslip_detail(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if payload.get("_source") != "get_payslip_detail":
+                continue
+            ambiguous = payload.get("ambiguous_employees") or []
+            if ambiguous:
+                names = ", ".join(
+                    f"{row.get('name')} (File ID {row.get('emp_id')})"
+                    for row in ambiguous[:5]
+                    if isinstance(row, dict)
+                )
+                return SynthesizedResult(
+                    text=(
+                        f"Multiple employees match **{payload.get('employee_name') or 'that name'}**. "
+                        f"Which one: {names}?"
+                    ),
+                )
+            note = str(payload.get("note") or "").strip()
+            if note and not payload.get("lines") and not payload.get("allocations"):
+                return SynthesizedResult(text=note)
+            employee_name = payload.get("employee_name") or "Employee"
+            payslip = payload.get("payslip") or {}
+            title = str(payslip.get("name") or "Payslip")
+            if payload.get("detail_type") == "distribution":
+                allocations = payload.get("allocations") or []
+                if not allocations:
+                    return SynthesizedResult(
+                        text=f"No project payslip distribution found for **{employee_name}** in that period.",
+                    )
+                lines = []
+                for row in allocations[:10]:
+                    project = row.get("project_name") or "Project"
+                    amount = row.get("amount")
+                    alloc = row.get("allocation")
+                    if amount is not None:
+                        pct = f" ({float(alloc) * 100:.0f}%)" if alloc else ""
+                        lines.append(f"- {project}{pct}: AED {float(amount):,.2f}")
+                    else:
+                        lines.append(f"- {project}")
+                extra = f"\n…and {len(allocations) - 10} more." if len(allocations) > 10 else ""
+                return SynthesizedResult(
+                    text=(
+                        f"Payslip distribution for **{employee_name}** — {title}.\n"
+                        + "\n".join(lines)
+                        + extra
+                    ),
+                )
+            lines_payload = payload.get("lines") or []
+            deductions = payload.get("deductions_summary") or {}
+            body_lines = []
+            for row in lines_payload[:12]:
+                if not isinstance(row, dict):
+                    continue
+                code = row.get("code") or ""
+                name = row.get("name") or code or "Line"
+                amount = row.get("amount")
+                if amount is not None:
+                    body_lines.append(f"- {name} ({code}): AED {float(amount):,.2f}")
+                else:
+                    body_lines.append(f"- {name}")
+            summary_bits = []
+            for key, label in (
+                ("total_deductions", "Total deductions"),
+                ("fine", "Fine"),
+                ("advance", "Advance"),
+                ("net_salary", "Net salary"),
+            ):
+                value = deductions.get(key)
+                if value is not None:
+                    summary_bits.append(f"{label}: AED {abs(float(value)):,.2f}")
+            header = f"Salary calculation for **{employee_name}** — {title}."
+            text = header
+            if summary_bits:
+                text += "\n" + " | ".join(summary_bits)
+            if body_lines:
+                text += "\n" + "\n".join(body_lines)
+            elif not summary_bits:
+                text += "\nNo payslip line detail available for that period."
+            return SynthesizedResult(text=text)
+        return None
+
+    @staticmethod
+    def _find_hr_requests_payload(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if payload.get("_source") != "list_employee_requests":
+                continue
+            ambiguous = payload.get("ambiguous_employees") or []
+            if ambiguous:
+                names = ", ".join(
+                    f"{row.get('name')} (File ID {row.get('emp_id')})"
+                    for row in ambiguous[:5]
+                    if isinstance(row, dict)
+                )
+                return SynthesizedResult(
+                    text=(
+                        f"Multiple employees match **{payload.get('employee_name') or 'that name'}**. "
+                        f"Which one: {names}?"
+                    ),
+                )
+            requests = payload.get("requests") or []
+            employee_name = payload.get("employee_name") or ""
+            if not requests:
+                note = str(payload.get("note") or "No HR requests found for that criteria.")
+                return SynthesizedResult(text=note)
+            lines = []
+            for row in requests[:10]:
+                req_type = row.get("request_type") or "Request"
+                status = row.get("status") or ("Approved" if row.get("is_approve") else "Pending")
+                created = str(row.get("create_date") or "")[:10]
+                title = row.get("name") or req_type
+                lines.append(f"- {title} ({req_type}, {status}, {created})")
+            header = f"Found {len(requests)} HR request(s)"
+            if employee_name:
+                header += f" for **{employee_name}**"
+            extra = f"\n…and {len(requests) - 10} more." if len(requests) > 10 else ""
+            return SynthesizedResult(text=f"{header}.\n" + "\n".join(lines) + extra)
         return None
 
     @staticmethod

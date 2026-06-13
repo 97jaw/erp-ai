@@ -34,6 +34,7 @@ ENTITY_SCOPE_KEYS = (
     "client_name",
     "project_ids",
     "pending_entity_clarification",
+    "pending_hr_context",
 )
 
 _PAYROLL_DOMAIN_TOKENS = (
@@ -213,3 +214,4 @@ def apply_topic_shift_clear(session_id: str, working_memory: Any) -> None:
     SessionScopeStore.clear_entity_scope(session_id)
     working_memory.clear_entity_context()
     working_memory.session_facts.pop("pending_entity_clarification", None)
+    working_memory.session_facts.pop("pending_hr_context", None)

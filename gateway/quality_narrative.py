@@ -816,6 +816,45 @@ def narrate_universal_aggregate(
         if total_amount > 0:
             return f"Worked-day amount total: {format_currency(total_amount)}."
 
+    if model == "employee.request":
+        total_count = 0
+        dept_lines: list[str] = []
+        for group in groups[:15]:
+            if not isinstance(group, dict):
+                continue
+            count_value = group.get("__count")
+            if count_value is None:
+                for key, value in group.items():
+                    if key.endswith("_count") or key.endswith(":count"):
+                        count_value = value
+                        break
+            try:
+                count_int = int(float(count_value or 0))
+            except (TypeError, ValueError):
+                count_int = 0
+            total_count += count_int
+            label = "—"
+            for key, value in group.items():
+                if key.startswith("__") or key.endswith("_count") or key.endswith(":count"):
+                    continue
+                label = humanize_group_label(value)
+                if label != "Unassigned":
+                    break
+            if len(groups) > 1:
+                dept_lines.append(f"- {label}: {count_int:,}")
+        blob = (user_message or "").lower()
+        event = "terminations"
+        if "resign" in blob:
+            event = "resignations"
+        elif "clearance" in blob:
+            event = "clearance"
+        elif "leave" in blob:
+            event = "leave requests"
+        if len(groups) <= 1:
+            return f"{total_count:,} {event} in the selected period."
+        lead = f"{total_count:,} {event} in the selected period by department:"
+        return lead + "\n" + "\n".join(dept_lines)
+
     lines: list[str] = []
     total_count = 0
     for group in groups[:15]:

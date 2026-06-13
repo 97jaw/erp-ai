@@ -20,6 +20,9 @@ _REQUEST_TOKENS = (
     "pending leave",
     "resignation",
     "resignations",
+    "termination",
+    "terminations",
+    "terminated",
     "promotion request",
     "promotion requests",
     "loan request",
@@ -29,6 +32,8 @@ _REQUEST_TOKENS = (
     "unresolved request",
     "unresolved requests",
     "pending request",
+    "employee request",
+    "employee requests",
 )
 _ATTENDANCE_TOKENS = (
     "attendance",
@@ -54,6 +59,16 @@ _COMPLIANCE_TOKENS = (
 )
 _STOCK_TRANSFER_GUARD = ("stock", "inventory", "warehouse", "move line", "quant")
 _PROJECT_TASK_GUARD = ("project task", "task record", "milestone")
+_SEPARATION_GUARD_TOKENS = (
+    "terminated",
+    "termination",
+    "terminations",
+    "fired",
+    "clearance",
+    "separation",
+    "resignation",
+    "resignations",
+)
 
 
 def _query_blob(message: str, intent: Intent) -> str:
@@ -202,10 +217,29 @@ def resolve_hr_tool(
             "limit": 10,
         }
 
-    # --- HR requests (employee.request) ---
+    # --- Separation / termination counts (before generic headcount) ---
+    from gateway.core.hr_payroll_composer import (
+        compose_hr_request_plan,
+        compose_separation_plan,
+        plan_to_route,
+    )
+
+    separation_plan = compose_separation_plan(message, intent, context)
+    if separation_plan is not None:
+        routed = plan_to_route(separation_plan)
+        if routed is not None:
+            return routed
+
+    hr_request_plan = compose_hr_request_plan(message, intent, context)
+    if hr_request_plan is not None:
+        routed = plan_to_route(hr_request_plan)
+        if routed is not None:
+            return routed
+
+    # --- HR requests (employee.request) — legacy keyword fallback ---
     is_hr_request = any(token in blob for token in _REQUEST_TOKENS) or (
         "request" in blob
-        and intent.subject_area == "hr"
+        and ("employee" in blob or intent.subject_area == "hr")
         and not any(g in blob for g in _PROJECT_TASK_GUARD)
     )
     if is_hr_request and not (
@@ -220,6 +254,10 @@ def resolve_hr_tool(
             domain.append(["request_type", "ilike", "leave"])
         elif "resign" in blob:
             domain.append(["request_type", "ilike", "resign"])
+        elif "termin" in blob or "fired" in blob:
+            domain.append(["request_type", "ilike", "termination"])
+        elif "clearance" in blob:
+            domain.append(["request_type", "ilike", "clearance"])
         elif "promotion" in blob:
             domain.append(["request_type", "ilike", "promotion"])
         elif "loan" in blob:

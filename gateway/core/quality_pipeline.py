@@ -150,6 +150,12 @@ def has_meaningful_tool_data(tool_results: list[Any]) -> bool:
             return True
         if payload.get("payslips") is not None:
             return True
+        if payload.get("_source") in {"get_payslip_detail", "list_employee_requests"}:
+            return True
+        if payload.get("requests") is not None:
+            return True
+        if payload.get("lines") is not None or payload.get("allocations") is not None:
+            return True
         if payload.get("_source") == "compare_project_expenses" and payload.get("status") == "success":
             if len(payload.get("projects") or []) >= 2:
                 return True

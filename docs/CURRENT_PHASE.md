@@ -8,16 +8,18 @@
 
 **File:** HR + Payroll Rollout — Phase M6 (Payroll module certification)
 
-**Status:** M6.2 complete + **Session Context / Payroll Smartness** deployed (`8e9a8c46`)
+**Status:** HR/Payroll Intelligence Layer v2 — composer + dedicated tools implemented locally
 
 | Piece | Description | Code | Tests |
 |-------|-------------|------|-------|
-| Session payroll smartness | Employee name/file-ID routing, payroll stickiness, topic-shift domain, contextual suggestions | ✅ | ✅ 25 unit tests |
-| Production smoke (4-query session) | Villa labor → payslip jawad → file ID 2721 → National Guard expense | ✅ | ✅ EC2 verified |
+| HR/Payroll composer | Shared slot filling: employee, period, request type, payroll subtypes | ✅ | ✅ 12 composer tests |
+| Dedicated tools | `get_payslip_detail`, `list_employee_requests` | ✅ | ✅ routing integration |
+| Termination routing | `employee.request` count — not active headcount | ✅ | ✅ |
+| Session context | `pending_hr_context`, filler strip, inline file ID | ✅ | ✅ |
 
-**Key fixes (session context):** `_employee_name_hint` no longer extracts `"need"`; removed ≤10-word payroll catch-all; `2721` → `get_employee_payslips`; `payslip` in business-signal regex; empty payslip payloads treated as meaningful in quality pipeline.
+**Key models covered:** `hr.payslip`, `hr.payslip.line`, `hr.payslip.cost.allocation`, `hr.payslip.worked_days`, `employee.request`, `hr.employee`, `hr.attendance`, separation counts.
 
-**Next:** Optional HR matrix cleanup (6 remaining M2 cases) or next module per `docs/ELRACE_HR_PAYROLL_PLAN.md`.
+**Next:** Deploy + EC2 smoke, then optional HR matrix extension.
 
 ---
 
