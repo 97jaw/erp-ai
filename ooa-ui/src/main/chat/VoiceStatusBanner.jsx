@@ -1,5 +1,7 @@
 export default function VoiceStatusBanner({ phase }) {
-  if (!phase || phase === "idle") return null;
+  if (!phase || phase === "idle" || phase === "transcribing" || phase === "processing") {
+    return null;
+  }
 
   const copy =
     phase === "recording"

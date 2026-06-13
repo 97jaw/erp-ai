@@ -1,0 +1,7 @@
+# Copy to Caddyfile when you have a DNS A record → EC2 public IP.
+# Replace ooa.example.com with your hostname.
+
+ooa.example.com {
+	encode gzip
+	reverse_proxy gateway:8000
+}

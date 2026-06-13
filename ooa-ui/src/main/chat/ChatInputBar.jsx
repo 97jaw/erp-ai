@@ -91,11 +91,7 @@ export default function ChatInputBar({
           placeholder={
             voicePhase === "recording"
               ? "Listening…"
-              : voicePhase === "transcribing"
-                ? "Transcribing…"
-                : voicePhase === "processing"
-                  ? "Processing…"
-                  : "Type or speak…"
+              : "Type or speak…"
           }
           disabled={loading || voicePhase === "transcribing" || voicePhase === "processing"}
           onChange={handleChange}

@@ -1,0 +1,26 @@
+# HTTPS reverse proxy — use with prod + live overlays:
+#   docker compose -f deploy/aws/docker-compose.prod.yml \
+#     -f deploy/aws/docker-compose.live.yml \
+#     -f deploy/aws/docker-compose.https.yml \
+#     --env-file .env.production up -d
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_started
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - ooa-net
+
+volumes:
+  caddy-data:
+  caddy-config:

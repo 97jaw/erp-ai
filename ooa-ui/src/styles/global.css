@@ -956,13 +956,16 @@ textarea {
 
 .ooa-profile-menu {
   position: relative;
+  overflow: visible;
 }
 
 .ooa-profile-menu__panel {
   position: absolute;
   top: calc(100% + 8px);
-  right: 0;
+  left: 0;
+  right: auto;
   min-width: 240px;
+  max-width: min(280px, calc(100vw - 24px));
   padding: 14px;
   border-radius: 16px;
   border: 1px solid var(--ooa-glass-border);
@@ -970,6 +973,10 @@ textarea {
   box-shadow: var(--ooa-glass-shadow);
   backdrop-filter: blur(18px);
   z-index: 5;
+}
+
+.ooa-main-topbar__group--identity {
+  overflow: visible;
 }
 
 .ooa-profile-menu__name {
@@ -1125,6 +1132,7 @@ textarea:focus-visible,
 .ooa-floating-chrome--profile {
   top: 18px;
   left: 18px;
+  overflow: visible;
 }
 
 .ooa-floating-stage {

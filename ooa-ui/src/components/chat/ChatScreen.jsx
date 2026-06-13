@@ -704,7 +704,14 @@ export default function ChatScreen({
         setVoicePlaying(false);
       };
       setVoicePlaying(true);
-      await audio.play();
+      try {
+        await audio.play();
+      } catch {
+        // TTS blocked after async /voice round-trip (autoplay policy). Text still lands in chat.
+        setVoicePlaying(false);
+        URL.revokeObjectURL(url);
+        audioRef.current = null;
+      }
 
       setInput(transcript);
       setVoicePhase("processing");
@@ -724,7 +731,15 @@ export default function ChatScreen({
       }, ...prev]);
       setActiveQueryId(queryId);
     } catch (err) {
-      setError(err.message);
+      const message = String(err?.message || "");
+      if (
+        message.includes("not allowed by the user agent")
+        || message.includes("play()")
+      ) {
+        setError(null);
+      } else {
+        setError(message || "Voice request failed. Please try again.");
+      }
       setVoicePhase("idle");
     } finally {
       setLoading(false);
