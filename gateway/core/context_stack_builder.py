@@ -95,6 +95,11 @@ class ContextStackBuilder:
                 working_memory.session_facts[FAST_LANE_SESSION_KEY] = dict(
                     scope[FAST_LANE_SESSION_KEY],
                 )
+            # Resolved employee from last continuation — lets follow-up chips skip re-disambiguation
+            if scope.get("last_fast_lane_entity"):
+                working_memory.session_facts["last_fast_lane_entity"] = dict(
+                    scope["last_fast_lane_entity"],
+                )
         return ContextStack(
             user=self._build_user_context(user),
             conversation=ConversationContext(

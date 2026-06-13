@@ -303,6 +303,7 @@ class IntelligentQueryHandler:
             # let Claude reason directly with all tools.
             # ----------------------------------------------------------------
             from gateway.core.natural_query_lane import (
+                FAST_LANE_SESSION_KEY,
                 NaturalQueryLane,
                 persist_fast_lane_state,
                 should_use_fast_lane,
@@ -320,6 +321,11 @@ class IntelligentQueryHandler:
                     session_id=resolved_session,
                     user=user,
                 )
+                # Snapshot whether this was a continuation BEFORE persist clears the flag.
+                _was_continuation = bool(
+                    (context.working_memory.session_facts.get(FAST_LANE_SESSION_KEY) or {})
+                    .get("awaiting_clarification")
+                )
                 fast_result = await lane.handle(
                     message=message,
                     context=context,
@@ -334,6 +340,23 @@ class IntelligentQueryHandler:
                     last_response=fast_result["text"],
                     awaiting_clarification=fast_result["awaiting_clarification"],
                 )
+                # When a continuation resolves an employee and delivers an answer,
+                # persist that employee (name + ID from the clicked chip) so that
+                # follow-up chips like "Jawad leave balance" don't re-disambiguate.
+                if _was_continuation and not fast_result["awaiting_clarification"]:
+                    import re as _re_entity
+                    _id_m = _re_entity.search(r"\(ID:\s*(\d+)\)", message)
+                    if _id_m:
+                        _entity = {
+                            "id": int(_id_m.group(1)),
+                            "name": message.split("(ID:")[0].strip(),
+                        }
+                        context.working_memory.session_facts["last_fast_lane_entity"] = _entity
+                        if resolved_session:
+                            from gateway.session_scope import SessionScopeStore as _SSS
+                            _sc = _SSS.get(resolved_session)
+                            _sc["last_fast_lane_entity"] = _entity
+                            _SSS._memory[resolved_session] = _sc
                 return self._finalize_fast_lane_response(
                     text=fast_result["text"],
                     tools_called=fast_result["tools_called"],

@@ -315,6 +315,14 @@ class NaturalQueryLane:
             )
         else:
             sf = context.working_memory.session_facts
+            # Inject previously resolved employee so follow-up chips don't re-disambiguate.
+            entity = sf.get("last_fast_lane_entity")
+            if isinstance(entity, dict) and entity.get("id"):
+                session_context_lines.append(
+                    f"Previously resolved employee: {entity['name']} (ID: {entity['id']}). "
+                    f"If the current query is about this employee, use ID={entity['id']} "
+                    f"directly — do NOT re-search hr.employee."
+                )
             if sf.get("pending_hr_context"):
                 session_context_lines.append(
                     f"Session HR context: {json.dumps(sf['pending_hr_context'], default=str)}"
