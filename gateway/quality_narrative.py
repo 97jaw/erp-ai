@@ -728,6 +728,94 @@ def narrate_universal_aggregate(
     if not groups:
         return f"No grouped {entity} results found for that criteria."
 
+    if model == "hr.payslip.cost.allocation":
+        if any(isinstance(g, dict) and g.get("month") for g in groups):
+            lines: list[str] = []
+            for group in groups[:12]:
+                if not isinstance(group, dict):
+                    continue
+                amt = float(group.get("amount") or 0)
+                month = group.get("month") or "?"
+                year = group.get("year") or "?"
+                lines.append(f"- {month}/{year}: {format_currency(amt)}")
+            if lines:
+                return "Labor cost trend:\n" + "\n".join(lines)
+
+        if any(isinstance(g, dict) and g.get("employee_id") for g in groups):
+            lines = []
+            for group in groups[:20]:
+                if not isinstance(group, dict):
+                    continue
+                emp = group.get("employee_id")
+                label = str(emp[1]) if isinstance(emp, (list, tuple)) and len(emp) >= 2 else str(emp)
+                amt = float(group.get("amount") or 0)
+                lines.append(f"- {label}: {format_currency(amt)}")
+            if lines:
+                lead = "Labor cost by employee:" if language != "ar" else "تكلفة العمالة حسب الموظف:"
+                return lead + "\n" + "\n".join(lines)
+
+        if len(groups) > 1 and any(
+            isinstance(g, dict) and g.get("project_id") for g in groups
+        ):
+            lines = []
+            for group in groups[:15]:
+                if not isinstance(group, dict):
+                    continue
+                proj = group.get("project_id")
+                label = str(proj[1]) if isinstance(proj, (list, tuple)) and len(proj) >= 2 else str(proj)
+                amt = float(group.get("amount") or 0)
+                lines.append(f"- {label}: {format_currency(amt)}")
+            if lines:
+                lead = "Labor cost by project:" if language != "ar" else "تكلفة العمالة حسب المشروع:"
+                return lead + "\n" + "\n".join(lines)
+
+        total_amount = 0.0
+        project_label = "the project"
+        for group in groups[:15]:
+            if not isinstance(group, dict):
+                continue
+            for key, value in group.items():
+                if key == "amount" and isinstance(value, (int, float)):
+                    total_amount += float(value)
+                elif key == "project_id" and isinstance(value, (list, tuple)) and len(value) >= 2:
+                    project_label = str(value[1])
+        if language == "ar":
+            return f"إجمالي تكلفة العمالة لـ {project_label}: {format_currency(total_amount)}."
+        return f"Labor cost for {project_label} is {format_currency(total_amount)}."
+
+    if model == "hr.payslip":
+        parts: list[str] = []
+        for group in groups[:10]:
+            if not isinstance(group, dict):
+                continue
+            for key, value in group.items():
+                if key.startswith("__") or not isinstance(value, (int, float)):
+                    continue
+                if any(token in key for token in ("salary", "fine", "over_time", "deduction", "amount")):
+                    label = key.replace("_", " ").replace(":sum", "").replace(":avg", "")
+                    parts.append(f"{label}: {format_currency(float(value))}")
+                if key.endswith("_count") or key.endswith(":count"):
+                    parts.append(f"count: {int(float(value)):,}")
+        if parts:
+            return "Payroll aggregate — " + "; ".join(parts[:8]) + "."
+
+    if model == "hr.payslip.worked_days":
+        total_hours = 0.0
+        total_amount = 0.0
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            for key, value in group.items():
+                if isinstance(value, (int, float)) and "hour" in key:
+                    total_hours += float(value)
+                if key == "amount" or key.endswith("amount"):
+                    if isinstance(value, (int, float)):
+                        total_amount += float(value)
+        if total_hours > 0:
+            return f"Total worked-day hours: {total_hours:,.1f}."
+        if total_amount > 0:
+            return f"Worked-day amount total: {format_currency(total_amount)}."
+
     lines: list[str] = []
     total_count = 0
     for group in groups[:15]:

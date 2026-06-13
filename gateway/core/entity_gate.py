@@ -357,6 +357,11 @@ class EntityGate:
             ):
                 return []
 
+        from gateway.core.payroll_query_routing import is_payroll_orchestration_query
+
+        if is_payroll_orchestration_query(message, intent):
+            return []
+
         required: list[tuple[str, str]] = []
         seen: set[tuple[str, str]] = set()
 
@@ -432,6 +437,10 @@ class EntityGate:
         if intent.subject_area == "project_attribute":
             return False
         if is_hr_person_query(message) or is_hr_cross_module_query(message):
+            return False
+        from gateway.core.payroll_query_routing import is_payroll_orchestration_query
+
+        if is_payroll_orchestration_query(message, intent):
             return False
         if is_hr_orchestration_query(message, intent) and not is_hr_project_staff_query(message):
             if intent.subject_area == "hr" or not looks_like_project_cost_query(

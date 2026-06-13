@@ -62,6 +62,10 @@ def _query_blob(message: str, intent: Intent) -> str:
 
 def is_hr_orchestration_query(message: str, intent: Intent) -> bool:
     blob = _query_blob(message, intent)
+    from gateway.core.payroll_query_routing import is_payroll_orchestration_query
+
+    if is_payroll_orchestration_query(message, intent):
+        return False
     if intent.subject_area == "hr":
         return True
     if any(token in blob for token in _HR_SUBJECT_TOKENS):

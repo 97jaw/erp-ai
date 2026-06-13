@@ -1,0 +1,308 @@
+{
+  "payroll_pass": 24,
+  "payroll_total": 24,
+  "payroll_threshold_met": true,
+  "flagship_pass": 7,
+  "flagship_total": 7,
+  "flagship_all_pass": true,
+  "permission_pass": true,
+  "regression_pass": 1,
+  "regression_total": 1,
+  "pr_e1_odoo_truth_aed": 11053.1578,
+  "pr_e1_response_aed": 11053.0,
+  "pr_e1_number_match": true,
+  "sample_employee": "AABID SADIK",
+  "latest_batch": "June 2026 - Elrace - Al Ain - Staff",
+  "results": [
+    {
+      "id": "PR-A1",
+      "category": "A",
+      "message": "AABID SADIK payslips",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 14 payslip records. - Salary Slip of AABID SADIK for May-2026 - Salary Slip of AABID SADIK for April-2026 - Salary Slip of AABID SADIK for March-2026 - Salary Slip of AABID S"
+    },
+    {
+      "id": "PR-A2",
+      "category": "A",
+      "message": "AABID SADIK's payslip last month",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 1 payslip record. - Salary Slip of AABID SADIK for May-2026"
+    },
+    {
+      "id": "PR-A3",
+      "category": "A",
+      "message": "payslips for June 2026 - Elrace - Al Ain - Staff",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Found 50+ payslip records. - Salary Slip of AHNAS ANWAR THANGATH ANWAR MOHAMMED HAJI for May-2026 - Salary Slip of Hrishikesh Sreekumar Krishna Kumari for May-2026 - Salary Slip of"
+    },
+    {
+      "id": "PR-A4",
+      "category": "A",
+      "message": "draft payslips count",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Payroll aggregate \u2014 count: 5,546."
+    },
+    {
+      "id": "PR-A5",
+      "category": "A",
+      "message": "finalized payslips this month",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for . I searched using: data search. Try a wider date range or confirm spelling of the client or project name."
+    },
+    {
+      "id": "PR-B1",
+      "category": "B",
+      "message": "total payroll cost last month",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Payroll aggregate \u2014 count: 1,319; net salary: AED 2.1M."
+    },
+    {
+      "id": "PR-B2",
+      "category": "B",
+      "message": "payroll by department",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Payroll aggregate \u2014 count: 2; net salary: AED 4,172; count: 1; net salary: AED 683.00; count: 2; net salary: AED 10,691; count: 2; net salary: AED 3,075."
+    },
+    {
+      "id": "PR-B3",
+      "category": "B",
+      "message": "labor vs staff payroll cost",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Payroll aggregate \u2014 count: 414; labor snapshot total salary: AED 2,500; staff snapshot total salary: AED 18,500; count: 3,005; labor snapshot total salary: AED 3.5M; staff snapshot"
+    },
+    {
+      "id": "PR-B4",
+      "category": "B",
+      "message": "overtime cost this month",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for retrieve overtime costs for current month. I searched using: data search. Try a wider date range or confirm spelling of the client or project name."
+    },
+    {
+      "id": "PR-B5",
+      "category": "B",
+      "message": "sick leave cost this year",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Payroll aggregate \u2014 count: 1,027; sick leave full paid amount: AED 3,617; sick leave half paid amount: AED 216.67; sick leave unpaid amount: AED 0; count: 6,978; sick leave full pa"
+    },
+    {
+      "id": "PR-C1",
+      "category": "C",
+      "message": "total fines this month",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for retrieve_employee_fines_current_month. I searched using: data search. Try a wider date range or confirm spelling of the client or project name."
+    },
+    {
+      "id": "PR-C2",
+      "category": "C",
+      "message": "who has advances pending",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for that request. Please try narrowing the period or filters."
+    },
+    {
+      "id": "PR-C3",
+      "category": "C",
+      "message": "highest deductions this month",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for Find employees with highest payroll deductions for current month. I searched using: data search. Try a wider date range or confirm spelling of the client or proje"
+    },
+    {
+      "id": "PR-C4",
+      "category": "C",
+      "message": "average deductions per employee",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Payroll aggregate \u2014 count: 2; total deductions: AED 0; count: 1; total deductions: AED 0; count: 2; total deductions: AED -63.00; count: 2; total deductions: AED 0."
+    },
+    {
+      "id": "PR-D1",
+      "category": "D",
+      "message": "total job mission hours this year",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Total worked-day hours: 1,971.0."
+    },
+    {
+      "id": "PR-D2",
+      "category": "D",
+      "message": "annual leave salary paid this year",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Worked-day amount total: AED 187,340."
+    },
+    {
+      "id": "PR-D3",
+      "category": "D",
+      "message": "sick leave usage by employee",
+      "pass": true,
+      "tools": [
+        "query_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "No data found for that request. Please try narrowing the period or filters."
+    },
+    {
+      "id": "PR-E1",
+      "category": "E",
+      "message": "labor cost for Villa Maintenance No. 34 this month",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Labor cost for Villa Maintenance No. 34 is AED 11,053."
+    },
+    {
+      "id": "PR-E2",
+      "category": "E",
+      "message": "labor cost for Villa 34 last 6 months",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Labor cost trend: - 5/?: AED 11,053"
+    },
+    {
+      "id": "PR-E3",
+      "category": "E",
+      "message": "most expensive project by labor cost",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Labor cost by project: - Annual contract for preventive and remedial maintenance works for Dubai Police buildings located in the Zone (1): AED 41,400 - Construction of MCI Office: "
+    },
+    {
+      "id": "PR-E4",
+      "category": "E",
+      "message": "labor cost breakdown by employee for Villa 34",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Labor cost by employee: - AMARJEET SHARMA: AED 254.52 - Abdul Wahab Balqiaz Khan: AED 218.27 - Aleem Ullah Rasool Gul: AED 1,036 - Amtesh Kharwar: AED 116.72 - Bashistha Kumar Dwiw"
+    },
+    {
+      "id": "PR-E5",
+      "category": "E",
+      "message": "monthly labor cost trend for Villa 34",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Labor cost trend: - 5/?: AED 11,053"
+    },
+    {
+      "id": "PR-E6",
+      "category": "E",
+      "message": "AABID SADIK cost across projects this year",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Labor cost by project: - Construction of Al Shabhat 945 -Al Ain City (D): AED 66.15 - 2024 / 284 \u062a\u0646\u0641\u064a\u0630 \u0645\u0634\u0631\u0648\u0639 \u0625\u0646\u0634\u0627\u0621 \u0648\u0625\u0646\u062c\u0627\u0632 \u0648\u0635\u064a\u0627\u0646\u0629 \u0627\u0644\u0645\u0631\u062d\u0644\u0629 \u0627\u0644\u062b\u0627\u0646\u064a\u0629 \u0644\u0645\u062f\u0631\u0633\u0629 \u0627\u0644\u0634\u0631\u0637\u0629 \u0641\u064a \u0627\u0644\u0641\u0648\u0639\u0629 - \u0645\u0646\u0637\u0642\u0629 \u0627\u0644\u0639"
+    },
+    {
+      "id": "PR-E7",
+      "category": "E",
+      "message": "average labor cost per project",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "failure_mode": null,
+      "snippet": "Labor cost by project: - Annual contract for preventive and remedial maintenance works for Dubai Police buildings located in the Zone (1): AED 6,900 - Construction of MCI Office: A"
+    }
+  ],
+  "permission": {
+    "id": "PR-PERM",
+    "pass": true,
+    "status": "success",
+    "sample": [
+      {
+        "id": 3142,
+        "name": "Salary Slip of Mohamed M AbuEbeid for February-2024",
+        "net_salary": "***restricted***",
+        "employee_id": [
+          1015,
+          "Mohamed M AbuEbeid"
+        ]
+      }
+    ]
+  },
+  "regression": [
+    {
+      "id": "R-CHAT",
+      "pass": true,
+      "tools": [
+        "aggregate_odoo"
+      ],
+      "snippet": "Elrace has 1,721 active employees across 17 departments. - Accounts: 17 - Administration: 12 - Aluminum Workshop: 15 - Civil: 1,132 - Design: 15 - Documentation: 26 - Electrical: 1"
+    }
+  ]
+}

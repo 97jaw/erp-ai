@@ -712,6 +712,15 @@ class StrategyPlanner:
             message = context.conversation.message
 
         from gateway.core.hr_query_routing import is_hr_orchestration_query, resolve_hr_tool
+        from gateway.core.payroll_query_routing import (
+            is_payroll_orchestration_query,
+            resolve_payroll_tool,
+        )
+
+        if is_payroll_orchestration_query(message, intent):
+            routed = resolve_payroll_tool(message, intent, context)
+            if routed is not None:
+                return routed
 
         if is_hr_orchestration_query(message, intent):
             routed = resolve_hr_tool(message, intent, context)

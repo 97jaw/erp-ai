@@ -54,7 +54,23 @@ SENSITIVE_MODELS = {
 
 # Field-level redaction for non-super-admin (level < 100)
 REDACT_FIELDS = {
-    "hr.payslip": ["net_wage", "gross_wage", "amount", "total", "basic"],
+    "hr.payslip": [
+        "net_wage",
+        "gross_wage",
+        "net_salary",
+        "labor_snapshot_total_salary",
+        "staff_snapshot_total_salary",
+        "amount",
+        "total",
+        "basic",
+        "fine",
+        "advance",
+        "total_deductions",
+        "total_over_time",
+        "sick_leave_full_paid_amount",
+        "sick_leave_half_paid_amount",
+        "sick_leave_unpaid_amount",
+    ],
     "hr.contract": ["wage", "salary"],
     "res.partner.bank": ["acc_number"],
 }
@@ -79,10 +95,10 @@ def _can_see_model(model: str, context: Any) -> bool:
     level = _user_level(context)
     if level >= 100:  # Super admin
         return True
-    if level >= 70:  # Top management — no sensitive
+    if level >= 70:  # Top management — block individual sensitive models
         return model not in SENSITIVE_MODELS
-    # Lower roles: allow common read models, block sensitive
-    return model not in SENSITIVE_MODELS
+    # Lower roles: sensitive reads allowed with field redaction
+    return model not in FORBIDDEN_MODELS
 
 
 def build_universal_context(*, user_message: str = "", user: Any = None) -> Any:

@@ -6,20 +6,20 @@
 
 ## 🎯 ACTIVE PLAN
 
-**File:** HR + Payroll Rollout — Phase M2 (HR module certification)
+**File:** HR + Payroll Rollout — Phase M6 (Payroll module certification)
 
-**Status:** M2.2b complete — **27/33 PASS** on HR matrix (threshold ≥25 met); regression **3/3**
+**Status:** M6.2 complete — **24/24 PASS** payroll matrix; **7/7 PR-E flagship**; PR-PERM ✅; R-CHAT ✅
 
 | Piece | Description | Code | Tests |
 |-------|-------------|------|-------|
-| M2.1 HR context | `gateway/core/hr_module_context.py` → system prompt | ✅ | ✅ |
-| M2.2b HR routing | `gateway/core/hr_query_routing.py` + strategy_planner + entity_gate + handler force | ✅ | ✅ 11 routing tests |
-| Matrix runner | `scripts/hr_m2_matrix.py` — 33 HR + 3 regression | ✅ | 27/33 live |
-| Regression | Villa 34 expense → breakdown → P&L | ✅ | 3/3 |
+| M6.1 Payroll context | `gateway/core/payroll_module_context.py` → system prompt after HR | ✅ | ✅ |
+| M6.2 Payroll routing | `gateway/core/payroll_query_routing.py` + entity_gate + handler force + narration | ✅ | ✅ 7 routing tests |
+| Matrix runner | `scripts/payroll_m6_matrix.py` — 24 payroll + PR-PERM + R-CHAT | ✅ | 24/24 live |
+| PR-E1 verify | Odoo truth AED 11,053.16 vs gateway AED 11,053 — **match** | ✅ | ✅ |
 
-**Still failing (6):** HR-A2 (labor vs staff multi-tool), HR-A6 (project_attribute deferral hijack), HR-C3 (transfers → wrong model), HR-D3/D4 (attendance), HR-E4 (passports). Gateway restart required after handler edits — re-run matrix to confirm fixes land.
+**Key fixes:** breakdown detection uses user message only (not LLM intent blob); default payroll month for cost.allocation; E6 `cost across projects` bypasses entity gate; cost.allocation narration (trend / by employee / by project).
 
-**Next:** **M6 — Payroll context block** (per `docs/ELRACE_HR_PAYROLL_PLAN.md`) after optional cleanup of the 6 remaining HR cases.
+**Next:** Optional HR matrix cleanup (6 remaining M2 cases) or next module per `docs/ELRACE_HR_PAYROLL_PLAN.md`.
 
 ---
 

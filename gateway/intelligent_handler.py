@@ -349,9 +349,14 @@ class IntelligentQueryHandler:
                 is_hr_project_staff_query,
                 resolve_hr_tool,
             )
+            from gateway.core.payroll_query_routing import (
+                is_payroll_orchestration_query,
+                resolve_payroll_tool,
+            )
 
             has_active_project = bool(active and active.project_id)
             hr_project_staff_query = is_hr_project_staff_query(message)
+            payroll_orchestration_query = is_payroll_orchestration_query(message, intent)
             record_type = derive_record_type(message)
             activity_type = derive_activity_type(message)
             # Records lane fires on explicit "<type> of/for <project>" phrasing
@@ -386,6 +391,7 @@ class IntelligentQueryHandler:
                 and not activity_query
                 and not hr_project_staff_query
                 and not hr_orchestration_query
+                and not payroll_orchestration_query
                 and is_project_profile_query(message, intent)
             )
 
@@ -706,6 +712,24 @@ class IntelligentQueryHandler:
                             tool_name,
                             hr_project_id,
                         )
+
+            if (
+                effective_strategy_override is None
+                and payroll_orchestration_query
+                and not profile_query
+                and not records_query
+                and not activity_query
+            ):
+                routed = resolve_payroll_tool(message, intent, context)
+                if routed is not None:
+                    tool_name, tool_input = routed
+                    effective_strategy_override = build_single_tool_strategy(
+                        tool=tool_name,
+                        tool_input=tool_input,
+                        description=f"Payroll query: {message}",
+                        expected_output=intent.expected_output or "summary",
+                    )
+                    logger.info("[PayrollRouting] Forcing %s for %r", tool_name, message[:80])
 
             if (
                 effective_strategy_override is None

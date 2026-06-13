@@ -1833,6 +1833,7 @@ def _compose_system_prompt_sections(today: str, *, context_section: str = "") ->
     """Assemble system prompt: core instructions, context stack, financial, quality."""
     from gateway.core.project_expense_routing import PROJECT_EXPENSE_PROMPT_SECTION
     from gateway.core.hr_module_context import HR_MODULE_PROMPT_SECTION
+    from gateway.core.payroll_module_context import PAYROLL_MODULE_PROMPT_SECTION
     from gateway.core.project_relationship_context import PROJECT_RELATIONSHIP_PROMPT_SECTION
 
     base = SYSTEM_PROMPT.replace("{today}", today)
@@ -1843,6 +1844,7 @@ def _compose_system_prompt_sections(today: str, *, context_section: str = "") ->
         + PROJECT_EXPENSE_PROMPT_SECTION
         + PROJECT_RELATIONSHIP_PROMPT_SECTION
         + HR_MODULE_PROMPT_SECTION
+        + PAYROLL_MODULE_PROMPT_SECTION
         + context_section
         + _FINANCIAL_SECTION_MARKER
         + financial
