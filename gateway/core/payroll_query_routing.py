@@ -254,15 +254,34 @@ def _parse_month_year(message: str) -> tuple[str, str] | None:
 
 def _employee_name_hint(message: str) -> str:
     cleaned = _MONTH_YEAR_RE.sub("", message).strip(" ,")
+    lowered = cleaned.lower()
+    if any(
+        token in lowered
+        for token in ("labor cost", "labour cost", "cost allocation", "villa maintenance", "villa no")
+    ):
+        return ""
     match = _EMPLOYEE_NAME_RE.search(cleaned.strip())
     if match:
         name = match.group(1).strip(" '\"")
-        if name.lower() not in ("draft", "finalized", "total", "payroll", "payslips"):
+        if name.lower() not in ("draft", "finalized", "total", "payroll", "payslips", "labor", "labour"):
             return name
     if "'s" in cleaned:
         return cleaned.split("'s")[0].strip()
     tokens = [token for token in re.split(r"[\s,]+", cleaned) if len(token) > 1]
-    if len(tokens) >= 2 and tokens[0][0].isalpha():
+    blocked = {
+        "labor",
+        "labour",
+        "villa",
+        "maintenance",
+        "project",
+        "payroll",
+        "this",
+        "month",
+        "last",
+        "cost",
+        "costs",
+    }
+    if len(tokens) >= 2 and tokens[0][0].isalpha() and not any(token.lower() in blocked for token in tokens):
         return " ".join(tokens[:4])
     return ""
 
@@ -346,6 +365,21 @@ def resolve_payroll_tool(
                     "aggregates": ["amount:sum"],
                     "limit": 100,
                 }
+            return "aggregate_odoo", {
+                "model": COST_ALLOCATION_MODEL,
+                "domain": domain,
+                "group_by": ["project_id"],
+                "aggregates": ["amount:sum"],
+                "limit": 10,
+            }
+
+        from gateway.core.project_query_utils import extract_project_name_hint
+
+        project_hint = extract_project_name_hint(message)
+        if project_hint:
+            domain.append(["project_id.name", "ilike", project_hint[:60]])
+            if month and year and "last 6 months" not in msg and "trend" not in msg:
+                domain.extend([["month", "=", month], ["year", "=", year]])
             return "aggregate_odoo", {
                 "model": COST_ALLOCATION_MODEL,
                 "domain": domain,
@@ -506,8 +540,12 @@ def resolve_payroll_tool(
             "order": "date_to desc",
         }
 
-    if "payslip" in blob or (
-        employee_hint and (message_has_payroll_period(message) or _active_payroll_context(context))
+    if not _LABOR_COST_RE.search(blob) and (
+        "payslip" in blob
+        or (
+            employee_hint
+            and (message_has_payroll_period(message) or _active_payroll_context(context))
+        )
     ):
         ps_domain: list[Any] = []
         month_year = _parse_month_year(message)
