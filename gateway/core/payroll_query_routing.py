@@ -474,7 +474,7 @@ def _resolve_payslip_by_file_id(
     message: str,
     context: ContextStack | None,
 ) -> tuple[str, dict[str, Any]] | None:
-    """Route numeric File ID replies to the dedicated payslip tool."""
+    """Route numeric File ID replies to payslip detail with period inheritance."""
     file_id = extract_employee_file_id(message)
     if not file_id:
         return None
@@ -485,9 +485,19 @@ def _resolve_payslip_by_file_id(
     ):
         if context is None or not _active_payroll_context(context):
             return None
-    payload: dict[str, Any] = {"employee_file_id": file_id, "limit": 20}
+    from gateway.core.hr_payroll_composer import classify_payroll_subtype
+
+    payload: dict[str, Any] = {
+        "employee_file_id": file_id,
+        "detail_type": "header",
+    }
+    subtype = classify_payroll_subtype(message)
+    if subtype == "payslip_lines":
+        payload["detail_type"] = "lines"
+    elif subtype == "payslip_distribution":
+        payload["detail_type"] = "distribution"
     payload.update(_payslip_period_payload(message, context))
-    return "get_employee_payslips", payload
+    return "get_payslip_detail", payload
 
 
 def resolve_payroll_tool(
@@ -752,23 +762,32 @@ def resolve_payroll_tool(
             and (message_has_payroll_period(message) or _active_payroll_context(context))
         )
     ):
+        from gateway.core.hr_payroll_composer import (
+            build_employee_name_domain,
+            payslip_period_domain_from_dates,
+        )
+
         ps_domain: list[Any] = []
         month_year = _parse_month_year(message)
         if month_year:
             month, year = month_year
-            ps_domain.extend([["date_from", ">=", f"{year}-{int(month):02d}-01"]])
             last_day = calendar.monthrange(int(year), int(month))[1]
-            ps_domain.append(
-                ["date_to", "<=", f"{year}-{int(month):02d}-{last_day:02d}"],
+            ps_domain = payslip_period_domain_from_dates(
+                f"{year}-{int(month):02d}-01",
+                f"{year}-{int(month):02d}-{last_day:02d}",
             )
         elif "last month" in blob or "this month" in blob or "this year" in blob:
-            ps_domain = _payslip_date_domain(message, intent, context)
+            from gateway.core.strategy_planner import resolve_report_date_range
+
+            temporal = _temporal(context)
+            date_from, date_to = resolve_report_date_range(blob, temporal)
+            ps_domain = payslip_period_domain_from_dates(date_from, date_to)
         if employee_hint:
-            parts = [part for part in employee_hint.split() if len(part) > 1]
-            if parts:
-                ps_domain.append(["employee_id.name", "ilike", parts[0]])
-                if len(parts) > 1:
-                    ps_domain.append(["employee_id.name", "ilike", parts[-1]])
+            name_domain = build_employee_name_domain(employee_hint)
+            if ps_domain:
+                ps_domain = ["&"] + name_domain + ps_domain
+            else:
+                ps_domain = name_domain
         return "query_odoo", {
             "model": "hr.payslip",
             "domain": ps_domain,
@@ -782,8 +801,11 @@ def resolve_payroll_tool(
                 "date_from",
                 "date_to",
                 "state",
+                "fine",
+                "advance",
+                "total_deductions",
             ],
-            "limit": 50,
+            "limit": 1 if ps_domain else 50,
             "order": "date_to desc",
         }
 

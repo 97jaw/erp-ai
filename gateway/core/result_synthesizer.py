@@ -284,11 +284,36 @@ class ResultSynthesizer:
                     ),
                 )
             note = str(payload.get("note") or "").strip()
-            if note and not payload.get("lines") and not payload.get("allocations"):
+            if note and not payload.get("lines") and not payload.get("allocations") and not payload.get("payslip"):
                 return SynthesizedResult(text=note)
             employee_name = payload.get("employee_name") or "Employee"
             payslip = payload.get("payslip") or {}
             title = str(payslip.get("name") or "Payslip")
+            deductions = payload.get("deductions_summary") or {}
+            if payload.get("detail_type") == "header":
+                summary_bits = []
+                for key, label in (
+                    ("net_salary", "Net salary"),
+                    ("gross_wage", "Gross salary"),
+                    ("total_deductions", "Total deductions"),
+                    ("fine", "Fine"),
+                    ("advance", "Advance"),
+                ):
+                    value = deductions.get(key) or payslip.get(key)
+                    if value is not None:
+                        summary_bits.append(f"{label}: AED {abs(float(value)):,.2f}")
+                period = ""
+                if payslip.get("date_from") and payslip.get("date_to"):
+                    period = f" ({payslip['date_from']} to {payslip['date_to']})"
+                header = f"Payslip for **{employee_name}**{period} — {title}."
+                if summary_bits:
+                    return SynthesizedResult(text=header + "\n" + " | ".join(summary_bits))
+                amount = payslip.get("amount") or payslip.get("net_wage")
+                if amount is not None:
+                    return SynthesizedResult(
+                        text=header + f"\nNet salary: AED {abs(float(amount)):,.2f}",
+                    )
+                return SynthesizedResult(text=header)
             if payload.get("detail_type") == "distribution":
                 allocations = payload.get("allocations") or []
                 if not allocations:

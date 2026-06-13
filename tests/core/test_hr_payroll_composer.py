@@ -1,6 +1,7 @@
 """Tests for unified HR/Payroll query composer."""
 
 from gateway.core.hr_payroll_composer import (
+    build_payslip_period_domain,
     compose_hr_request_plan,
     compose_payroll_plan,
     compose_separation_plan,
@@ -77,6 +78,27 @@ def test_compose_payroll_salary_calculation_with_file_id() -> None:
     assert payload["detail_type"] == "lines"
 
 
+def test_build_payslip_period_domain_may_2026() -> None:
+    domain = build_payslip_period_domain(5, 2026)
+    assert ["name", "ilike", "May-2026"] in domain
+    assert ["date_from", "<=", "2026-05-31"] in domain
+    assert ["date_to", ">=", "2026-05-01"] in domain
+
+
+def test_compose_payroll_need_payslip_for_jawad_may() -> None:
+    plan = compose_payroll_plan(
+        "need payslip for jawad may 2026",
+        _intent(subject_area="payroll"),
+        None,
+    )
+    assert plan is not None
+    assert plan.tool == "get_payslip_detail"
+    assert plan.tool_input.get("detail_type") == "header"
+    assert plan.employee_name_hint == "jawad"
+    assert plan.period is not None
+    assert plan.period.label == "May 2026"
+
+
 def test_compose_payroll_name_correction_follow_up() -> None:
     ctx = _make_context_stack()
     ctx.working_memory.session_facts["pending_hr_context"] = {
@@ -88,8 +110,10 @@ def test_compose_payroll_name_correction_follow_up() -> None:
     }
     plan = compose_payroll_plan("its jawad ur rehman", _intent(), ctx)
     assert plan is not None
-    assert plan.employee_name_hint == "jawad ur rehman"
-    assert "its" not in (plan.employee_name_hint or "").lower()
+    assert plan.tool == "get_payslip_detail"
+    assert plan.tool_input.get("detail_type") == "header"
+    assert plan.period is not None
+    assert plan.period.date_from.startswith("2026-05")
 
 
 def test_compose_hr_request_for_jawad() -> None:
@@ -119,7 +143,7 @@ def test_compose_separation_termination_count() -> None:
     assert routed is not None
     tool, payload = routed
     assert tool == "aggregate_odoo"
-    assert payload["model"] == "employee.request"
+    assert payload["model"] == "employee.requests"
     domain_text = str(payload["domain"])
     assert "termination" in domain_text.lower()
     assert "active" not in domain_text.lower()

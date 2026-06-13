@@ -1,4 +1,4 @@
-"""Employee request tools — employee.request workflow reads with person/type/date filters."""
+"""Employee request tools — employee.requests workflow reads with person/type/date filters."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 from admin.auth.principal import CurrentUser
 from adapters.v14.connector import OdooV14Adapter
-from gateway.core.hr_payroll_composer import build_employee_name_domain
+from gateway.core.hr_payroll_composer import EMPLOYEE_REQUESTS_MODEL, build_employee_name_domain
 from gateway.hr_identity import (
     can_access_employee_file_id,
     normalize_employee_file_id,
@@ -20,7 +20,6 @@ _REQUEST_FIELDS = (
     "name",
     "employee_id",
     "request_type_id",
-    "request_type",
     "status",
     "is_approve",
     "create_date",
@@ -58,11 +57,18 @@ def _present_request(row: dict[str, Any]) -> dict[str, Any]:
     employee_name = (
         employee[1] if isinstance(employee, (list, tuple)) and len(employee) > 1 else employee
     )
+    request_type = row.get("request_type_id")
+    request_type_label = (
+        request_type[1]
+        if isinstance(request_type, (list, tuple)) and len(request_type) > 1
+        else request_type
+    )
     return {
         "id": row.get("id"),
         "name": row.get("name"),
         "employee_name": employee_name,
-        "request_type": row.get("request_type"),
+        "request_type": request_type_label,
+        "request_type_id": request_type,
         "status": row.get("status"),
         "is_approve": row.get("is_approve"),
         "create_date": row.get("create_date"),
@@ -81,7 +87,7 @@ async def list_employee_requests(
     status: str | None = None,
     limit: int = 50,
 ) -> dict[str, Any]:
-    """List employee.request rows with optional employee, type, and date filters."""
+    """List employee.requests rows with optional employee, type, and date filters."""
     limit = min(max(int(limit or 50), 1), 100)
     domain: list[Any] = []
     employee_id: int | None = None
@@ -144,11 +150,11 @@ async def list_employee_requests(
         domain.extend(build_employee_name_domain(employee_name))
 
     if request_type:
-        domain.append(["request_type", "ilike", request_type])
+        domain.append(["request_type_id.name", "ilike", request_type])
     if date_from:
         domain.append(["create_date", ">=", date_from])
     if date_to:
-        domain.append(["create_date", "<=", date_to])
+        domain.append(["create_date", "<=", f"{date_to} 23:59:59"])
     if status == "pending":
         domain.append(["is_approve", "=", False])
     elif status == "approved":
@@ -156,14 +162,14 @@ async def list_employee_requests(
 
     try:
         rows = adapter.search_read(
-            model="employee.request",
+            model=EMPLOYEE_REQUESTS_MODEL,
             domain=domain,
             fields=list(_REQUEST_FIELDS),
             limit=limit,
             order="create_date desc",
         )
     except Exception as exc:
-        logger.warning("[HR] employee.request query failed: %s", exc)
+        logger.warning("[HR] employee.requests query failed: %s", exc)
         return {
             "requests": [],
             "count": 0,

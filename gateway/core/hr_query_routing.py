@@ -236,7 +236,7 @@ def resolve_hr_tool(
         if routed is not None:
             return routed
 
-    # --- HR requests (employee.request) — legacy keyword fallback ---
+    # --- HR requests (employee.requests) — legacy keyword fallback ---
     is_hr_request = any(token in blob for token in _REQUEST_TOKENS) or (
         "request" in blob
         and ("employee" in blob or intent.subject_area == "hr")
@@ -251,19 +251,19 @@ def resolve_hr_tool(
         elif "approved" in blob or "approve" in blob:
             domain.append(["is_approve", "=", True])
         if "leave" in blob:
-            domain.append(["request_type", "ilike", "leave"])
+            domain.append(["request_type_id.name", "ilike", "leave"])
         elif "resign" in blob:
-            domain.append(["request_type", "ilike", "resign"])
+            domain.append(["request_type_id.name", "ilike", "resign"])
         elif "termin" in blob or "fired" in blob:
-            domain.append(["request_type", "ilike", "termination"])
+            domain.append(["request_type_id.name", "ilike", "termination"])
         elif "clearance" in blob:
-            domain.append(["request_type", "ilike", "clearance"])
+            domain.append(["request_type_id.name", "ilike", "clearance"])
         elif "promotion" in blob:
-            domain.append(["request_type", "ilike", "promotion"])
+            domain.append(["request_type_id.name", "ilike", "promotion"])
         elif "loan" in blob:
-            domain.append(["request_type", "in", ["loan", "advance_salary", "Salary Advance"]])
+            domain.append(["request_type_id.name", "ilike", "loan"])
         elif "transfer" in blob:
-            domain.append(["request_type", "ilike", "transfer"])
+            domain.append(["request_type_id.name", "ilike", "transfer"])
         if "this month" in blob:
             domain.append(["create_date", ">=", date_from])
             domain.append(["create_date", "<=", date_to])
@@ -274,13 +274,12 @@ def resolve_hr_tool(
             domain.append(["create_date", ">=", date_from])
             domain.append(["create_date", "<=", date_to])
         return "query_odoo", {
-            "model": "employee.request",
+            "model": "employee.requests",
             "domain": domain,
             "fields": [
                 "name",
                 "employee_id",
                 "request_type_id",
-                "request_type",
                 "status",
                 "is_approve",
                 "create_date",

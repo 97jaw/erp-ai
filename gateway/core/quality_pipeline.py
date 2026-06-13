@@ -164,6 +164,9 @@ def has_meaningful_tool_data(tool_results: list[Any]) -> bool:
             if int(payload.get("record_count") or 0) > 0 and payload.get("records"):
                 return True
         if source == "universal_odoo_aggregate" and payload.get("status") == "success":
+            model = str(payload.get("model") or "")
+            if model == "employee.requests":
+                return True
             if int(payload.get("group_count") or 0) > 0:
                 return True
         if source in {"introspect_models", "introspect_fields"} and payload.get("status") == "success":

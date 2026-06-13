@@ -1229,7 +1229,7 @@ TOOLS = [
     {
         "name": "list_employee_requests",
         "description": (
-            "List HR workflow requests (employee.request) for an employee with optional "
+            "List HR workflow requests (employee.requests) for an employee with optional "
             "request type and date filters. Use for leave, resignation, loan, transfer, clearance."
         ),
         "input_schema": {

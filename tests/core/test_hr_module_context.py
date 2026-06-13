@@ -7,7 +7,7 @@ from gateway.main import _compose_system_prompt_sections
 def test_hr_section_constant_has_key_models() -> None:
     assert "=== ELRACE HR MODULE ===" in HR_MODULE_PROMPT_SECTION
     assert "hr.employee" in HR_MODULE_PROMPT_SECTION
-    assert "employee.request" in HR_MODULE_PROMPT_SECTION
+    assert "employee.requests" in HR_MODULE_PROMPT_SECTION
     assert "x_attendance_type" in HR_MODULE_PROMPT_SECTION
     assert "is_labor=True" in HR_MODULE_PROMPT_SECTION
 

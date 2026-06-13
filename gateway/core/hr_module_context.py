@@ -39,7 +39,7 @@ hr.employee KEY FIELDS:
   Mobile/device: mobile_access, device_binding_enabled,
                  face_enrollment_status
 
-employee.request — THE HR WORKFLOW ENGINE:
+employee.requests — THE HR WORKFLOW ENGINE:
   27 request types stored in request.type model.
   status flow: draft → first_approver_id → second_approver_id
                → 'approve' or 'refuse'
@@ -131,11 +131,11 @@ STRUCTURE:
     → query branch model OR aggregate hr.employee by branch_id
 
 HR REQUESTS (leave, resignation, transfer, loan, promotion):
-  → query_odoo employee.request — NEVER hr.employee alone
+  → query_odoo employee.requests — NEVER hr.employee alone
   Pending: status in (draft, submit, submitted) or not is_approve
   Approved: is_approve=True or status=approve
   Filter request_type / request_type_id for resignation, transfer, loan, promotion, leave
-  Unresolved requests: employee.request not in approved/refused final state
+  Unresolved requests: employee.requests not in approved/refused final state
 
 ATTENDANCE:
   → query_odoo or aggregate_odoo on hr.attendance (NOT hr.employee)
@@ -160,7 +160,7 @@ CROSS-MODULE:
   Employee assigned vehicle:
     → resolve employee, then query fleet.vehicle / employee vehicle link
   Employee project history:
-    → employee.request transfers OR project assignment fields on hr.employee
+    → employee.requests transfers OR project assignment fields on hr.employee
   Department headcount by project:
     → aggregate hr.employee by project_id and department_id
 

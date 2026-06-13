@@ -816,7 +816,7 @@ def narrate_universal_aggregate(
         if total_amount > 0:
             return f"Worked-day amount total: {format_currency(total_amount)}."
 
-    if model == "employee.request":
+    if model == "employee.requests":
         total_count = 0
         dept_lines: list[str] = []
         for group in groups[:15]:

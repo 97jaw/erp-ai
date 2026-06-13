@@ -492,20 +492,42 @@ class IntelligentQueryHandler:
                     )
 
             if payroll_orchestration_query and _employee_name_hint(message):
+                from gateway.core.hr_payroll_composer import (
+                    classify_payroll_subtype,
+                    extract_employee_name,
+                    get_pending_hr_context,
+                    parse_period_window,
+                )
+
+                existing = get_pending_hr_context(context)
+                is_payroll_follow_up = existing.get("domain") == "payroll"
+                prior_query = (
+                    str(existing.get("prior_query") or message)
+                    if is_payroll_follow_up
+                    else message
+                )
+                resolved = dict(existing.get("resolved") or {})
+                period = parse_period_window(message, context)
+                if period:
+                    resolved["date_from"] = period.date_from
+                    resolved["date_to"] = period.date_to
+                    resolved["label"] = period.label
+                name_hint = extract_employee_name(message)
+                if name_hint:
+                    resolved["employee_name_hint"] = name_hint
+
                 pending_ctx = {
-                    "query": message,
+                    "query": prior_query,
                     "payroll_context": True,
                     "options": [],
                 }
                 context.working_memory.session_facts["pending_entity_clarification"] = pending_ctx
-                from gateway.core.hr_payroll_composer import classify_payroll_subtype
-
                 context.working_memory.session_facts["pending_hr_context"] = {
                     "domain": "payroll",
-                    "subtype": classify_payroll_subtype(message),
-                    "prior_query": message,
-                    "awaiting": ["employee"],
-                    "resolved": {},
+                    "subtype": classify_payroll_subtype(prior_query),
+                    "prior_query": prior_query,
+                    "awaiting": existing.get("awaiting", []) if is_payroll_follow_up else [],
+                    "resolved": resolved,
                 }
 
             broad_search_query = is_broad_project_search(message)

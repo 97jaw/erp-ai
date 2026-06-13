@@ -1,7 +1,7 @@
 """Unified HR/Payroll query composer — slot filling, routing plans, session context.
 
 Covers models documented in hr_module_context.py and payroll_module_context.py:
-  hr.employee, hr.department, hr.attendance, employee.request, request.type,
+  hr.employee, hr.department, hr.attendance, employee.requests, request.type,
   hr.payslip, hr.payslip.line, hr.payslip.worked_days, hr.payslip.cost.allocation,
   hr.payslip.run, hr.contract (via query_odoo when needed).
 """
@@ -19,6 +19,7 @@ from gateway.core.intent_analyzer import Intent
 
 COST_ALLOCATION_MODEL = "hr.payslip.cost.allocation"
 WORKED_DAYS_MODEL = "hr.payslip.worked_days"
+EMPLOYEE_REQUESTS_MODEL = "employee.requests"
 
 _FILLER_PREFIX_RE = re.compile(
     r"^(?:its|it's|yes|no|actually|i mean|that's|that is|he is|she is|correct|sorry)\s+",
@@ -257,8 +258,37 @@ def extract_employee_name(message: str) -> str:
     return ""
 
 
+def build_payslip_period_domain(month: int, year: int) -> list[Any]:
+    """Match Elrace payroll month by slip name (May-2026) or calendar overlap."""
+    last_day = calendar.monthrange(year, month)[1]
+    first_day = f"{year}-{month:02d}-01"
+    last_day_str = f"{year}-{month:02d}-{last_day:02d}"
+    name_pattern = f"{calendar.month_abbr[month]}-{year}"
+    return [
+        "|",
+        ["name", "ilike", name_pattern],
+        "&",
+        ["date_from", "<=", last_day_str],
+        ["date_to", ">=", first_day],
+    ]
+
+
+def payslip_period_domain_from_dates(date_from: str, date_to: str) -> list[Any]:
+    """Build payslip period domain from calendar month bounds (YYYY-MM-DD)."""
+    try:
+        year = int(str(date_from)[:4])
+        month = int(str(date_from)[5:7])
+    except (ValueError, IndexError):
+        return [
+            "&",
+            ["date_from", "<=", date_to],
+            ["date_to", ">=", date_from],
+        ]
+    return build_payslip_period_domain(month, year)
+
+
 def build_employee_name_domain(name_hint: str) -> list[Any]:
-    """Multi-token ilike domain for hr.payslip / employee.request employee_id.name."""
+    """Multi-token ilike domain for hr.payslip / employee.requests employee_id.name."""
     parts = [part for part in name_hint.split() if len(part) > 1]
     if not parts:
         return []
@@ -373,7 +403,7 @@ def parse_period_window(
 
 
 def map_request_type(message: str) -> str | None:
-    """Map user tokens to employee.request request_type filter."""
+    """Map user tokens to employee.requests request_type_id.name filter."""
     blob = message.lower()
     for tokens, mapped in _REQUEST_TYPE_MAP:
         if any(token in blob for token in tokens):
@@ -559,55 +589,35 @@ def compose_payroll_plan(
         )
 
     if file_id:
-        payload: dict[str, Any] = {"employee_file_id": str(file_id), "limit": 20}
+        header_input: dict[str, Any] = {
+            "employee_file_id": str(file_id),
+            "detail_type": "header",
+        }
         if period:
-            payload["date_from"] = period.date_from
-            payload["date_to"] = period.date_to
+            header_input["date_from"] = period.date_from
+            header_input["date_to"] = period.date_to
         return HRPayrollQueryPlan(
             domain="payroll",
             subtype="payslip_header",
-            tool="get_employee_payslips",
-            tool_input=payload,
+            tool="get_payslip_detail",
+            tool_input=header_input,
             employee_file_id=str(file_id),
             period=period,
         )
 
     if name_hint:
-        ps_domain: list[Any] = build_employee_name_domain(name_hint)
+        header_input = {
+            "employee_name": name_hint,
+            "detail_type": "header",
+        }
         if period:
-            month_year = _parse_month_year(normalize_month_typos(message))
-            if month_year:
-                month, year = month_year
-                ps_domain.append(["date_from", ">=", f"{year}-{month:02d}-01"])
-                last_day = calendar.monthrange(year, month)[1]
-                ps_domain.append(["date_to", "<=", f"{year}-{month:02d}-{last_day:02d}"])
-            else:
-                ps_domain.append(["date_from", ">=", period.date_from])
-                ps_domain.append(["date_to", "<=", period.date_to])
+            header_input["date_from"] = period.date_from
+            header_input["date_to"] = period.date_to
         return HRPayrollQueryPlan(
             domain="payroll",
             subtype="payslip_header",
-            tool="query_odoo",
-            tool_input={
-                "model": "hr.payslip",
-                "domain": ps_domain,
-                "fields": [
-                    "name",
-                    "number",
-                    "employee_id",
-                    "net_salary",
-                    "labor_snapshot_total_salary",
-                    "staff_snapshot_total_salary",
-                    "date_from",
-                    "date_to",
-                    "state",
-                    "fine",
-                    "advance",
-                    "total_deductions",
-                ],
-                "limit": 10,
-                "order": "date_to desc",
-            },
+            tool="get_payslip_detail",
+            tool_input=header_input,
             employee_name_hint=name_hint,
             period=period,
         )
@@ -620,7 +630,7 @@ def compose_hr_request_plan(
     intent: Intent,
     context: ContextStack | None = None,
 ) -> HRPayrollQueryPlan | None:
-    """Build employee.request plan with person, type, and date slots."""
+    """Build employee.requests plan with person, type, and date slots."""
     if not is_hr_request_query(message, intent):
         return None
 
@@ -677,7 +687,7 @@ def compose_separation_plan(
     intent: Intent,
     context: ContextStack | None = None,
 ) -> HRPayrollQueryPlan | None:
-    """Count terminations/separations via employee.request."""
+    """Count terminations/separations via employee.requests."""
     if not is_separation_count_query(message, intent):
         return None
 
@@ -705,9 +715,9 @@ def compose_separation_plan(
         request_type = "clearance"
 
     domain: list[Any] = [
-        ["request_type", "ilike", request_type],
+        ["request_type_id.name", "ilike", request_type],
         ["create_date", ">=", period.date_from],
-        ["create_date", "<=", period.date_to],
+        ["create_date", "<=", f"{period.date_to} 23:59:59"],
     ]
     if "approved" in blob:
         domain.append(["is_approve", "=", True])
@@ -722,7 +732,7 @@ def compose_separation_plan(
             subtype="separation_count",
             tool="aggregate_odoo",
             tool_input={
-                "model": "employee.request",
+                "model": EMPLOYEE_REQUESTS_MODEL,
                 "domain": domain,
                 "group_by": group_by,
                 "aggregates": ["id:count"],
@@ -737,7 +747,7 @@ def compose_separation_plan(
         subtype="separation_count",
         tool="aggregate_odoo",
         tool_input={
-            "model": "employee.request",
+            "model": EMPLOYEE_REQUESTS_MODEL,
             "domain": domain,
             "group_by": [],
             "aggregates": ["id:count"],

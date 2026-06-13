@@ -58,5 +58,5 @@ def test_resolve_termination_not_headcount() -> None:
     assert routed is not None
     tool, payload = routed
     assert tool == "aggregate_odoo"
-    assert payload["model"] == "employee.request"
+    assert payload["model"] == "employee.requests"
     assert payload["model"] != "hr.employee"

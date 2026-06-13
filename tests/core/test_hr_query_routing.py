@@ -50,7 +50,7 @@ def test_pending_leave_routes_to_employee_request() -> None:
         _make_context_stack(),
     )
     assert tool == "query_odoo"
-    assert payload["model"] == "employee.request"
+    assert payload["model"] == "employee.requests"
 
 
 def test_transfers_not_stock_moves() -> None:
@@ -59,7 +59,7 @@ def test_transfers_not_stock_moves() -> None:
         _intent(specific_intent="transfers this year", subject_area="hr"),
         _make_context_stack(),
     )
-    assert payload["model"] == "employee.request"
+    assert payload["model"] == "employee.requests"
 
 
 def test_unresolved_requests_not_project_tasks() -> None:
@@ -68,7 +68,7 @@ def test_unresolved_requests_not_project_tasks() -> None:
         _intent(specific_intent="who has unresolved requests", subject_area="hr"),
         _make_context_stack(),
     )
-    assert payload["model"] == "employee.request"
+    assert payload["model"] == "employee.requests"
 
 
 def test_biggest_department_analyze_action() -> None:
@@ -133,7 +133,7 @@ def test_strategy_planner_delegates_hr_routing() -> None:
     )
     tool, payload = StrategyPlanner._resolve_universal_read_tool(intent, _make_context_stack())
     assert tool == "query_odoo"
-    assert payload["model"] == "employee.request"
+    assert payload["model"] == "employee.requests"
 
 
 def test_is_hr_orchestration_for_attendance() -> None:

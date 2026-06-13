@@ -19,6 +19,7 @@ from gateway.hr_identity import (
     resolve_employee_by_file_id,
     resolve_target_employee,
 )
+from gateway.core.hr_payroll_composer import payslip_period_domain_from_dates
 
 logger = logging.getLogger(__name__)
 
@@ -293,10 +294,13 @@ def fetch_payslips_by_file_id(
 
     for plan_name, base_domain in plans:
         period_domain = list(base_domain)
-        if date_from:
+        if date_from and date_to:
+            period_domain = _and_domain(period_domain, payslip_period_domain_from_dates(date_from, date_to))
+        elif date_from:
             period_domain.append(["date_from", ">=", date_from])
-        if date_to:
+        elif date_to:
             period_domain.append(["date_to", "<=", date_to])
+        search_limit = 1 if date_from and date_to else limit
         for state_name, domain in _payslip_state_domains(adapter, period_domain):
             label = f"{plan_name}/{state_name}"
             searches_tried.append(label)
@@ -305,7 +309,7 @@ def fetch_payslips_by_file_id(
                     model=model,
                     domain=domain,
                     fields=fields,
-                    limit=limit,
+                    limit=search_limit,
                     order=order,
                 )
             except Exception as exc:
@@ -493,9 +497,11 @@ def _resolve_payslip_for_employee(
     if not model:
         return None
     domain: list[Any] = [["employee_id", "=", employee_id]]
-    if date_from:
+    if date_from and date_to:
+        domain = _and_domain(domain, payslip_period_domain_from_dates(date_from, date_to))
+    elif date_from:
         domain.append(["date_from", ">=", date_from])
-    if date_to:
+    elif date_to:
         domain.append(["date_to", "<=", date_to])
     fields = _payslip_read_fields(adapter) + [
         "fine",
@@ -589,7 +595,7 @@ async def get_payslip_detail(
         date_to=date_to,
     )
     if not payslip:
-        label = employee_name or resolved_file_id or "that employee"
+        label = (employee or {}).get("name") or employee_name or resolved_file_id or "that employee"
         return {
             "detail_type": detail_type,
             "lines": [],
@@ -604,6 +610,26 @@ async def get_payslip_detail(
     payslip_id = int(payslip["id"])
     employee_label = (employee or {}).get("name") or employee_name
     header = _present_payslip(payslip)
+    deductions_summary = {
+        "fine": payslip.get("fine"),
+        "advance": payslip.get("advance"),
+        "total_deductions": payslip.get("total_deductions"),
+        "net_salary": payslip.get("net_salary") or payslip.get("net_wage"),
+        "gross_wage": payslip.get("gross_wage"),
+        "labor_snapshot_total_salary": payslip.get("labor_snapshot_total_salary"),
+        "staff_snapshot_total_salary": payslip.get("staff_snapshot_total_salary"),
+    }
+
+    if detail_type == "header":
+        return {
+            "detail_type": detail_type,
+            "payslip": header,
+            "count": 1,
+            "employee_name": employee_label,
+            "employee_file_id": resolved_file_id,
+            "deductions_summary": deductions_summary,
+            "_source": "get_payslip_detail",
+        }
 
     if detail_type == "distribution":
         month = None
@@ -686,12 +712,7 @@ async def get_payslip_detail(
         "count": len(lines),
         "employee_name": employee_label,
         "employee_file_id": resolved_file_id,
-        "deductions_summary": {
-            "fine": payslip.get("fine"),
-            "advance": payslip.get("advance"),
-            "total_deductions": payslip.get("total_deductions"),
-            "net_salary": payslip.get("net_salary"),
-        },
+        "deductions_summary": deductions_summary,
         "_source": "get_payslip_detail",
     }
 
