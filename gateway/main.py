@@ -3362,7 +3362,7 @@ async def _voice_pipeline(
             minutes = max(0.1, len(content) / 48000.0)
             schedule_usage(track_voice_minutes(user_id, minutes))
 
-        # Step 2: Run intelligent handler (same entity gate as text chat)
+        # Step 2: Run intelligent handler (same pipeline as text chat)
         try:
             result = await _run_intelligent_chat(
                 transcript,
@@ -3373,54 +3373,80 @@ async def _voice_pipeline(
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-        text                  = result.text or "I could not process your request."
-        language              = result.language or "en"
-        suggestions           = getattr(result, "suggestions", None) or []
-        deep_think_available  = bool(getattr(result, "deep_think_available", False))
+        language               = result.language or "en"
         awaiting_clarification = bool(getattr(result, "awaiting_clarification", False))
-        clarification         = getattr(result, "clarification", None)
+        clarification          = getattr(result, "clarification", None)
+        deep_think_available   = bool(getattr(result, "deep_think_available", False))
+        conv_id                = ConversationStore.conversation_id_for_session(session_id)
+        interaction_id         = getattr(result, "interaction_id", None) or ""
 
-        # Step 3: Streaming TTS via ElevenLabs /stream endpoint
+        # Run the same post-processing as the SSE stream (visualization, suggestion pool)
+        if awaiting_clarification:
+            # For clarification responses, use raw text and skip finalization
+            clean_text      = result.text or ""
+            visualization   = None
+            suggestions     = []
+            suggestion_meta = None
+        else:
+            tools_called, tool_payloads = _tool_payloads_from_intelligent_result(result)
+            clean_text, visualization, suggestions, suggestion_meta = _finalize_agent_response(
+                result.text or "",
+                result.visualization,
+                result.suggestions or [],
+                tools_called,
+                tool_payloads,
+                language,
+                transcript,
+                session_id,
+            )
+
+        # Step 3: Streaming TTS — synthesize the voice-optimised text
         tts = get_tts()
-
         from integrations.voice_engine import prepare_for_tts as _prepare_for_tts
-        tts_text = _prepare_for_tts(text)
+        tts_text = _prepare_for_tts(clean_text)
 
         async def _audio_stream():
             try:
-                async for chunk in tts.stream_synthesize(text, language=language):
+                async for chunk in tts.stream_synthesize(tts_text, language=language):
                     yield chunk
             except Exception as exc:
                 logger.exception("[/voice] TTS streaming failed: %s", exc)
 
-        suggestions_header    = ""
-        clarification_header  = ""
-        try:
-            if suggestions:
-                suggestions_header = _ascii_header(_json.dumps(suggestions, ensure_ascii=False))
-        except Exception:
-            pass
-        try:
-            if clarification:
-                clarification_header = _utf8_header(_json.dumps(clarification, ensure_ascii=False))
-        except Exception:
-            pass
+        def _b64_json(obj) -> str:
+            if not obj:
+                return ""
+            try:
+                return _utf8_header(_json.dumps(obj, ensure_ascii=False))
+            except Exception:
+                return ""
 
-        # Return streaming audio with metadata headers
+        def _b64_str(obj) -> str:
+            if not obj:
+                return ""
+            try:
+                return _ascii_header(_json.dumps(obj, ensure_ascii=False))
+            except Exception:
+                return ""
+
+        # Return streaming audio with full metadata headers — mirrors SSE `done` event
         return StreamingResponse(
             _audio_stream(),
             media_type = "audio/mpeg",
             headers    = {
                 "X-Session-Id"              : session_id,
+                "X-Conversation-Id"         : conv_id or "",
+                "X-Interaction-Id"          : interaction_id,
                 "X-Language"               : language,
                 "X-Transcript"             : _ascii_header(transcript),
                 "X-Response"               : _ascii_header(tts_text),
                 "X-Transcript-B64"         : _utf8_header(transcript),
-                "X-Response-B64"           : _utf8_header(text),
-                "X-Suggestions"            : suggestions_header,
+                "X-Response-B64"           : _utf8_header(clean_text),
+                "X-Suggestions"            : _b64_str(suggestions),
+                "X-Suggestion-Meta-B64"    : _b64_json(suggestion_meta),
+                "X-Visualization-B64"      : _b64_json(visualization),
                 "X-Deep-Think-Available"   : "true" if deep_think_available else "false",
                 "X-Awaiting-Clarification" : "true" if awaiting_clarification else "false",
-                "X-Clarification-B64"      : clarification_header,
+                "X-Clarification-B64"      : _b64_json(clarification),
             },
         )
 
