@@ -338,6 +338,7 @@ class IntelligentQueryHandler:
                     text=fast_result["text"],
                     tools_called=fast_result["tools_called"],
                     awaiting_clarification=fast_result["awaiting_clarification"],
+                    original_query=fast_result["original_query"],
                     context=context,
                     telemetry=telemetry,
                     resolved_session=resolved_session,
@@ -1936,38 +1937,44 @@ class IntelligentQueryHandler:
             ][:5]
             logger.info("[FastLane] Parsed %d disambiguation chips", len(suggestions))
         else:
-            # Context-aware follow-up suggestions based on what was just looked up
-            tools_set = set(tools_called)
-            if "query_odoo" in tools_set:
-                # Infer what was returned from the system prompt hints stored in session
-                sf = context.working_memory.session_facts
-                pending = sf.get("fast_lane_pending") or {}
-                orig = (pending.get("original_query") or "").lower()
-                if any(w in orig for w in ("vehicle", "car", "fleet")):
-                    if language == "ar":
-                        suggestions = ["عرض تفاصيل التأمين", "عرض جميع المركبات", "تاريخ تجديد الترخيص"]
-                    else:
-                        suggestions = ["Show insurance details", "Show all assigned vehicles", "Check license renewal date"]
-                elif any(w in orig for w in ("visa", "passport", "insurance")):
-                    if language == "ar":
-                        suggestions = ["عرض تفاصيل الموظف", "التحقق من تواريخ انتهاء الإقامة", "الموظفون الآخرون"]
-                    else:
-                        suggestions = ["Show employee details", "Check all expiring documents", "View other employees"]
-                elif any(w in orig for w in ("attendance", "leave", "absent")):
-                    if language == "ar":
-                        suggestions = ["عرض سجل الحضور الكامل", "ملخص الإجازات", "موظفون غائبون اليوم"]
-                    else:
-                        suggestions = ["Show full attendance log", "Leave summary", "Employees absent today"]
-                elif any(w in orig for w in ("employee", "staff", "worker")):
-                    if language == "ar":
-                        suggestions = ["عرض بيانات الموظف", "معلومات المركبة", "سجل الحضور"]
-                    else:
-                        suggestions = ["Show employee details", "Check vehicle info", "View attendance record"]
+            # Context-aware follow-up suggestions keyed on what was just looked up.
+            # Use original_query (passed in directly) — not session which is already cleared.
+            orig = (original_query or "").lower()
+            if any(w in orig for w in ("vehicle", "car", "fleet", "navara", "pickup")):
+                if language == "ar":
+                    suggestions = ["تفاصيل التأمين للمركبة", "عرض جميع مركبات الشركة", "تاريخ تجديد الترخيص"]
                 else:
-                    if language == "ar":
-                        suggestions = ["طلب مزيد من التفاصيل", "تصفية حسب القسم", "تصدير النتائج"]
-                    else:
-                        suggestions = ["Request more details", "Filter by department", "View related records"]
+                    suggestions = ["Show vehicle insurance details", "List all company vehicles", "Check license renewal date"]
+            elif any(w in orig for w in ("visa", "passport", "expir", "labour card", "labor card", "iqama")):
+                if language == "ar":
+                    suggestions = ["عرض جميع وثائق منتهية الصلاحية", "تفاصيل الموظف", "الموظفون مع التأشيرات المنتهية قريباً"]
+                else:
+                    suggestions = ["Show all expiring documents", "View employee details", "Employees with visa expiring this month"]
+            elif any(w in orig for w in ("attendance", "absent", "check in", "check-in", "check out")):
+                if language == "ar":
+                    suggestions = ["سجل الحضور للشهر الكامل", "ملخص ساعات العمل", "موظفون غائبون اليوم"]
+                else:
+                    suggestions = ["Show full month attendance", "Work hours summary", "Employees absent today"]
+            elif any(w in orig for w in ("leave", "allocation", "annual leave", "vacation")):
+                if language == "ar":
+                    suggestions = ["رصيد الإجازات المتبقي", "طلبات الإجازة المعلقة", "سجل إجازات الموظف"]
+                else:
+                    suggestions = ["Check remaining leave balance", "Pending leave requests", "Full leave history"]
+            elif any(w in orig for w in ("payslip", "salary", "net pay", "net salary", "deduction")):
+                if language == "ar":
+                    suggestions = ["تفاصيل الخصومات", "كشف راتب الشهر السابق", "ملخص الرواتب للقسم"]
+                else:
+                    suggestions = ["Show deduction breakdown", "Payslip for previous month", "Department salary summary"]
+            elif any(w in orig for w in ("employee", "staff", "worker")):
+                if language == "ar":
+                    suggestions = ["عرض مركبة الموظف", "سجل حضور الموظف", "طلبات الموظف"]
+                else:
+                    suggestions = ["Show employee's vehicle", "View attendance record", "Check employee requests"]
+            else:
+                if language == "ar":
+                    suggestions = ["عرض تفاصيل إضافية", "تصفية حسب القسم", "عرض السجلات ذات الصلة"]
+                else:
+                    suggestions = ["Show more details", "Filter by department", "View related records"]
 
         response = IntelligentQueryResponse(
             session_id=resolved_session,

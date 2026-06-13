@@ -92,14 +92,27 @@ KEY ELRACE MODELS:
 HOW TO ANSWER:
 1. Read the query carefully. Handle typos and natural phrasing (Arabic/Urdu mixed in).
 2. Identify entities (person names, project names, date hints) and what is being asked about them.
-3. For cross-entity queries ("Adil Khan vehicle"):
-   - Step 1: query_odoo hr.employee to find the employee.
-   - If ONE match: immediately proceed to step 2 (look up vehicle/attendance/etc).
-   - If MULTIPLE matches: list names + IDs and ask which one. Stop there — do NOT proceed.
+3. For person + data queries ("jawad attendance", "adil khan vehicle", "jawad payslip for may"):
+   - Step 1: query_odoo hr.employee with [["name","ilike","<name>"]], limit=5.
+   - Extract ONLY the name from the query (e.g. "jawad" from "show me jawad payslip for may 2026").
+   - If ONE match: immediately proceed to step 2.
+   - If MULTIPLE matches: list names + IDs and ask which one. Stop — do NOT proceed.
 4. When the user confirms an employee by name or ID, go DIRECTLY to the related record.
    Do NOT re-search employees. Use the ID provided and query the target model.
 5. Use introspect_odoo_schema when unsure of field names.
 6. If no data found, explain and ask for more detail.
+
+ATTENDANCE LOOKUP PATTERN:
+  After getting employee_id, query hr.attendance:
+    domain: [["employee_id","=",<id>], ["check_in",">=","<date_from>"], ["check_in","<=","<date_to>"]]
+    fields: ["employee_id","check_in","check_out","worked_hours"]
+  Summarise total days present, hours worked. Do not return raw list of 50 rows.
+
+PAYSLIP LOOKUP PATTERN:
+  After getting employee_id, query hr.payslip:
+    domain: [["employee_id","=",<id>], ["date_from",">=","<month_start>"], ["date_to","<=","<month_end>"]]
+    fields: ["name","date_from","date_to","net_wage","fine","advance","total_deductions"]
+  Return a clean table. If no payslip found for that period, say so clearly.
 
 IMPORTANT — VEHICLE LOOKUP PATTERN:
   After confirming employee_id, ALWAYS use this domain:
@@ -190,6 +203,35 @@ def should_use_fast_lane(
             if isinstance(lps, dict) and lps:
                 logger.debug("[FastLane] Signal 3 — payslip pronoun with session scope=%r", lps)
                 return True
+
+    # Signal 4: payslip/salary lookup with a named entity.
+    # The payroll pipeline's name-extraction is brittle for natural phrasings like
+    # "show me jawad payslip for may 2026" — Claude in fast lane handles this cleanly.
+    if (
+        intent.subject_area in ("hr", "payroll", "other", "general")
+        and intent.primary_action in ("fetch_data", "search_entity", "analyze", "ask_question", "other")
+        and any(w in msg_lower for w in ("payslip", "salary", "net salary", "net pay"))
+        and bool(intent.entities)
+    ):
+        logger.debug("[FastLane] Signal 4 — payslip lookup with entity=%r", [e.name for e in intent.entities])
+        return True
+
+    # Signal 5: attendance or leave lookup with a named entity.
+    # "jawad attendance this month" misfires through the HR route returning all employees;
+    # fast lane resolves the person first then fetches attendance correctly.
+    if (
+        any(w in msg_lower for w in ("attendance", "absent", "check in", "check out", "check-in", "check-out"))
+        and bool(intent.entities)
+    ):
+        logger.debug("[FastLane] Signal 5 — attendance lookup with entity=%r", [e.name for e in intent.entities])
+        return True
+
+    # Signal 6: visa/passport/document expiry queries — best handled by fast lane
+    # which can filter hr.employee by expiry date fields directly.
+    if any(w in msg_lower for w in ("visa expir", "passport expir", "expiring visa", "expiring passport",
+                                     "labour card expir", "labor card expir", "document expir")):
+        logger.debug("[FastLane] Signal 6 — document expiry query")
+        return True
 
     return False
 
