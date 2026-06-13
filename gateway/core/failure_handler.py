@@ -367,6 +367,13 @@ class HonestFailureResponder:
                 details=details,
             )
         if isinstance(exc, OrchestrationException):
+            error_summary = str(exc).strip() or exc.__class__.__name__
+            if "Missing permission" in error_summary:
+                return Failure(
+                    mode=FailureMode.PERMISSION_DENIED,
+                    user_message=user_message,
+                    details={**details, "error_summary": error_summary},
+                )
             return Failure(
                 mode=FailureMode.TOOL_ERROR,
                 user_message=user_message,

@@ -25,7 +25,7 @@ def build_single_tool_strategy(
                 depends_on=[],
                 parallel_with=[],
                 expected_output=expected_output,
-                fallback_if_fails=f"Retry {tool} with resolved project scope",
+                fallback_if_fails="",
             ),
         ],
         synthesis_approach=(

@@ -288,8 +288,23 @@ class ExecutionOrchestrator:
                     f"Step {step.step_number} returned ambiguous entity reference",
                 )
 
+            if self._is_permission_denied(result):
+                duration_ms = int((time.perf_counter() - started) * 1000)
+                message = self._permission_denied_message(result)
+                entry = self._build_log_entry(
+                    step=step,
+                    status="failed",
+                    duration_ms=duration_ms,
+                    input_summary=input_summary,
+                    output_summary=self._summarize_payload(result),
+                    error=message,
+                )
+                orchestration_log.append(entry)
+                logger.info("[Orchestrator] %s", json.dumps(entry.to_dict(), ensure_ascii=True))
+                raise OrchestrationException(message)
+
             if self._is_empty_or_invalid(result):
-                if attempt < MAX_STEP_RETRIES - 1:
+                if attempt < MAX_STEP_RETRIES - 1 and not self._is_non_retryable_empty(result):
                     tool_input = self._broaden_search(step.tool, tool_input)
                     input_summary = self._summarize_payload(tool_input)
                     continue
@@ -400,6 +415,37 @@ class ExecutionOrchestrator:
         return tool_name, tool_input
 
     @staticmethod
+    def _is_permission_denied(result: Any) -> bool:
+        """Return True when RBAC or universal-tool access blocked the call."""
+        if not isinstance(result, dict):
+            return False
+        if result.get("permission_denied"):
+            return True
+        if result.get("error_code") == "permission_denied":
+            return True
+        return False
+
+    @staticmethod
+    def _permission_denied_message(result: Any) -> str:
+        if isinstance(result, dict):
+            if result.get("error"):
+                return str(result["error"])
+            if result.get("message"):
+                return str(result["message"])
+        return "Missing permission for this data"
+
+    @staticmethod
+    def _is_non_retryable_empty(result: Any) -> bool:
+        """Empty payloads that broadening filters cannot fix."""
+        if not isinstance(result, dict):
+            return False
+        if result.get("error"):
+            return True
+        if result.get("status") == "error":
+            return True
+        return False
+
+    @staticmethod
     def _is_empty_or_invalid(result: Any) -> bool:
         """Return True when a tool payload is not usable."""
         if result is None:
@@ -407,9 +453,13 @@ class ExecutionOrchestrator:
         if isinstance(result, dict):
             if result.get("error"):
                 return True
+            if result.get("status") == "error":
+                return True
             if "rows" in result and isinstance(result["rows"], list) and not result["rows"]:
                 return True
             if "groups" in result and isinstance(result["groups"], list) and not result["groups"]:
+                return True
+            if "records" in result and isinstance(result["records"], list) and not result["records"]:
                 return True
             if not result:
                 return True
@@ -437,9 +487,13 @@ class ExecutionOrchestrator:
         else:
             broadened["limit"] = 50
         broadened["broadened"] = True
+        model = str(broadened.get("model") or "").lower()
+        payroll_scoped = model.startswith("hr.payslip") or model.startswith("hr.")
         if EntityGate.is_entity_bound_financial_tool(tool_name):
             for key in ("date_from", "date_to"):
                 broadened.pop(key, None)
+        elif payroll_scoped:
+            broadened.pop("partner_id", None)
         else:
             for key in ("partner_id", "project_id", "date_from", "date_to"):
                 broadened.pop(key, None)

@@ -760,6 +760,7 @@ class IntelligentQueryHandler:
                 session_id=session_id,
                 strategy_override=effective_strategy_override,
                 executor=executor,
+                current_user=user,
             )
             self._persist_execution_scope(
                 resolved_session=resolved_session,
@@ -942,6 +943,7 @@ class IntelligentQueryHandler:
         session_id: str | None,
         strategy_override: Strategy | None,
         executor: Any | None,
+        current_user: CurrentUser | None = None,
     ) -> dict[str, Any]:
         strategy = strategy_override
         if strategy is None:
@@ -959,6 +961,7 @@ class IntelligentQueryHandler:
                 message=message,
                 session_id=session_id,
                 executor=executor,
+                current_user=current_user,
             ),
         )
 
@@ -1014,11 +1017,13 @@ class IntelligentQueryHandler:
         message: str,
         session_id: str | None,
         executor: Any | None,
+        current_user: CurrentUser | None = None,
     ) -> ExecutionResult:
         tool_executor = executor or GatewayToolExecutor(
             adapter,
             session_id=session_id,
             user_message=message,
+            user=current_user,
         )
         orchestrator = ExecutionOrchestrator(tool_executor, retry_delay_seconds=0.5)
         return await orchestrator.execute(strategy, context)
@@ -2175,6 +2180,7 @@ class IntelligentQueryHandler:
             session_id=session_id,
             strategy_override=strategy_override,
             executor=executor,
+            current_user=user,
         )
 
     def _build_precompute_runner(

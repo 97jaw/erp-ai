@@ -17,10 +17,12 @@ class GatewayToolExecutor:
         *,
         session_id: str | None = None,
         user_message: str = "",
+        user: Any | None = None,
     ) -> None:
         self._adapter = adapter
         self._session_id = session_id
         self._user_message = user_message
+        self._user = user
         # Odoo XML-RPC clients are not thread-safe; parallel orchestration steps
         # must not hit the same adapter concurrently.
         self._lock = asyncio.Lock()
@@ -47,4 +49,5 @@ class GatewayToolExecutor:
                 self._adapter,
                 self._session_id,
                 self._user_message or context.conversation.message,
+                self._user,
             )

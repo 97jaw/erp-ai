@@ -1249,6 +1249,7 @@ def execute_tool(
     adapter    : OdooV14Adapter,
     session_id : str | None = None,
     user_message: str = "",
+    user_override: Any | None = None,
 ) -> Any:
     """Executes a tool call and returns the result."""
     started = time.perf_counter()
@@ -1258,7 +1259,7 @@ def execute_tool(
     result: Any = None
 
     try:
-        user = get_request_user()
+        user = user_override or get_request_user()
         cache_user_id = user.id if user is not None else "anon"
         if user is not None:
             denied = check_tool_allowed(user, tool_name, tool_input)
