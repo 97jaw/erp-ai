@@ -350,6 +350,10 @@ class IntelligentQueryHandler:
                 is_hr_project_staff_query,
                 resolve_hr_tool,
             )
+            from gateway.core.fleet_query_routing import (
+                is_fleet_orchestration_query,
+                resolve_fleet_tool,
+            )
             from gateway.core.payroll_query_routing import (
                 _employee_name_hint,
                 is_payroll_file_id_follow_up,
@@ -361,6 +365,9 @@ class IntelligentQueryHandler:
             has_active_project = bool(active and active.project_id)
             hr_project_staff_query = is_hr_project_staff_query(message)
             payroll_orchestration_query = is_payroll_orchestration_query(message, intent, context)
+            fleet_orchestration_query = is_fleet_orchestration_query(message, intent)
+            if resolve_fleet_tool(message, intent, context) is not None:
+                fleet_orchestration_query = True
             from gateway.core.project_expense_routing import is_project_expense_query
 
             project_expense_query = is_project_expense_query(message, intent, context)
@@ -403,6 +410,7 @@ class IntelligentQueryHandler:
                 and not hr_project_staff_query
                 and not hr_orchestration_query
                 and not payroll_orchestration_query
+                and not fleet_orchestration_query
                 and is_project_profile_query(message, intent)
             )
 
@@ -415,6 +423,7 @@ class IntelligentQueryHandler:
                 and not activity_query
                 and not payroll_orchestration_query
                 and not hr_orchestration_query
+                and not fleet_orchestration_query
             ):
                 return self._finalize_failure(
                     failure=self._failure_responder.failure_from_intent(intent, message),
@@ -827,6 +836,24 @@ class IntelligentQueryHandler:
 
             if (
                 effective_strategy_override is None
+                and fleet_orchestration_query
+                and not profile_query
+                and not records_query
+                and not activity_query
+            ):
+                routed = resolve_fleet_tool(message, intent, context)
+                if routed is not None:
+                    tool_name, tool_input = routed
+                    effective_strategy_override = build_single_tool_strategy(
+                        tool=tool_name,
+                        tool_input=tool_input,
+                        description=f"Fleet query: {message}",
+                        expected_output=intent.expected_output or "summary",
+                    )
+                    logger.info("[FleetRouting] Forcing %s for %r", tool_name, message[:80])
+
+            if (
+                effective_strategy_override is None
                 and hr_orchestration_query
                 and not profile_query
                 and not records_query
@@ -860,6 +887,16 @@ class IntelligentQueryHandler:
                 execution_result=pipeline["execution_result"],
             )
             self._persist_hr_payroll_scope(
+                context=context,
+                execution_result=pipeline["execution_result"],
+                message=message,
+            )
+            self._persist_hr_request_scope(
+                context=context,
+                execution_result=pipeline["execution_result"],
+                message=message,
+            )
+            self._persist_fleet_scope(
                 context=context,
                 execution_result=pipeline["execution_result"],
                 message=message,
@@ -1346,6 +1383,79 @@ class IntelligentQueryHandler:
                 {
                     "domain": "payroll",
                     "subtype": subtype,
+                    "prior_query": pending.get("prior_query") or message,
+                    "awaiting": [],
+                    "resolved": resolved,
+                }
+            )
+            context.working_memory.session_facts["pending_hr_context"] = pending
+            return
+
+    @staticmethod
+    def _persist_hr_request_scope(
+        *,
+        context: ContextStack,
+        execution_result: ExecutionResult,
+        message: str,
+    ) -> None:
+        """Keep employee and recent request ids in session for HR request drill-downs."""
+        for step in execution_result.strategy_used.steps:
+            result = execution_result.results.get(step.step_number)
+            if not isinstance(result, dict):
+                continue
+            source = str(result.get("_source") or "")
+            if source not in {"list_employee_requests", "get_employee_request_detail"}:
+                continue
+            if source == "list_employee_requests" and not result.get("requests") and not result.get("note"):
+                continue
+            pending = dict(context.working_memory.session_facts.get("pending_hr_context") or {})
+            resolved = dict(pending.get("resolved") or {})
+            if result.get("employee_file_id"):
+                resolved["employee_file_id"] = str(result["employee_file_id"])
+            if result.get("employee_name"):
+                resolved["employee_name_hint"] = str(result["employee_name"])
+            if source == "list_employee_requests":
+                recent_ids = result.get("recent_request_ids") or [
+                    row.get("id") for row in (result.get("requests") or [])[:5] if isinstance(row, dict)
+                ]
+                if recent_ids:
+                    resolved["recent_request_ids"] = recent_ids
+            if source == "get_employee_request_detail" and result.get("request_id"):
+                resolved["recent_request_ids"] = [result.get("request_id")]
+            pending.update(
+                {
+                    "domain": "hr",
+                    "subtype": "hr_request_detail" if source == "get_employee_request_detail" else "hr_request_list",
+                    "prior_query": pending.get("prior_query") or message,
+                    "awaiting": [],
+                    "resolved": resolved,
+                }
+            )
+            context.working_memory.session_facts["pending_hr_context"] = pending
+            return
+
+    @staticmethod
+    def _persist_fleet_scope(
+        *,
+        context: ContextStack,
+        execution_result: ExecutionResult,
+        message: str,
+    ) -> None:
+        """Keep employee scope for fleet follow-ups."""
+        for step in execution_result.strategy_used.steps:
+            result = execution_result.results.get(step.step_number)
+            if not isinstance(result, dict) or result.get("_source") != "search_fleet_vehicles":
+                continue
+            pending = dict(context.working_memory.session_facts.get("pending_hr_context") or {})
+            resolved = dict(pending.get("resolved") or {})
+            if result.get("employee_file_id"):
+                resolved["employee_file_id"] = str(result["employee_file_id"])
+            if result.get("employee_name"):
+                resolved["employee_name_hint"] = str(result["employee_name"])
+            pending.update(
+                {
+                    "domain": "fleet",
+                    "subtype": "fleet_search",
                     "prior_query": pending.get("prior_query") or message,
                     "awaiting": [],
                     "resolved": resolved,

@@ -150,7 +150,18 @@ def has_meaningful_tool_data(tool_results: list[Any]) -> bool:
             return True
         if payload.get("payslips") is not None:
             return True
-        if payload.get("_source") in {"get_payslip_detail", "list_employee_requests"}:
+        if payload.get("_source") in {
+            "get_payslip_detail",
+            "list_employee_requests",
+            "get_employee_request_detail",
+            "search_fleet_vehicles",
+        }:
+            return True
+        if payload.get("vehicles") is not None:
+            return True
+        if payload.get("validation_chain") is not None:
+            return True
+        if payload.get("request") is not None:
             return True
         if payload.get("requests") is not None:
             return True

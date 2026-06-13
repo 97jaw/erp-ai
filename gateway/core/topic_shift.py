@@ -96,7 +96,14 @@ def infer_turn_domain(
             "get_my_payslips",
             "list_recent_payslips",
             "get_payslip_detail",
+            "list_employee_requests",
+            "get_employee_request_detail",
+            "search_fleet_vehicles",
         }:
+            if tool_name == "search_fleet_vehicles":
+                return "fleet"
+            if tool_name in {"list_employee_requests", "get_employee_request_detail"}:
+                return "hr"
             return "payroll"
         if tool_name in {
             "get_project_expenses",

@@ -8,19 +8,18 @@
 
 **File:** HR + Payroll Rollout — Phase M6 (Payroll module certification)
 
-**Status:** Sprint B deployed to EC2 (`ac66bda0`) — full payslip detail + drill-down routing live
+**Status:** Sprint C + D implemented locally — HR request detail + fleet vehicle reads
 
 | Piece | Description | Code | Tests |
 |-------|-------------|------|-------|
 | HR/Payroll composer | Shared slot filling: employee, period, request type, payroll subtypes | ✅ | ✅ |
-| Dedicated tools | `get_payslip_detail` (full/lines/worked_days/distribution + line filters), `list_employee_requests` | ✅ | ✅ |
 | Payslip drill-down | Session inherits employee/period; overtime/deductions/worked-days follow-ups | ✅ | ✅ |
-| Termination routing | `employee.requests` count — not active headcount | ✅ | ✅ |
-| Session context | `pending_hr_context`, filler strip, inline file ID, stale out_of_scope bypass | ✅ | ✅ |
+| HR request list | `list_employee_requests` with leave dates in list output | ✅ | ✅ |
+| HR request detail | `get_employee_request_detail` — validation chain, leave period, approvers | ✅ | ✅ |
+| Fleet reads | `search_fleet_vehicles` — driver, File ID, mobile, project, location | ✅ | ✅ |
+| Session context | HR request + fleet follow-up via `pending_hr_context` | ✅ | ✅ |
 
-**Key models covered:** `hr.payslip`, `hr.payslip.line`, `hr.payslip.cost.allocation`, `hr.payslip.worked_days`, `employee.requests`, `hr.employee`, `hr.attendance`, separation counts.
-
-**Next:** UI smoke on production, then Sprint C (HR request validation/leave detail) or Sprint D (fleet driver details).
+**Next:** Deploy to EC2, then full UI smoke across Sprints A–D.
 
 ---
 

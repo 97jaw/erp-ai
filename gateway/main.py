@@ -86,6 +86,8 @@ TOOL_STATUS_LABELS = {
     "get_employee_payslips"   : "Loading employee payslips...",
     "get_payslip_detail"      : "Loading payslip breakdown...",
     "list_employee_requests"  : "Loading employee requests...",
+    "get_employee_request_detail": "Loading request validation and leave details...",
+    "search_fleet_vehicles"     : "Loading fleet vehicles...",
     "list_recent_payslips"    : "Listing recent payslips...",
 }
 
@@ -1254,6 +1256,38 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "get_employee_request_detail",
+        "description": (
+            "Fetch one employee.requests record with validation/approval chain and leave dates. "
+            "Use after listing requests or when the user asks for validation status or leave duration."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "integer"},
+                "request_name": {"type": "string"},
+                "employee_file_id": {"type": "string"},
+                "employee_name": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "search_fleet_vehicles",
+        "description": (
+            "Search fleet.vehicle records with driver/employee link, file ID, mobile, project, and location."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "employee_file_id": {"type": "string"},
+                "employee_name": {"type": "string"},
+                "license_plate": {"type": "string"},
+                "project_name": {"type": "string"},
+                "limit": {"type": "integer"},
+            },
+        },
+    },
     *PROJECT_EXPENSE_TOOL_DEFINITIONS,
     *PROJECT_PROFILE_TOOL_DEFINITIONS,
     *PROJECT_RECORDS_TOOL_DEFINITIONS,
@@ -1645,6 +1679,45 @@ def execute_tool(
                         date_to=tool_input.get("date_to"),
                         status=tool_input.get("status"),
                         limit=tool_input.get("limit", 50),
+                    )
+                )
+        elif tool_name == "get_employee_request_detail":
+            import asyncio
+
+            from gateway.hr_request_tools import get_employee_request_detail
+
+            chat_user = get_request_user()
+            if chat_user is None:
+                result = {"error": "not_authenticated", "request": None}
+            else:
+                result = asyncio.run(
+                    get_employee_request_detail(
+                        adapter,
+                        chat_user,
+                        request_id=tool_input.get("request_id"),
+                        request_name=tool_input.get("request_name"),
+                        employee_file_id=tool_input.get("employee_file_id"),
+                        employee_name=tool_input.get("employee_name"),
+                    )
+                )
+        elif tool_name == "search_fleet_vehicles":
+            import asyncio
+
+            from gateway.fleet_tools import search_fleet_vehicles
+
+            chat_user = get_request_user()
+            if chat_user is None:
+                result = {"error": "not_authenticated", "vehicles": []}
+            else:
+                result = asyncio.run(
+                    search_fleet_vehicles(
+                        adapter,
+                        chat_user,
+                        employee_file_id=tool_input.get("employee_file_id"),
+                        employee_name=tool_input.get("employee_name"),
+                        license_plate=tool_input.get("license_plate"),
+                        project_name=tool_input.get("project_name"),
+                        limit=tool_input.get("limit", 20),
                     )
                 )
         elif tool_name == "list_recent_payslips":

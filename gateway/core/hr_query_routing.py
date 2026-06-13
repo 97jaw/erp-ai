@@ -219,6 +219,7 @@ def resolve_hr_tool(
 
     # --- Separation / termination counts (before generic headcount) ---
     from gateway.core.hr_payroll_composer import (
+        compose_hr_request_detail_plan,
         compose_hr_request_plan,
         compose_separation_plan,
         plan_to_route,
@@ -227,6 +228,12 @@ def resolve_hr_tool(
     separation_plan = compose_separation_plan(message, intent, context)
     if separation_plan is not None:
         routed = plan_to_route(separation_plan)
+        if routed is not None:
+            return routed
+
+    hr_request_detail_plan = compose_hr_request_detail_plan(message, intent, context)
+    if hr_request_detail_plan is not None:
+        routed = plan_to_route(hr_request_detail_plan)
         if routed is not None:
             return routed
 
@@ -470,18 +477,13 @@ def resolve_hr_tool(
                 "limit": 5,
             }
 
-    # --- Employee vehicle (after name in message) ---
+    # --- Employee vehicle (after name in message) — handled by search_fleet_vehicles ---
     if "vehicle" in blob or "fleet" in blob or "assigned car" in blob:
-        name_part = message.split("'s")[0].strip() if "'s" in message else ""
-        fleet_domain: list[Any] = []
-        if name_part:
-            fleet_domain.append(["driver_id.name", "ilike", name_part.split()[0]])
-        return "query_odoo", {
-            "model": "fleet.vehicle",
-            "domain": fleet_domain,
-            "fields": ["name", "license_plate", "driver_id", "model_id"],
-            "limit": 20,
-        }
+        from gateway.core.fleet_query_routing import resolve_fleet_tool
+
+        fleet_route = resolve_fleet_tool(message, intent, context)
+        if fleet_route is not None:
+            return fleet_route
 
     # --- Employee project history ---
     if "project history" in blob:

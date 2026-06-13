@@ -59,6 +59,14 @@ _REQUEST_FOR_RE = re.compile(
     r"\b(?:employee\s+)?requests?\s+(?:for|of)\s+([A-Za-z][A-Za-z\s'.-]{1,60}?)(?:\s*$|\s*,|\s+in\b|\s+last\b|\s+this\b)",
     re.I,
 )
+_REQUEST_ID_RE = re.compile(
+    r"\b(?:request\s*(?:id|#|number|no\.?)?|req(?:uest)?\s*#?)\s*[:#-]?\s*(\d{1,8})\b",
+    re.I,
+)
+_REQUEST_NAME_RE = re.compile(
+    r"\b((?:REQ|ER|HR)[-/][A-Za-z0-9/-]{3,40})\b",
+    re.I,
+)
 _BLOCKED_NAME_TOKENS = frozenset(
     {
         "need",
@@ -188,6 +196,24 @@ def extract_inline_file_id(message: str) -> str | None:
     if bare:
         return bare.group(1)
     return None
+
+
+def extract_request_reference(message: str) -> tuple[int | None, str | None]:
+    """Extract numeric request id or reference code from user text."""
+    text = message or ""
+    id_match = _REQUEST_ID_RE.search(text)
+    if id_match:
+        try:
+            return int(id_match.group(1)), None
+        except ValueError:
+            pass
+    name_match = _REQUEST_NAME_RE.search(text)
+    if name_match:
+        return None, name_match.group(1).strip()
+    stripped = text.strip()
+    if re.fullmatch(r"\d{1,8}", stripped):
+        return int(stripped), None
+    return None, None
 
 
 def _clean_name_candidate(raw: str) -> str:
@@ -639,6 +665,85 @@ def is_hr_request_query(message: str, intent: Intent) -> bool:
     if any(phrase in blob for phrase in ("requests for", "request for", "employee request")):
         return True
     return False
+
+
+def is_hr_request_detail_query(message: str, context: ContextStack | None = None) -> bool:
+    """True when the user asks for validation, approval chain, or leave dates on a request."""
+    blob = f"{message}".lower()
+    pending = get_pending_hr_context(context)
+    detail_tokens = (
+        "validation",
+        "approval",
+        "approver",
+        "approval chain",
+        "leave date",
+        "leave dates",
+        "leave duration",
+        "leave period",
+        "request detail",
+        "request details",
+        "status of request",
+        "who approved",
+        "pending approval",
+        "validation status",
+    )
+    request_id, request_name = extract_request_reference(message)
+    if request_id is not None or request_name:
+        return True
+    if any(token in blob for token in detail_tokens):
+        return "request" in blob or pending.get("domain") == "hr"
+    if pending.get("domain") == "hr" and re.fullmatch(r"\d{1,8}", (message or "").strip()):
+        return True
+    return False
+
+
+def compose_hr_request_detail_plan(
+    message: str,
+    intent: Intent,
+    context: ContextStack | None = None,
+) -> HRPayrollQueryPlan | None:
+    """Build get_employee_request_detail plan for drill-down on one request."""
+    if not is_hr_request_detail_query(message, context):
+        return None
+
+    pending = merge_pending_hr_context(context, message)
+    resolved = pending.get("resolved") or {}
+    request_id, request_name = extract_request_reference(message)
+    if request_id is None and not request_name:
+        recent_ids = resolved.get("recent_request_ids") or []
+        if recent_ids:
+            request_id = int(recent_ids[0])
+
+    tool_input: dict[str, Any] = {}
+    if request_id is not None:
+        tool_input["request_id"] = int(request_id)
+    if request_name:
+        tool_input["request_name"] = request_name
+    file_id = extract_inline_file_id(message) or resolved.get("employee_file_id")
+    name_hint = extract_employee_name(message) or resolved.get("employee_name_hint")
+    if file_id:
+        tool_input["employee_file_id"] = str(file_id)
+    if name_hint:
+        tool_input["employee_name"] = name_hint
+
+    if not tool_input.get("request_id") and not tool_input.get("request_name"):
+        return HRPayrollQueryPlan(
+            domain="hr",
+            subtype="hr_request_detail",
+            tool="get_employee_request_detail",
+            tool_input=tool_input,
+            needs_clarification=["request"],
+            clarification_question="Which request should I open — request ID or reference?",
+        )
+
+    return HRPayrollQueryPlan(
+        domain="hr",
+        subtype="hr_request_detail",
+        tool="get_employee_request_detail",
+        tool_input=tool_input,
+        employee_file_id=str(file_id) if file_id else None,
+        employee_name_hint=name_hint,
+    )
 
 
 def compose_payroll_plan(

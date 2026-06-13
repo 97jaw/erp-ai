@@ -90,9 +90,17 @@ class ResultSynthesizer:
         if payslip_detail is not None:
             return payslip_detail
 
+        hr_request_detail = self._find_hr_request_detail_payload(execution_result.results, intent)
+        if hr_request_detail is not None:
+            return hr_request_detail
+
         hr_requests = self._find_hr_requests_payload(execution_result.results, intent)
         if hr_requests is not None:
             return hr_requests
+
+        fleet_payload = self._find_fleet_payload(execution_result.results, intent)
+        if fleet_payload is not None:
+            return fleet_payload
 
         entity_candidates = self._find_entity_candidates(execution_result.results, intent)
         if entity_candidates is not None:
@@ -478,11 +486,130 @@ class ResultSynthesizer:
                 status = row.get("status") or ("Approved" if row.get("is_approve") else "Pending")
                 created = str(row.get("create_date") or "")[:10]
                 title = row.get("name") or req_type
-                lines.append(f"- {title} ({req_type}, {status}, {created})")
+                leave_suffix = ""
+                if row.get("leave_period"):
+                    leave_suffix = f", leave {row['leave_period']}"
+                elif row.get("date_from") and row.get("date_to"):
+                    leave_suffix = f", leave {row['date_from']} to {row['date_to']}"
+                req_id = row.get("id")
+                id_suffix = f" [ID {req_id}]" if req_id else ""
+                lines.append(f"- {title}{id_suffix} ({req_type}, {status}, {created}{leave_suffix})")
             header = f"Found {len(requests)} HR request(s)"
             if employee_name:
                 header += f" for **{employee_name}**"
             extra = f"\n…and {len(requests) - 10} more." if len(requests) > 10 else ""
+            return SynthesizedResult(text=f"{header}.\n" + "\n".join(lines) + extra)
+        return None
+
+    @staticmethod
+    def _find_hr_request_detail_payload(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if payload.get("_source") != "get_employee_request_detail":
+                continue
+            ambiguous = payload.get("ambiguous_employees") or []
+            if ambiguous:
+                names = ", ".join(
+                    f"{row.get('name')} (File ID {row.get('emp_id')})"
+                    for row in ambiguous[:5]
+                    if isinstance(row, dict)
+                )
+                return SynthesizedResult(
+                    text=(
+                        f"Multiple employees match **{payload.get('employee_name') or 'that name'}**. "
+                        f"Which one: {names}?"
+                    ),
+                )
+            request = payload.get("request")
+            if not request:
+                return SynthesizedResult(text=str(payload.get("note") or "No HR request found."))
+            sections: list[str] = []
+            title = request.get("name") or "HR request"
+            req_type = request.get("request_type") or "Request"
+            status = request.get("status") or ("Approved" if request.get("is_approve") else "Pending")
+            sections.append(f"**{title}** — {req_type}, status: {status}")
+            if request.get("employee_name"):
+                sections.append(f"Employee: **{request['employee_name']}**")
+            if request.get("leave_period"):
+                sections.append(f"Leave period: {request['leave_period']}")
+            elif request.get("date_from") and request.get("date_to"):
+                sections.append(f"Leave period: {request['date_from']} to {request['date_to']}")
+            days = request.get("leave_days") or request.get("number_of_days")
+            if days not in (None, "", False):
+                sections.append(f"Duration: {days} day(s)")
+            validation = payload.get("validation_chain") or []
+            if validation:
+                sections.append("**Approval chain**")
+                for step in validation[:10]:
+                    approver = step.get("approver") or "—"
+                    step_status = step.get("status") or "—"
+                    step_date = str(step.get("date") or "")[:10]
+                    label = step.get("name") or "Step"
+                    date_suffix = f" on {step_date}" if step_date else ""
+                    sections.append(f"- {label}: {step_status} — {approver}{date_suffix}")
+            else:
+                sections.append("No validation steps recorded yet.")
+            return SynthesizedResult(text="\n".join(sections))
+        return None
+
+    @staticmethod
+    def _find_fleet_payload(
+        results: dict[int, Any],
+        intent: Intent,
+    ) -> SynthesizedResult | None:
+        for step_number in sorted(results.keys()):
+            payload = results[step_number]
+            if not isinstance(payload, dict) or payload.get("error"):
+                continue
+            if payload.get("_source") != "search_fleet_vehicles":
+                continue
+            ambiguous = payload.get("ambiguous_employees") or []
+            if ambiguous:
+                names = ", ".join(
+                    f"{row.get('name')} (File ID {row.get('emp_id')})"
+                    for row in ambiguous[:5]
+                    if isinstance(row, dict)
+                )
+                return SynthesizedResult(
+                    text=(
+                        f"Multiple employees match **{payload.get('employee_name') or 'that name'}**. "
+                        f"Which one: {names}?"
+                    ),
+                )
+            vehicles = payload.get("vehicles") or []
+            if not vehicles:
+                return SynthesizedResult(text=str(payload.get("note") or "No fleet vehicles found."))
+            lines: list[str] = []
+            for row in vehicles[:10]:
+                if not isinstance(row, dict):
+                    continue
+                title = row.get("name") or row.get("license_plate") or "Vehicle"
+                plate = row.get("license_plate")
+                plate_suffix = f" ({plate})" if plate else ""
+                driver = row.get("driver_name") or row.get("employee_name") or "—"
+                file_id = row.get("file_id")
+                mobile = row.get("mobile")
+                project = row.get("project_name")
+                location = row.get("location")
+                detail_parts = [f"driver **{driver}**"]
+                if file_id:
+                    detail_parts.append(f"File ID **{file_id}**")
+                if mobile:
+                    detail_parts.append(f"mobile {mobile}")
+                if project:
+                    detail_parts.append(f"project **{project}**")
+                if location:
+                    detail_parts.append(f"location {location}")
+                lines.append(f"- {title}{plate_suffix}: {', '.join(detail_parts)}")
+            header = f"Found {len(vehicles)} vehicle(s)"
+            if payload.get("employee_name"):
+                header += f" for **{payload['employee_name']}**"
+            extra = f"\n…and {len(vehicles) - 10} more." if len(vehicles) > 10 else ""
             return SynthesizedResult(text=f"{header}.\n" + "\n".join(lines) + extra)
         return None
 
