@@ -296,6 +296,43 @@ class IntelligentQueryHandler:
                     intent=intent,
                 )
 
+            # ----------------------------------------------------------------
+            # NATURAL QUERY FAST LANE
+            # When the intent classifier signals uncertainty (subject_area='other'
+            # or ambiguous cross-entity queries), bypass the rigid pipeline and
+            # let Claude reason directly with all tools.
+            # ----------------------------------------------------------------
+            from gateway.core.natural_query_lane import NaturalQueryLane, should_use_fast_lane
+
+            if should_use_fast_lane(intent, message):
+                logger.info(
+                    "[FastLane] Triggering for query=%r intent.subject=%s intent.action=%s",
+                    message,
+                    intent.subject_area,
+                    intent.primary_action,
+                )
+                lane = NaturalQueryLane(
+                    adapter=adapter,
+                    session_id=resolved_session,
+                    user=user,
+                )
+                fast_result = await lane.handle(
+                    message=message,
+                    context=context,
+                    language=language,
+                )
+                return self._finalize_fast_lane_response(
+                    text=fast_result["text"],
+                    tools_called=fast_result["tools_called"],
+                    context=context,
+                    telemetry=telemetry,
+                    resolved_session=resolved_session,
+                    language=language,
+                    started=started,
+                    intent=intent,
+                )
+            # ----------------------------------------------------------------
+
             from gateway.core.project_expense_routing import (
                 apply_active_follow_up_context,
                 is_followup_to_active,
@@ -1840,6 +1877,48 @@ class IntelligentQueryHandler:
             total_duration_ms=duration_ms,
             cache_hit=True,
             proactive_cache_keys=response.proactive_cache_keys,
+        )
+        return response
+
+    def _finalize_fast_lane_response(
+        self,
+        *,
+        text: str,
+        tools_called: list[str],
+        context: ContextStack,
+        telemetry: InteractionTelemetry,
+        resolved_session: str,
+        language: str,
+        started: float,
+        intent: Intent,
+    ) -> IntelligentQueryResponse:
+        """Build IntelligentQueryResponse from a fast-lane result."""
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "[FastLane] Done query duration_ms=%d tools=%s",
+            duration_ms,
+            tools_called,
+        )
+        response = IntelligentQueryResponse(
+            session_id=resolved_session,
+            text=text,
+            language=language,
+            visualization=None,
+            orchestration_log=[],
+            execution_duration_ms=duration_ms,
+            orchestration_duration_ms=0,
+            strategy_step_count=len(tools_called),
+            tools_called=tools_called,
+            execution_result=None,
+            suggestions=[],
+            interaction_id=telemetry.interaction_id,
+        )
+        telemetry.finalize_response(
+            response_text=response.text,
+            visualization=None,
+            suggestions=[],
+            total_duration_ms=duration_ms,
+            intent=intent,
         )
         return response
 
