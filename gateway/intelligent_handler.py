@@ -302,9 +302,13 @@ class IntelligentQueryHandler:
             # or ambiguous cross-entity queries), bypass the rigid pipeline and
             # let Claude reason directly with all tools.
             # ----------------------------------------------------------------
-            from gateway.core.natural_query_lane import NaturalQueryLane, should_use_fast_lane
+            from gateway.core.natural_query_lane import (
+                NaturalQueryLane,
+                persist_fast_lane_state,
+                should_use_fast_lane,
+            )
 
-            if should_use_fast_lane(intent, message):
+            if should_use_fast_lane(intent, message, context):
                 logger.info(
                     "[FastLane] Triggering for query=%r intent.subject=%s intent.action=%s",
                     message,
@@ -320,6 +324,15 @@ class IntelligentQueryHandler:
                     message=message,
                     context=context,
                     language=language,
+                )
+                # Persist fast-lane state so disambiguation follow-ups also
+                # route here instead of hitting the entity gate.
+                persist_fast_lane_state(
+                    resolved_session,
+                    context,
+                    original_query=fast_result["original_query"],
+                    last_response=fast_result["text"],
+                    awaiting_clarification=fast_result["awaiting_clarification"],
                 )
                 return self._finalize_fast_lane_response(
                     text=fast_result["text"],
