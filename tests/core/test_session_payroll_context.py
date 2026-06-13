@@ -68,7 +68,7 @@ def test_explicit_non_payroll_overrides_active_payroll_context() -> None:
     assert resolve_payroll_tool(message, intent, ctx) is None
 
 
-def test_file_id_follow_up_routes_to_get_employee_payslips() -> None:
+def test_file_id_follow_up_routes_to_get_payslip_detail() -> None:
     ctx = _payroll_session_context()
     message = "2721"
     intent = _intent(specific_intent=message)
@@ -78,10 +78,11 @@ def test_file_id_follow_up_routes_to_get_employee_payslips() -> None:
     routed = resolve_payroll_tool(message, intent, ctx)
     assert routed is not None
     tool, payload = routed
-    assert tool == "get_employee_payslips"
+    assert tool == "get_payslip_detail"
     assert payload["employee_file_id"] == "2721"
     assert payload.get("date_from") == "2026-05-01"
     assert payload.get("date_to") == "2026-05-31"
+    assert payload.get("detail_type") == "header"
 
 
 def test_repeat_payslip_query_uses_jawad_filter() -> None:
@@ -91,11 +92,10 @@ def test_repeat_payslip_query_uses_jawad_filter() -> None:
     routed = resolve_payroll_tool(message, intent, ctx)
     assert routed is not None
     tool, payload = routed
-    assert tool == "query_odoo"
-    assert payload["model"] == "hr.payslip"
-    domain_text = str(payload["domain"])
-    assert "jawad" in domain_text.lower()
-    assert "need" not in domain_text.lower()
+    assert tool == "get_payslip_detail"
+    assert payload.get("employee_name", "").lower().startswith("jawad")
+    assert "need" not in payload.get("employee_name", "").lower()
+    assert payload.get("detail_type") == "header"
 
 
 def test_topic_shift_detects_payroll_to_project_expense() -> None:
@@ -116,6 +116,7 @@ def test_topic_shift_detects_payroll_to_project_expense() -> None:
 
 
 def test_infer_turn_domain_from_payslip_tool() -> None:
+    assert infer_turn_domain(["get_payslip_detail"], []) == "payroll"
     assert infer_turn_domain(["get_employee_payslips"], []) == "payroll"
     assert infer_turn_domain(
         ["query_odoo"],

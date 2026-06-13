@@ -85,10 +85,18 @@ def infer_turn_domain(
             return "payroll"
         if model.startswith("hr."):
             return "hr"
-        if result.get("payslips") is not None or result.get("_source") == "employee_payslips":
+        if result.get("payslips") is not None or result.get("_source") in {
+            "employee_payslips",
+            "get_payslip_detail",
+        }:
             return "payroll"
     for tool_name in reversed(tool_names or []):
-        if tool_name in {"get_employee_payslips", "get_my_payslips", "list_recent_payslips"}:
+        if tool_name in {
+            "get_employee_payslips",
+            "get_my_payslips",
+            "list_recent_payslips",
+            "get_payslip_detail",
+        }:
             return "payroll"
         if tool_name in {
             "get_project_expenses",

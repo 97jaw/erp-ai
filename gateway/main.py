@@ -1217,8 +1217,17 @@ TOOLS = [
                 "employee_name": {"type": "string", "description": "Employee name when file ID unknown."},
                 "detail_type": {
                     "type": "string",
-                    "enum": ["lines", "distribution"],
-                    "description": "lines = salary calculation; distribution = project allocation.",
+                    "enum": ["header", "lines", "full", "worked_days", "distribution"],
+                    "description": (
+                        "header = net/deductions summary; full = lines + worked days + OT; "
+                        "lines = filtered salary lines; worked_days = attendance/OT inputs; "
+                        "distribution = project allocation."
+                    ),
+                },
+                "line_filter": {
+                    "type": "string",
+                    "enum": ["basic", "deductions", "overtime"],
+                    "description": "Optional filter when detail_type is lines.",
                 },
                 "date_from": {"type": "string"},
                 "date_to": {"type": "string"},
@@ -1610,6 +1619,7 @@ def execute_tool(
                         employee_file_id=tool_input.get("employee_file_id"),
                         employee_name=tool_input.get("employee_name"),
                         detail_type=tool_input.get("detail_type", "lines"),
+                        line_filter=tool_input.get("line_filter"),
                         date_from=tool_input.get("date_from"),
                         date_to=tool_input.get("date_to"),
                         limit=tool_input.get("limit", 50),

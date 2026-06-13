@@ -539,6 +539,7 @@ def _resolve_payslip_for_employee(
         "advance",
         "total_deductions",
         "net_salary",
+        "total_salary",
         "labor_snapshot_total_salary",
         "staff_snapshot_total_salary",
         "weekend_ot_hours",
@@ -565,6 +566,143 @@ def _resolve_payslip_for_employee(
     return rows[0] if rows else None
 
 
+def _category_label(row: dict[str, Any]) -> str:
+    category = row.get("category_id")
+    if isinstance(category, (list, tuple)) and len(category) > 1:
+        return str(category[1])
+    return str(category or "")
+
+
+def _build_payroll_summary(payslip: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "fine": payslip.get("fine"),
+        "advance": payslip.get("advance"),
+        "total_deductions": payslip.get("total_deductions"),
+        "net_salary": payslip.get("net_salary") or payslip.get("net_wage"),
+        "gross_wage": payslip.get("gross_wage"),
+        "total_salary": payslip.get("total_salary"),
+        "labor_snapshot_total_salary": payslip.get("labor_snapshot_total_salary"),
+        "staff_snapshot_total_salary": payslip.get("staff_snapshot_total_salary"),
+        "normal_ot_hours": payslip.get("normal_ot_hours"),
+        "weekend_ot_hours": payslip.get("weekend_ot_hours"),
+        "holiday_ot_hours": payslip.get("holiday_ot_hours"),
+        "total_over_time": payslip.get("total_over_time"),
+        "sick_leave_full_paid_amount": payslip.get("sick_leave_full_paid_amount"),
+        "sick_leave_half_paid_amount": payslip.get("sick_leave_half_paid_amount"),
+        "sick_leave_unpaid_amount": payslip.get("sick_leave_unpaid_amount"),
+    }
+
+
+def _fetch_payslip_lines(
+    adapter: OdooV14Adapter,
+    payslip_id: int,
+    *,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    line_fields = ["name", "code", "amount", "quantity", "rate", "category_id", "sequence"]
+    available_lines = adapter._get_model_fields("hr.payslip.line") or {}
+    line_fields = [
+        field
+        for field in line_fields
+        if field in available_lines or field in ("name", "code", "amount", "category_id")
+    ]
+    order = "sequence asc, id asc" if "sequence" in available_lines else "id asc"
+    try:
+        return adapter.search_read(
+            model="hr.payslip.line",
+            domain=[["slip_id", "=", payslip_id]],
+            fields=line_fields,
+            limit=limit,
+            order=order,
+        )
+    except Exception as exc:
+        logger.warning("[HR] payslip lines fetch failed: %s", exc)
+        return []
+
+
+def _fetch_worked_days(
+    adapter: OdooV14Adapter,
+    payslip_id: int,
+    *,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    meta = adapter._get_model_fields("hr.payslip.worked_days") or {}
+    if not meta:
+        return []
+    link_field = "payslip_id" if "payslip_id" in meta else "slip_id" if "slip_id" in meta else None
+    if not link_field:
+        return []
+    fields = [
+        field
+        for field in ("name", "code", "number_of_days", "number_of_hours", "amount", "contract_id")
+        if field in meta
+    ]
+    try:
+        return adapter.search_read(
+            model="hr.payslip.worked_days",
+            domain=[[link_field, "=", payslip_id]],
+            fields=fields,
+            limit=limit,
+            order="id asc",
+        )
+    except Exception as exc:
+        logger.warning("[HR] payslip worked days fetch failed: %s", exc)
+        return []
+
+
+def _filter_payslip_lines(
+    lines: list[dict[str, Any]],
+    line_filter: str | None,
+) -> list[dict[str, Any]]:
+    if not line_filter:
+        return lines
+    filtered: list[dict[str, Any]] = []
+    for row in lines:
+        code = str(row.get("code") or "").upper()
+        name = str(row.get("name") or "").lower()
+        category = _category_label(row).lower()
+        amount = row.get("amount")
+        if line_filter == "basic":
+            if "basic" in name or code == "BASIC" or "basic" in category:
+                filtered.append(row)
+        elif line_filter == "deductions":
+            if any(token in category for token in ("deduct", "late", "fine")):
+                filtered.append(row)
+            elif any(token in name for token in ("deduction", "fine", "advance", "late", "early")):
+                filtered.append(row)
+            elif isinstance(amount, (int, float)) and float(amount) < 0:
+                filtered.append(row)
+        elif line_filter == "overtime":
+            if any(token in code for token in ("OT", "NOT", "WOT", "HOT", "OVERTIME")):
+                filtered.append(row)
+            elif "overtime" in name or "over time" in name:
+                filtered.append(row)
+            elif "overtime" in category or "allowance" in category and "ot" in name:
+                filtered.append(row)
+    return filtered
+
+
+def _present_worked_day(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": row.get("name"),
+        "code": row.get("code"),
+        "number_of_days": row.get("number_of_days"),
+        "number_of_hours": row.get("number_of_hours"),
+        "amount": row.get("amount"),
+    }
+
+
+def _present_payslip_line(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": row.get("name"),
+        "code": row.get("code"),
+        "amount": row.get("amount"),
+        "quantity": row.get("quantity"),
+        "rate": row.get("rate"),
+        "category": _category_label(row),
+    }
+
+
 async def get_payslip_detail(
     adapter: OdooV14Adapter,
     user: CurrentUser,
@@ -572,11 +710,12 @@ async def get_payslip_detail(
     employee_file_id: str | None = None,
     employee_name: str | None = None,
     detail_type: str = "lines",
+    line_filter: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
     limit: int = 50,
 ) -> dict[str, Any]:
-    """Return payslip salary lines or project cost allocation for one employee."""
+    """Return payslip header, salary lines, worked days, or project allocation."""
     employee: dict[str, Any] | None = None
     employee_id: int | None = None
     resolved_file_id = normalize_employee_file_id(employee_file_id) if employee_file_id else None
@@ -641,15 +780,7 @@ async def get_payslip_detail(
     payslip_id = int(payslip["id"])
     employee_label = (employee or {}).get("name") or employee_name
     header = _present_payslip(payslip)
-    deductions_summary = {
-        "fine": payslip.get("fine"),
-        "advance": payslip.get("advance"),
-        "total_deductions": payslip.get("total_deductions"),
-        "net_salary": payslip.get("net_salary") or payslip.get("net_wage"),
-        "gross_wage": payslip.get("gross_wage"),
-        "labor_snapshot_total_salary": payslip.get("labor_snapshot_total_salary"),
-        "staff_snapshot_total_salary": payslip.get("staff_snapshot_total_salary"),
-    }
+    payroll_summary = _build_payroll_summary(payslip)
 
     if detail_type == "header":
         return {
@@ -658,7 +789,8 @@ async def get_payslip_detail(
             "count": 1,
             "employee_name": employee_label,
             "employee_file_id": resolved_file_id,
-            "deductions_summary": deductions_summary,
+            "deductions_summary": payroll_summary,
+            "payroll_summary": payroll_summary,
             "_source": "get_payslip_detail",
         }
 
@@ -714,36 +846,39 @@ async def get_payslip_detail(
             "_source": "get_payslip_detail",
         }
 
-    line_fields = ["name", "code", "amount", "quantity", "rate", "category_id"]
-    available_lines = adapter._get_model_fields("hr.payslip.line") or {}
-    line_fields = [field for field in line_fields if field in available_lines or field in ("name", "code", "amount")]
-    try:
-        lines = adapter.search_read(
-            model="hr.payslip.line",
-            domain=[["slip_id", "=", payslip_id]],
-            fields=line_fields,
-            limit=limit,
-            order="sequence asc, id asc",
-        )
-    except Exception as exc:
+    if detail_type == "worked_days":
+        worked_days_raw = _fetch_worked_days(adapter, payslip_id, limit=limit)
+        worked_days = [_present_worked_day(row) for row in worked_days_raw]
         return {
             "detail_type": detail_type,
             "payslip": header,
-            "lines": [],
-            "count": 0,
+            "worked_days": worked_days,
+            "count": len(worked_days),
             "employee_name": employee_label,
-            "note": f"Could not load payslip lines: {exc}",
+            "employee_file_id": resolved_file_id,
+            "payroll_summary": payroll_summary,
+            "deductions_summary": payroll_summary,
             "_source": "get_payslip_detail",
         }
+
+    line_limit = 100 if detail_type == "full" else limit
+    raw_lines = _fetch_payslip_lines(adapter, payslip_id, limit=line_limit)
+    filtered_lines = _filter_payslip_lines(raw_lines, line_filter)
+    lines = [_present_payslip_line(row) for row in filtered_lines]
+    worked_days_raw = _fetch_worked_days(adapter, payslip_id, limit=limit) if detail_type == "full" else []
+    worked_days = [_present_worked_day(row) for row in worked_days_raw]
 
     return {
         "detail_type": detail_type,
         "payslip": header,
         "lines": lines,
+        "worked_days": worked_days,
         "count": len(lines),
+        "line_filter": line_filter,
         "employee_name": employee_label,
         "employee_file_id": resolved_file_id,
-        "deductions_summary": deductions_summary,
+        "deductions_summary": payroll_summary,
+        "payroll_summary": payroll_summary,
         "_source": "get_payslip_detail",
     }
 

@@ -463,6 +463,19 @@ def classify_payroll_subtype(message: str) -> str:
     blob = normalize_month_typos(message).lower()
     if "payslip" in blob and "distribution" in blob:
         return "payslip_distribution"
+    if any(token in blob for token in ("worked days", "worked_days", "worked day", "job mission")):
+        return "payslip_worked_days"
+    if "basic" in blob and any(token in blob for token in ("salary", "payslip", "slip", "payroll")):
+        return "payslip_lines_basic"
+    if any(token in blob for token in ("deduction", "deductions", "fine", "advance", "late")):
+        if any(token in blob for token in ("payslip", "salary", "payroll", "slip", "breakdown")):
+            return "payslip_lines_deductions"
+    if any(
+        token in blob
+        for token in ("overtime", "over time", " ot ", "overtime breakdown", "wot", "normal ot")
+    ):
+        if any(token in blob for token in ("payslip", "salary", "payroll", "slip", "breakdown")):
+            return "payslip_lines_overtime"
     if any(
         token in blob
         for token in (
@@ -470,26 +483,97 @@ def classify_payroll_subtype(message: str) -> str:
             "salary breakdown",
             "payslip line",
             "payslip lines",
-            "deduction",
-            "deductions",
             "overtime breakdown",
-            "net salary",
             "gross salary",
             "breakdown",
+            "computation",
         )
     ):
-        return "payslip_lines"
+        return "payslip_full"
+    if any(
+        token in blob
+        for token in (
+            "deduction",
+            "deductions",
+            "net salary",
+        )
+    ):
+        return "payslip_full"
     if "calculation" in blob or "computation" in blob:
         if any(
             token in blob
             for token in ("salary", "payroll", "payslip", "slip", "file id", "emp_id", "emp id")
         ) or extract_inline_file_id(message):
-            return "payslip_lines"
+            return "payslip_full"
         if re.search(r"\b(?:s)?alary\b", blob):
-            return "payslip_lines"
-    if any(token in blob for token in ("worked days", "worked_days", "job mission")):
-        return "payslip_worked_days"
+            return "payslip_full"
     return "payslip_header"
+
+
+def classify_payslip_line_filter(message: str) -> str | None:
+    """Detect payslip line sub-filter from drill-down phrasing."""
+    blob = normalize_month_typos(message).lower()
+    if "basic" in blob and any(token in blob for token in ("salary", "payslip", "slip", "payroll")):
+        return "basic"
+    if any(token in blob for token in ("deduction", "deductions", "fine", "advance", "late")):
+        return "deductions"
+    if any(token in blob for token in ("overtime", "over time", " ot ", "wot", "normal ot", "weekend ot")):
+        return "overtime"
+    return None
+
+
+def is_payslip_drill_down_query(message: str, context: ContextStack | None) -> bool:
+    """True when a payslip session follow-up asks for lines, OT, deductions, etc."""
+    pending = get_pending_hr_context(context)
+    if pending.get("domain") != "payroll":
+        return False
+    blob = normalize_month_typos(message).lower()
+    if classify_payslip_line_filter(message):
+        return True
+    if classify_payroll_subtype(message) != "payslip_header":
+        return True
+    drill_tokens = (
+        "breakdown",
+        "line",
+        "lines",
+        "allowance",
+        "worked",
+        "attendance",
+        "computation",
+        "calculation",
+    )
+    return any(token in blob for token in drill_tokens)
+
+
+def map_subtype_to_detail_tool_input(subtype: str) -> dict[str, str]:
+    """Map composer subtype to get_payslip_detail parameters."""
+    if subtype == "payslip_header":
+        return {"detail_type": "header"}
+    if subtype == "payslip_distribution":
+        return {"detail_type": "distribution"}
+    if subtype == "payslip_worked_days":
+        return {"detail_type": "worked_days"}
+    if subtype == "payslip_lines_basic":
+        return {"detail_type": "lines", "line_filter": "basic"}
+    if subtype == "payslip_lines_deductions":
+        return {"detail_type": "lines", "line_filter": "deductions"}
+    if subtype == "payslip_lines_overtime":
+        return {"detail_type": "lines", "line_filter": "overtime"}
+    return {"detail_type": "full"}
+
+
+_PAYSLIP_DETAIL_SUBTYPES = frozenset(
+    {
+        "payslip_header",
+        "payslip_lines",
+        "payslip_full",
+        "payslip_distribution",
+        "payslip_worked_days",
+        "payslip_lines_basic",
+        "payslip_lines_deductions",
+        "payslip_lines_overtime",
+    }
+)
 
 
 def resolve_payroll_subtype(
@@ -500,6 +584,13 @@ def resolve_payroll_subtype(
     pending = merge_pending_hr_context(context, message) if context else {}
     pending_ctx = get_pending_hr_context(context)
     stored = pending.get("subtype") or pending_ctx.get("subtype")
+    line_filter = classify_payslip_line_filter(message)
+    if line_filter == "basic":
+        return "payslip_lines_basic"
+    if line_filter == "deductions":
+        return "payslip_lines_deductions"
+    if line_filter == "overtime":
+        return "payslip_lines_overtime"
     from_message = classify_payroll_subtype(message)
     if from_message != "payslip_header":
         return from_message
@@ -561,7 +652,7 @@ def compose_payroll_plan(
     pending_ctx = get_pending_hr_context(context)
     payroll_follow_up = pending_ctx.get("domain") == "payroll" or pending.get("domain") == "payroll"
 
-    if not payroll_follow_up and not any(
+    if not payroll_follow_up and not is_payslip_drill_down_query(message, context) and not any(
         token in blob
         for token in (
             "payslip",
@@ -573,6 +664,10 @@ def compose_payroll_plan(
             "payroll",
             "calculation",
             "breakdown",
+            "overtime",
+            "worked day",
+            "worked days",
+            "basic salary",
         )
     ) and not (
         "calculation" in blob and (extract_inline_file_id(message) or "file id" in blob)
@@ -585,6 +680,11 @@ def compose_payroll_plan(
     file_id = extract_inline_file_id(message) or resolved.get("employee_file_id")
     name_hint = extract_employee_name(message) or resolved.get("employee_name_hint")
     period = parse_period_window(message, context)
+    if payroll_follow_up or is_payslip_drill_down_query(message, context):
+        if not file_id:
+            file_id = resolved.get("employee_file_id")
+        if not name_hint:
+            name_hint = resolved.get("employee_name_hint")
 
     tool_input: dict[str, Any] = {}
     if file_id:
@@ -595,8 +695,8 @@ def compose_payroll_plan(
         tool_input["date_from"] = period.date_from
         tool_input["date_to"] = period.date_to
 
-    if subtype in {"payslip_lines", "payslip_distribution"}:
-        tool_input["detail_type"] = "lines" if subtype == "payslip_lines" else "distribution"
+    if subtype in _PAYSLIP_DETAIL_SUBTYPES or is_payslip_drill_down_query(message, context):
+        tool_input.update(map_subtype_to_detail_tool_input(subtype))
         if not file_id and not name_hint:
             return HRPayrollQueryPlan(
                 domain="payroll",
@@ -614,40 +714,6 @@ def compose_payroll_plan(
             tool="get_payslip_detail",
             tool_input=tool_input,
             employee_file_id=str(file_id) if file_id else None,
-            employee_name_hint=name_hint,
-            period=period,
-        )
-
-    if file_id:
-        header_input: dict[str, Any] = {
-            "employee_file_id": str(file_id),
-            "detail_type": "header",
-        }
-        if period:
-            header_input["date_from"] = period.date_from
-            header_input["date_to"] = period.date_to
-        return HRPayrollQueryPlan(
-            domain="payroll",
-            subtype="payslip_header",
-            tool="get_payslip_detail",
-            tool_input=header_input,
-            employee_file_id=str(file_id),
-            period=period,
-        )
-
-    if name_hint:
-        header_input = {
-            "employee_name": name_hint,
-            "detail_type": "header",
-        }
-        if period:
-            header_input["date_from"] = period.date_from
-            header_input["date_to"] = period.date_to
-        return HRPayrollQueryPlan(
-            domain="payroll",
-            subtype="payslip_header",
-            tool="get_payslip_detail",
-            tool_input=header_input,
             employee_name_hint=name_hint,
             period=period,
         )

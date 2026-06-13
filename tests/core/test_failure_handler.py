@@ -61,16 +61,17 @@ def test_all_failure_modes_render_non_empty_text(mode: FailureMode) -> None:
     assert "}" not in response.text
 
 
-def test_payslip_intent_maps_to_tool_not_available() -> None:
+def test_payslip_intent_maps_to_out_of_scope_when_capability_live() -> None:
+    """Stale LLM out_of_scope for payslips; capability is live so not tool_not_available."""
     failure = HonestFailureResponder.failure_from_intent(
         _payslip_intent(),
         "what is my payslip",
     )
-    assert failure.mode == FailureMode.TOOL_NOT_AVAILABLE
-    assert failure.capability_code == "hr.payslips"
+    assert failure.mode == FailureMode.OUT_OF_SCOPE
+    assert failure.capability_code is None
 
 
-def test_payslip_response_is_honest_and_actionable() -> None:
+def test_payslip_response_is_honest_when_stale_out_of_scope() -> None:
     context = _make_context_stack()
     failure = HonestFailureResponder.failure_from_intent(
         _payslip_intent(),
@@ -79,11 +80,8 @@ def test_payslip_response_is_honest_and_actionable() -> None:
     response = _responder().respond(failure, context)
     lowered = response.text.lower()
 
-    assert "payslip" in lowered or "payroll" in lowered
-    assert "hr.elrace.com" in lowered or "hr portal" in lowered
-    assert "q3 2026" in lowered
+    assert "can't help" in lowered or "outside" in lowered
     assert not contains_fabricated_excuse(response.text)
-    assert response.suggestions
 
 
 def test_out_of_scope_without_capability_code() -> None:

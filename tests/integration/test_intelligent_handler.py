@@ -577,13 +577,30 @@ async def test_general_maintenance_returns_candidates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_payslip_query_honest_unavailable_response() -> None:
+async def test_payslip_query_routes_despite_stale_out_of_scope_intent() -> None:
     intent = Intent(
         primary_action="fetch_data",
         subject_area="hr",
         specific_intent="what is my last payslip",
         out_of_scope=True,
         out_of_scope_reason="hr.payslips is unavailable. Use the HR portal directly at hr.elrace.com",
+    )
+    executor = MockToolExecutor(
+        responses={
+            ("get_payslip_detail",): {
+                "status": "success",
+                "_source": "get_payslip_detail",
+                "payslip": {
+                    "name": "May-2026",
+                    "employee_name": "Muhammad Jawad Ur Rehman",
+                    "net_wage": 10000.0,
+                    "date_from": "2026-05-21",
+                    "date_to": "2026-06-20",
+                },
+                "lines": [],
+                "worked_days": [],
+            },
+        },
     )
     handler = _handler(intent=intent, stack=_stack_for_user(_super_admin()))
     response = await handler.handle(
@@ -592,15 +609,12 @@ async def test_payslip_query_honest_unavailable_response() -> None:
         adapter=object(),
         deep_think=True,
         session_id="sess-payslip",
+        executor=executor,
     )
 
-    assert response.failure_mode == "tool_not_available"
-    lowered = response.text.lower()
-    assert "payslip" in lowered or "payroll" in lowered
-    assert "hr.elrace.com" in lowered or "hr portal" in lowered
-    assert "q3 2026" in lowered
+    assert response.failure_mode is None
+    assert "get_payslip_detail" in (response.tools_called or [])
     assert not contains_fabricated_excuse(response.text)
-    assert response.strategy_step_count == 0
 
 
 @pytest.mark.asyncio

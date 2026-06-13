@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 
 from admin.auth.principal import CurrentUser
 from gateway.hr_identity import resolve_employee_by_file_id
-from gateway.hr_payroll_tools import _and_domain, _present_payslip
+from gateway.hr_payroll_tools import _and_domain, _filter_payslip_lines, _present_payslip
 from gateway.core.hr_payroll_composer import payslip_period_domain_from_dates
 
 
@@ -97,6 +97,16 @@ def test_fetch_recent_payslips_returns_rows():
     out = fetch_recent_payslips(adapter, limit=5)
     assert out["count"] == 1
     assert out["payslips"][0]["employee_name"] == "Jane"
+
+
+def test_filter_payslip_lines_overtime() -> None:
+    lines = [
+        {"name": "Normal Overtime", "code": "NOT", "amount": 100.0, "category_id": [1, "Allowance"]},
+        {"name": "Basic Salary", "code": "BASIC", "amount": 1200.0, "category_id": [2, "Basic"]},
+    ]
+    filtered = _filter_payslip_lines(lines, "overtime")
+    assert len(filtered) == 1
+    assert filtered[0]["code"] == "NOT"
 
 
 def test_and_domain_merges_employee_with_payslip_period() -> None:

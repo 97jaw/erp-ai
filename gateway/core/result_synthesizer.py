@@ -338,39 +338,110 @@ class ResultSynthesizer:
                         + extra
                     ),
                 )
-            lines_payload = payload.get("lines") or []
-            deductions = payload.get("deductions_summary") or {}
+            return SynthesizedResult(
+                text=ResultSynthesizer._format_payslip_detail_text(payload, employee_name, title),
+            )
+        return None
+
+    @staticmethod
+    def _format_payslip_detail_text(
+        payload: dict[str, Any],
+        employee_name: str,
+        title: str,
+    ) -> str:
+        detail_type = str(payload.get("detail_type") or "lines")
+        payroll = payload.get("payroll_summary") or payload.get("deductions_summary") or {}
+        payslip = payload.get("payslip") or {}
+        period = ""
+        if payslip.get("date_from") and payslip.get("date_to"):
+            period = f" ({payslip['date_from']} to {payslip['date_to']})"
+
+        if detail_type == "worked_days":
+            header = f"Worked days for **{employee_name}**{period} — {title}."
+        elif detail_type == "full":
+            header = f"Salary calculation for **{employee_name}**{period} — {title}."
+        else:
+            line_filter = payload.get("line_filter")
+            filter_label = {
+                "basic": "Basic salary lines",
+                "deductions": "Deduction lines",
+                "overtime": "Overtime lines",
+            }.get(str(line_filter or ""), "Salary lines")
+            header = f"{filter_label} for **{employee_name}**{period} — {title}."
+
+        summary_bits: list[str] = []
+        for key, label in (
+            ("net_salary", "Net salary"),
+            ("total_salary", "Total salary"),
+            ("gross_wage", "Gross salary"),
+            ("total_deductions", "Total deductions"),
+            ("total_over_time", "Total overtime"),
+            ("normal_ot_hours", "Normal OT hours"),
+            ("weekend_ot_hours", "Weekend OT hours"),
+            ("fine", "Fine"),
+            ("advance", "Advance"),
+        ):
+            value = payroll.get(key)
+            if value is None:
+                continue
+            if "hour" in key:
+                summary_bits.append(f"{label}: {float(value):,.2f}")
+            else:
+                summary_bits.append(f"{label}: AED {abs(float(value)):,.2f}")
+
+        sections: list[str] = [header]
+        if summary_bits and detail_type in {"full", "header", "worked_days", "lines"}:
+            sections.append(" | ".join(summary_bits[:8]))
+
+        worked_days = payload.get("worked_days") or []
+        if worked_days and detail_type in {"full", "worked_days"}:
+            wd_lines = []
+            for row in worked_days[:12]:
+                if not isinstance(row, dict):
+                    continue
+                name = row.get("name") or row.get("code") or "Worked day"
+                code = row.get("code") or ""
+                days = row.get("number_of_days")
+                hours = row.get("number_of_hours")
+                amount = row.get("amount")
+                bits = []
+                if days is not None:
+                    bits.append(f"{float(days):,.2f} days")
+                if hours is not None:
+                    bits.append(f"{float(hours):,.2f} hrs")
+                if amount is not None:
+                    bits.append(f"AED {float(amount):,.2f}")
+                suffix = f" ({', '.join(bits)})" if bits else ""
+                wd_lines.append(f"- {name} [{code}]{suffix}".strip())
+            if wd_lines:
+                sections.append("**Worked days & inputs**")
+                sections.extend(wd_lines)
+
+        lines_payload = payload.get("lines") or []
+        if lines_payload and detail_type in {"full", "lines"}:
             body_lines = []
-            for row in lines_payload[:12]:
+            for row in lines_payload[:20]:
                 if not isinstance(row, dict):
                     continue
                 code = row.get("code") or ""
                 name = row.get("name") or code or "Line"
+                category = row.get("category")
                 amount = row.get("amount")
+                cat_suffix = f", {category}" if category else ""
                 if amount is not None:
-                    body_lines.append(f"- {name} ({code}): AED {float(amount):,.2f}")
+                    body_lines.append(f"- {name} ({code}{cat_suffix}): AED {float(amount):,.2f}")
                 else:
-                    body_lines.append(f"- {name}")
-            summary_bits = []
-            for key, label in (
-                ("total_deductions", "Total deductions"),
-                ("fine", "Fine"),
-                ("advance", "Advance"),
-                ("net_salary", "Net salary"),
-            ):
-                value = deductions.get(key)
-                if value is not None:
-                    summary_bits.append(f"{label}: AED {abs(float(value)):,.2f}")
-            header = f"Salary calculation for **{employee_name}** — {title}."
-            text = header
-            if summary_bits:
-                text += "\n" + " | ".join(summary_bits)
+                    body_lines.append(f"- {name} ({code}{cat_suffix})")
             if body_lines:
-                text += "\n" + "\n".join(body_lines)
-            elif not summary_bits:
-                text += "\nNo payslip line detail available for that period."
-            return SynthesizedResult(text=text)
-        return None
+                sections.append("**Salary computation**")
+                sections.extend(body_lines)
+            extra = len(lines_payload) - 20
+            if extra > 0:
+                sections.append(f"…and {extra} more line(s).")
+        elif detail_type in {"full", "lines"} and not lines_payload:
+            sections.append("No matching payslip line detail for that filter.")
+
+        return "\n".join(sections)
 
     @staticmethod
     def _find_hr_requests_payload(

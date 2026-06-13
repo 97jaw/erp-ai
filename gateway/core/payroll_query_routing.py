@@ -286,8 +286,12 @@ def is_payroll_orchestration_query(
     ):
         return True
     if context is not None and _active_payroll_context(context):
+        from gateway.core.hr_payroll_composer import is_payslip_drill_down_query
+
         if is_explicit_non_payroll_query(message):
             return False
+        if is_payslip_drill_down_query(message, context):
+            return True
         if extract_employee_file_id(message):
             return True
         if any(token in blob for token in _PAYROLL_SUBJECT_TOKENS):
@@ -485,17 +489,13 @@ def _resolve_payslip_by_file_id(
     ):
         if context is None or not _active_payroll_context(context):
             return None
-    from gateway.core.hr_payroll_composer import resolve_payroll_subtype
+    from gateway.core.hr_payroll_composer import map_subtype_to_detail_tool_input, resolve_payroll_subtype
 
+    subtype = resolve_payroll_subtype(message, context)
     payload: dict[str, Any] = {
         "employee_file_id": file_id,
-        "detail_type": "header",
+        **map_subtype_to_detail_tool_input(subtype),
     }
-    subtype = resolve_payroll_subtype(message, context)
-    if subtype == "payslip_lines":
-        payload["detail_type"] = "lines"
-    elif subtype == "payslip_distribution":
-        payload["detail_type"] = "distribution"
     payload.update(_payslip_period_payload(message, context))
     return "get_payslip_detail", payload
 

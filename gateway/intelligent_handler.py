@@ -406,9 +406,16 @@ class IntelligentQueryHandler:
                 and is_project_profile_query(message, intent)
             )
 
-            # Project profile/record/activity lanes are served by direct ORM reads —
+            # Project profile/record/activity/payroll/HR lanes are served by direct ORM reads —
             # an LLM "out of scope" verdict must not pre-empt them.
-            if intent.out_of_scope and not profile_query and not records_query and not activity_query:
+            if (
+                intent.out_of_scope
+                and not profile_query
+                and not records_query
+                and not activity_query
+                and not payroll_orchestration_query
+                and not hr_orchestration_query
+            ):
                 return self._finalize_failure(
                     failure=self._failure_responder.failure_from_intent(intent, message),
                     context=context,
@@ -852,6 +859,11 @@ class IntelligentQueryHandler:
                 context=context,
                 execution_result=pipeline["execution_result"],
             )
+            self._persist_hr_payroll_scope(
+                context=context,
+                execution_result=pipeline["execution_result"],
+                message=message,
+            )
             strategy_used = pipeline["strategy"]
             quality_review = pipeline["quality_review"]
             retries_needed = pipeline["retries_needed"]
@@ -1289,6 +1301,58 @@ class IntelligentQueryHandler:
                 )
             if step.tool == "get_project_expense_summary":
                 context.working_memory.session_facts["last_expense_summary_project_id"] = pid
+
+    @staticmethod
+    def _persist_hr_payroll_scope(
+        *,
+        context: ContextStack,
+        execution_result: ExecutionResult,
+        message: str,
+    ) -> None:
+        """Keep employee, period, and subtype in session for payslip drill-downs."""
+        from gateway.core.hr_payroll_composer import (
+            classify_payroll_subtype,
+            parse_period_window,
+            resolve_payroll_subtype,
+        )
+
+        for step in execution_result.strategy_used.steps:
+            result = execution_result.results.get(step.step_number)
+            if not isinstance(result, dict) or result.get("_source") != "get_payslip_detail":
+                continue
+            if result.get("note") and not result.get("payslip"):
+                continue
+            pending = dict(context.working_memory.session_facts.get("pending_hr_context") or {})
+            resolved = dict(pending.get("resolved") or {})
+            if result.get("employee_file_id"):
+                resolved["employee_file_id"] = str(result["employee_file_id"])
+            if result.get("employee_name"):
+                resolved["employee_name_hint"] = str(result["employee_name"])
+            period = parse_period_window(message, context)
+            if period:
+                resolved["date_from"] = period.date_from
+                resolved["date_to"] = period.date_to
+                resolved["label"] = period.label
+            elif resolved.get("date_from"):
+                pass
+            payslip = result.get("payslip") or {}
+            if payslip.get("date_from") and payslip.get("date_to") and not resolved.get("date_from"):
+                resolved["date_from"] = str(payslip["date_from"])
+                resolved["date_to"] = str(payslip["date_to"])
+            subtype = resolve_payroll_subtype(message, context)
+            if subtype == "payslip_header":
+                subtype = classify_payroll_subtype(message) or "payslip_header"
+            pending.update(
+                {
+                    "domain": "payroll",
+                    "subtype": subtype,
+                    "prior_query": pending.get("prior_query") or message,
+                    "awaiting": [],
+                    "resolved": resolved,
+                }
+            )
+            context.working_memory.session_facts["pending_hr_context"] = pending
+            return
 
     @staticmethod
     def _normalize_clarify_query(text: str) -> str:

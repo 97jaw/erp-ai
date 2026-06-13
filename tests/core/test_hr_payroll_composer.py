@@ -77,26 +77,44 @@ def test_compose_payroll_salary_calculation_with_file_id() -> None:
     assert routed is not None
     tool, payload = routed
     assert tool == "get_payslip_detail"
-    assert payload["detail_type"] == "lines"
+    assert payload["detail_type"] == "full"
 
 
 def test_classify_payroll_subtype_typo_alary_calculation() -> None:
-    assert classify_payroll_subtype("alary calculation … may 2026 file id 2721") == "payslip_lines"
+    assert classify_payroll_subtype("alary calculation … may 2026 file id 2721") == "payslip_full"
+
+
+def test_classify_payroll_subtype_overtime_lines() -> None:
+    assert classify_payroll_subtype("show overtime breakdown on payslip") == "payslip_lines_overtime"
+
+
+def test_classify_payroll_subtype_worked_days() -> None:
+    assert classify_payroll_subtype("worked days on payslip for jawad") == "payslip_worked_days"
+
+
+def test_map_subtype_to_detail_tool_input() -> None:
+    from gateway.core.hr_payroll_composer import map_subtype_to_detail_tool_input
+
+    assert map_subtype_to_detail_tool_input("payslip_full") == {"detail_type": "full"}
+    assert map_subtype_to_detail_tool_input("payslip_lines_overtime") == {
+        "detail_type": "lines",
+        "line_filter": "overtime",
+    }
 
 
 def test_resolve_payroll_subtype_inherits_prior_salary_calculation() -> None:
     ctx = _make_context_stack()
     ctx.working_memory.session_facts["pending_hr_context"] = {
         "domain": "payroll",
-        "subtype": "payslip_lines",
+        "subtype": "payslip_full",
         "prior_query": "salary calculation may 2026 file id 2721",
         "awaiting": [],
         "resolved": {"date_from": "2026-05-01", "date_to": "2026-05-31"},
     }
-    assert resolve_payroll_subtype("2721", ctx) == "payslip_lines"
+    assert resolve_payroll_subtype("2721", ctx) == "payslip_full"
     plan = compose_payroll_plan("2721", _intent(subject_area="payroll"), ctx)
     assert plan is not None
-    assert plan.tool_input.get("detail_type") == "lines"
+    assert plan.tool_input.get("detail_type") == "full"
 
 
 def test_compose_payroll_salary_calculation_typo_routes_lines() -> None:
@@ -107,7 +125,26 @@ def test_compose_payroll_salary_calculation_typo_routes_lines() -> None:
     )
     assert plan is not None
     assert plan.tool == "get_payslip_detail"
-    assert plan.tool_input.get("detail_type") == "lines"
+    assert plan.tool_input.get("detail_type") == "full"
+
+
+def test_compose_payroll_drill_down_overtime_follow_up() -> None:
+    ctx = _make_context_stack()
+    ctx.working_memory.session_facts["pending_hr_context"] = {
+        "domain": "payroll",
+        "subtype": "payslip_header",
+        "prior_query": "need payslip for jawad may 2026",
+        "resolved": {
+            "employee_file_id": "2721",
+            "employee_name_hint": "jawad ur rehman",
+            "date_from": "2026-05-01",
+            "date_to": "2026-05-31",
+        },
+    }
+    plan = compose_payroll_plan("show overtime on that payslip", _intent(subject_area="payroll"), ctx)
+    assert plan is not None
+    assert plan.tool_input.get("line_filter") == "overtime"
+    assert plan.tool_input.get("employee_file_id") == "2721"
 
 
 def test_build_payslip_period_domain_may_2026() -> None:

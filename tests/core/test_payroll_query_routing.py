@@ -138,10 +138,10 @@ def test_need_payslip_for_jawad_uses_jawad_not_need() -> None:
     hint = _employee_name_hint(message)
     assert hint.lower().startswith("jawad")
     tool, payload = resolve_payroll_tool(message, intent, ctx)
-    assert tool == "query_odoo"
-    domain_text = str(payload["domain"])
-    assert "jawad" in domain_text.lower()
-    assert "need" not in domain_text.lower()
+    assert tool == "get_payslip_detail"
+    assert payload.get("employee_name", "").lower().startswith("jawad")
+    assert "need" not in payload.get("employee_name", "").lower()
+    assert payload.get("detail_type") == "header"
 
 
 def test_payroll_follow_up_after_prior_payslip_turn() -> None:
