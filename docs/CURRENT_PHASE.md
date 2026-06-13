@@ -8,18 +8,19 @@
 
 **File:** HR + Payroll Rollout — Phase M6 (Payroll module certification)
 
-**Status:** HR/Payroll Intelligence Layer v2 — composer + dedicated tools implemented locally
+**Status:** Sprint B deployed to EC2 (`ac66bda0`) — full payslip detail + drill-down routing live
 
 | Piece | Description | Code | Tests |
 |-------|-------------|------|-------|
-| HR/Payroll composer | Shared slot filling: employee, period, request type, payroll subtypes | ✅ | ✅ 12 composer tests |
-| Dedicated tools | `get_payslip_detail`, `list_employee_requests` | ✅ | ✅ routing integration |
-| Termination routing | `employee.request` count — not active headcount | ✅ | ✅ |
-| Session context | `pending_hr_context`, filler strip, inline file ID | ✅ | ✅ |
+| HR/Payroll composer | Shared slot filling: employee, period, request type, payroll subtypes | ✅ | ✅ |
+| Dedicated tools | `get_payslip_detail` (full/lines/worked_days/distribution + line filters), `list_employee_requests` | ✅ | ✅ |
+| Payslip drill-down | Session inherits employee/period; overtime/deductions/worked-days follow-ups | ✅ | ✅ |
+| Termination routing | `employee.requests` count — not active headcount | ✅ | ✅ |
+| Session context | `pending_hr_context`, filler strip, inline file ID, stale out_of_scope bypass | ✅ | ✅ |
 
-**Key models covered:** `hr.payslip`, `hr.payslip.line`, `hr.payslip.cost.allocation`, `hr.payslip.worked_days`, `employee.request`, `hr.employee`, `hr.attendance`, separation counts.
+**Key models covered:** `hr.payslip`, `hr.payslip.line`, `hr.payslip.cost.allocation`, `hr.payslip.worked_days`, `employee.requests`, `hr.employee`, `hr.attendance`, separation counts.
 
-**Next:** Deploy + EC2 smoke, then optional HR matrix extension.
+**Next:** UI smoke on production, then Sprint C (HR request validation/leave detail) or Sprint D (fleet driver details).
 
 ---
 
