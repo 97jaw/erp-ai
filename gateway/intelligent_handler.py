@@ -2112,9 +2112,13 @@ class IntelligentQueryHandler:
         Selecting any option resumes the query with Deep Think so the real
         Odoo figures are fetched in one click — no typing, no manual toggle.
         """
+        from gateway.clarify import _DATE_IN_QUERY_RE
         from gateway.core.strategy_planner import match_company_report
 
         if match_company_report(message) is None:
+            return None
+        # Period already stated — jump straight to Deep Think, no picker needed
+        if _DATE_IN_QUERY_RE.search(message):
             return None
         return build_deep_think_date_clarification(
             message,
