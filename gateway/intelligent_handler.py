@@ -1901,6 +1901,7 @@ class IntelligentQueryHandler:
         text: str,
         tools_called: list[str],
         awaiting_clarification: bool = False,
+        original_query: str = "",
         context: ContextStack,
         telemetry: InteractionTelemetry,
         resolved_session: str,
