@@ -282,9 +282,28 @@ class IntelligentQueryHandler:
                 self._intent_analyzer.analyze(message, context),
             )
 
-            # LLM-classified conversational turn (general chat, off-topic) — scoped
-            # responder instead of tool routing, so it can never raise TOOL_ERROR.
-            if is_conversational_intent(intent, message):
+            # ----------------------------------------------------------------
+            # SIGNAL 0 PRE-CHECK — active fast-lane follow-up must route to the
+            # fast lane BEFORE any other routing (including is_conversational_intent).
+            # "Show more details" / "Jawad leave balance" look conversational but
+            # must continue the fast-lane session, not go to the chat handler.
+            # ----------------------------------------------------------------
+            from gateway.core.natural_query_lane import (
+                FAST_LANE_SESSION_KEY,
+                NaturalQueryLane,
+                persist_fast_lane_state,
+                should_use_fast_lane,
+            )
+            _fast_pending_pre = context.working_memory.session_facts.get(FAST_LANE_SESSION_KEY) or {}
+            if _fast_pending_pre.get("awaiting_clarification"):
+                logger.info(
+                    "[FastLane] Signal 0 pre-check — active follow-up, skipping conversational routing"
+                )
+                # Fall through to fast lane block below (should_use_fast_lane will return True)
+
+            elif is_conversational_intent(intent, message):
+                # LLM-classified conversational turn (general chat, off-topic) — scoped
+                # responder instead of tool routing, so it can never raise TOOL_ERROR.
                 telemetry.intent_extracted = intent
                 return await self._finalize_conversational_response(
                     message=message,
@@ -302,13 +321,6 @@ class IntelligentQueryHandler:
             # or ambiguous cross-entity queries), bypass the rigid pipeline and
             # let Claude reason directly with all tools.
             # ----------------------------------------------------------------
-            from gateway.core.natural_query_lane import (
-                FAST_LANE_SESSION_KEY,
-                NaturalQueryLane,
-                persist_fast_lane_state,
-                should_use_fast_lane,
-            )
-
             if should_use_fast_lane(intent, message, context):
                 logger.info(
                     "[FastLane] Triggering for query=%r intent.subject=%s intent.action=%s",

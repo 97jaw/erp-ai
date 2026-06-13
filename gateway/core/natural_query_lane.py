@@ -169,6 +169,13 @@ PERMISSIONS:
 RESPOND IN THE USER'S LANGUAGE. Be concise. Use tables or lists when helpful.
 Today's date: {today}
 {session_context}
+
+IMPORTANT — RESPONSE STYLE:
+  - Give a COMPLETE answer. Do NOT end with "Would you like more details?" or
+    "Shall I show more?" — the UI provides follow-up suggestion chips automatically.
+  - Only end with a question when you need the user to CHOOSE between options
+    (disambiguation). Format as a numbered list (1. / 2. / 3.) with a "?" in the text.
+  - Any other "?" in the response will break the follow-up suggestion system.
 """
 
 
@@ -257,24 +264,19 @@ def should_use_fast_lane(
 
 
 def _response_is_question(text: str) -> bool:
-    """True when Claude's response contains a disambiguation question.
+    """True only when Claude is asking for a USER CHOICE (disambiguation).
 
-    Claude sometimes phrases the closing sentence as a statement after the "?"
-    (e.g. "Which one? Please let me know.") so a fixed-length tail check misses it.
-    We treat ANY response that both contains a "?" and has a numbered option list
-    (1. / 2.) as a pending disambiguation, regardless of where the "?" appears.
+    Polite follow-up offers ("Would you like more details?") must NOT count —
+    they have a "?" but no numbered options, so the user cannot meaningfully
+    "select" an answer. Only flag awaiting_clarification when Claude listed
+    numbered choices AND included a question mark anywhere in the response.
     """
     import re as _re
     stripped = text.rstrip()
-    # Direct: response ends with a question mark
-    if stripped.endswith("?"):
-        return True
-    # Indirect: question mark somewhere in the text AND numbered options present
-    # (Claude listed choices then added a closing sentence/instruction)
-    if "?" in stripped and _re.search(r"^\s*[1-9][.)]\s+", stripped, _re.MULTILINE):
-        return True
-    # Fallback: question mark within the last 300 chars
-    return "?" in stripped[-300:]
+    if "?" not in stripped:
+        return False
+    # True disambiguation: "?" present AND numbered option list (1. / 2. / 3.)
+    return bool(_re.search(r"^\s*[1-9][.)]\s+", stripped, _re.MULTILINE))
 
 
 class NaturalQueryLane:
