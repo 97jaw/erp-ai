@@ -1924,29 +1924,54 @@ class IntelligentQueryHandler:
 
         if awaiting_clarification:
             # Parse numbered disambiguation options from response text → clickable chips.
-            # Matches patterns: "1. Name", "1) Name", "1- Name"
+            # IMPORTANT: preserve the full option text including "(ID: xxx)" so that
+            # when the user clicks a chip, the message contains the employee ID.
+            # Claude is instructed not to re-search employees on continuation turns, so
+            # it needs the ID embedded in the chip text to query target models directly.
+            # Matches patterns: "1. Name (ID: 123)", "1) Name", "1- Name"
             option_matches = _re.findall(
-                r"^\s*\d+[.):\-]\s*(.+?)(?:\s*\(.*?\))?\s*$",
+                r"^\s*\d+[.):\-]\s*(.+?)\s*$",
                 text,
                 _re.MULTILINE,
             )
-            # Keep only short options that look like names/choices (< 80 chars, no markdown)
+            # Strip markdown bold markers (**) but keep ID suffixes
             suggestions = [
-                m.strip()
+                _re.sub(r"\*\*", "", m).strip()
                 for m in option_matches
-                if m.strip() and len(m.strip()) < 80 and not m.strip().startswith("#")
+                if m.strip() and len(m.strip()) < 120 and not m.strip().startswith("#")
             ][:5]
             logger.info("[FastLane] Parsed %d disambiguation chips", len(suggestions))
         else:
             # Context-aware follow-up suggestions keyed on what was just looked up.
             # Use original_query (passed in directly) — not session which is already cleared.
+            # Extract a short name hint from the original query so suggestions are
+            # self-contained when clicked (e.g. "Jawad leave balance" not "leave balance").
             orig = (original_query or "").lower()
+
+            # Try to extract a 1-2 word person name hint from the original query
+            _name_hint = ""
+            _name_m = _re.search(
+                r"\b(?:for|of|show|get|check)\s+([a-z]+(?:\s+[a-z]+)?)\b",
+                orig,
+            )
+            if not _name_m:
+                # First capitalized-looking word(s) in original query
+                _name_m2 = _re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b", original_query or "")
+                if _name_m2:
+                    _name_hint = _name_m2.group(1).split()[0]  # first name only
+            else:
+                _name_hint = _name_m.group(1).split()[0].capitalize()
+
+            # Prefix suggestions with the name when we have one, so chips are self-contained
+            def _s(base: str) -> str:
+                return f"{_name_hint} {base.lower()}" if _name_hint else base
+
             if any(w in orig for w in ("vehicle", "car", "fleet", "navara", "pickup")):
                 if language == "ar":
                     suggestions = ["تفاصيل التأمين للمركبة", "عرض جميع مركبات الشركة", "تاريخ تجديد الترخيص"]
                 else:
-                    suggestions = ["Show vehicle insurance details", "List all company vehicles", "Check license renewal date"]
-            elif any(w in orig for w in ("visa", "passport", "expir", "labour card", "labor card", "iqama")):
+                    suggestions = [_s("vehicle insurance details"), _s("license renewal date"), "List all company vehicles"]
+            elif any(w in orig for w in ("visa", "passport", "expir", "labour card", "labor card")):
                 if language == "ar":
                     suggestions = ["عرض جميع وثائق منتهية الصلاحية", "تفاصيل الموظف", "الموظفون مع التأشيرات المنتهية قريباً"]
                 else:
@@ -1955,22 +1980,22 @@ class IntelligentQueryHandler:
                 if language == "ar":
                     suggestions = ["سجل الحضور للشهر الكامل", "ملخص ساعات العمل", "موظفون غائبون اليوم"]
                 else:
-                    suggestions = ["Show full month attendance", "Work hours summary", "Employees absent today"]
+                    suggestions = [_s("full month attendance"), _s("work hours summary"), "Employees absent today"]
             elif any(w in orig for w in ("leave", "allocation", "annual leave", "vacation")):
                 if language == "ar":
                     suggestions = ["رصيد الإجازات المتبقي", "طلبات الإجازة المعلقة", "سجل إجازات الموظف"]
                 else:
-                    suggestions = ["Check remaining leave balance", "Pending leave requests", "Full leave history"]
+                    suggestions = [_s("remaining leave balance"), _s("leave requests this year"), _s("leave history")]
             elif any(w in orig for w in ("payslip", "salary", "net pay", "net salary", "deduction")):
                 if language == "ar":
                     suggestions = ["تفاصيل الخصومات", "كشف راتب الشهر السابق", "ملخص الرواتب للقسم"]
                 else:
-                    suggestions = ["Show deduction breakdown", "Payslip for previous month", "Department salary summary"]
+                    suggestions = [_s("deduction breakdown"), _s("payslip previous month"), "Department salary summary"]
             elif any(w in orig for w in ("employee", "staff", "worker")):
                 if language == "ar":
                     suggestions = ["عرض مركبة الموظف", "سجل حضور الموظف", "طلبات الموظف"]
                 else:
-                    suggestions = ["Show employee's vehicle", "View attendance record", "Check employee requests"]
+                    suggestions = [_s("vehicle info"), _s("attendance this month"), _s("leave balance")]
             else:
                 if language == "ar":
                     suggestions = ["عرض تفاصيل إضافية", "تصفية حسب القسم", "عرض السجلات ذات الصلة"]
