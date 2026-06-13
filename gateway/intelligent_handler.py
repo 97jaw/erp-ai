@@ -282,6 +282,13 @@ class IntelligentQueryHandler:
                 self._intent_analyzer.analyze(message, context),
             )
 
+            # Auto-promote to Deep Think when the query requires predefined Odoo
+            # methods (financial reports, comparisons, etc.) and the user hasn't
+            # already toggled it on. Applies equally to text and voice queries.
+            if not deep_think and self._requires_deep_think(message, intent):
+                deep_think = True
+                logger.info("[Handler] Auto-promoted to Deep Think for: %.80s", message)
+
             # ----------------------------------------------------------------
             # SIGNAL 0 PRE-CHECK — active fast-lane follow-up must route to the
             # fast lane BEFORE any other routing (including is_conversational_intent).
