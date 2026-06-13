@@ -26,7 +26,7 @@ export default function IdleWelcome({ user, suggestions, onSelect }) {
           </p>
         ) : null}
       </motion.div>
-      <WelcomeCards onSelect={onSelect} />
+      <WelcomeCards />
       <SuggestionChips items={suggestions} onSelect={onSelect} />
     </section>
   );

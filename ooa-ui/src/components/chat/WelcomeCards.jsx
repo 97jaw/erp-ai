@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { WELCOME_CARDS } from "../../utils/chat";
 
-export default function WelcomeCards({ onSelect }) {
+export default function WelcomeCards() {
   return (
     <motion.div
       className="ooa-welcome-grid"
@@ -11,24 +11,22 @@ export default function WelcomeCards({ onSelect }) {
         hidden: {},
         visible: { transition: { staggerChildren: 0.08 } },
       }}
+      aria-label="Capabilities overview"
     >
       {WELCOME_CARDS.map((card) => (
-        <motion.button
+        <motion.div
           key={card.title}
-          type="button"
-          className="ooa-welcome-card"
+          className="ooa-welcome-card ooa-welcome-card--readonly"
           variants={{
             hidden: { opacity: 0, y: 16 },
             visible: { opacity: 1, y: 0 },
           }}
-          whileHover={{ y: -3, scale: 1.01 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={() => onSelect(card.query)}
+          aria-hidden="true"
         >
           <span className="ooa-welcome-card__icon">{card.icon}</span>
           <span className="ooa-welcome-card__title">{card.title}</span>
           <span className="ooa-welcome-card__subtitle">{card.subtitle}</span>
-        </motion.button>
+        </motion.div>
       ))}
     </motion.div>
   );

@@ -447,6 +447,12 @@ textarea {
   text-align: left;
 }
 
+.ooa-welcome-card--readonly {
+  cursor: default;
+  pointer-events: none;
+  user-select: none;
+}
+
 .ooa-welcome-card__icon {
   font-size: 20px;
 }
@@ -1723,6 +1729,17 @@ textarea:focus-visible,
   cursor: pointer;
   text-align: left;
   transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+}
+
+.ooa-feature-card--readonly {
+  cursor: default;
+  pointer-events: none;
+  user-select: none;
+}
+
+.ooa-feature-card--readonly:hover {
+  border-color: color-mix(in srgb, var(--ooa-gold) 28%, var(--ooa-glass-border));
+  box-shadow: var(--ooa-glass-shadow);
 }
 
 .ooa-feature-card:hover {

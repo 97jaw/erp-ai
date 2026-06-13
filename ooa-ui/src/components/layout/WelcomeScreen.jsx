@@ -6,7 +6,7 @@ export default function WelcomeScreen({ onOpenSpotlight, onSeedQuery, compact = 
       className={`ooa-welcome-screen ${compact ? "ooa-welcome-screen--compact" : ""}`}
       aria-label="Welcome"
       onClick={(event) => {
-        if (event.target.closest("button")) return;
+        if (event.target.closest("button, .ooa-feature-card")) return;
         onOpenSpotlight?.();
       }}
     >
@@ -18,7 +18,7 @@ export default function WelcomeScreen({ onOpenSpotlight, onSeedQuery, compact = 
       </div>
 
       {!compact ? (
-        <FeatureShowcase onSelectFeature={(feature) => onSeedQuery?.(feature.query)} />
+        <FeatureShowcase />
       ) : (
         <p className="ooa-welcome-screen__quickstart">
           Ask about projects, finances, purchase orders, or reports. Start typing below — or press
