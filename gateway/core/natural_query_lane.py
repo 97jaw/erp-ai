@@ -120,15 +120,26 @@ LEAVE / REQUEST LOOKUP PATTERN:
   Fields: employee_id, request_type, state, date_start, date_end, name
   request_type values: "leave", "loan", "advance", "job_mission", "termination"
   After getting employee_id:
-    For leave count: aggregate_odoo("employee.requests",
+    For leave COUNT this month: aggregate_odoo("employee.requests",
         [["employee_id","=",<id>], ["request_type","=","leave"],
          ["date_start",">=","<period_start>"], ["date_start","<=","<period_end>"]],
         [], ["id:count"])
-    For leave list: query_odoo("employee.requests",
+    For leave LIST/HISTORY: query_odoo("employee.requests",
         [["employee_id","=",<id>], ["request_type","=","leave"]],
         ["name","date_start","date_end","state"], limit=20)
   Do NOT use employee.request (singular) — it does not exist.
   Do NOT route leave queries to hr.payslip.
+
+LEAVE BALANCE / ALLOCATION PATTERN:
+  "Remaining leave balance" = how many days are left in the employee's allocation.
+  Model: hr.leave.allocation
+  Fields: employee_id, holiday_status_id, number_of_days, number_of_days_display,
+          state, date_from, date_to
+  Query: query_odoo("hr.leave.allocation",
+      [["employee_id","=",<id>], ["state","=","validate"]],
+      ["holiday_status_id","number_of_days","number_of_days_display","date_from","date_to"])
+  If hr.leave.allocation returns nothing, try hr.leave.type for annual entitlements.
+  ALWAYS use the ID from session context — do NOT re-search employees.
 
 IMPORTANT — VEHICLE LOOKUP PATTERN:
   After confirming employee_id, ALWAYS use this domain:
