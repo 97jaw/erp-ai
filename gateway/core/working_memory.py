@@ -120,6 +120,7 @@ class WorkingMemory:
             "resolved_project_id",
             "last_expense_summary_project_id",
             "project_name",
+            "pending_entity_clarification",
         ):
             self.session_facts.pop(key, None)
 

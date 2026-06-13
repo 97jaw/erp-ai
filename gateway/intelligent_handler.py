@@ -236,6 +236,7 @@ class IntelligentQueryHandler:
         quality_review: QualityReview | None = None
         retries_needed = 0
         entity_meta = EntityResolutionMeta()
+        executed_domain: str | None = None
 
         try:
             await self._run_stage(
@@ -350,8 +351,11 @@ class IntelligentQueryHandler:
                 resolve_hr_tool,
             )
             from gateway.core.payroll_query_routing import (
+                _employee_name_hint,
+                is_payroll_file_id_follow_up,
                 is_payroll_orchestration_query,
                 resolve_payroll_tool,
+                should_block_project_entity_search,
             )
 
             has_active_project = bool(active and active.project_id)
@@ -448,7 +452,38 @@ class IntelligentQueryHandler:
                 is_broad_project_search,
             )
 
+            if (
+                effective_strategy_override is None
+                and (
+                    payroll_orchestration_query
+                    or is_payroll_file_id_follow_up(message, context)
+                )
+            ):
+                early_payroll = resolve_payroll_tool(message, intent, context)
+                if early_payroll is not None:
+                    early_tool, early_input = early_payroll
+                    effective_strategy_override = build_single_tool_strategy(
+                        tool=early_tool,
+                        tool_input=early_input,
+                        description=f"Payroll query: {message}",
+                        expected_output=intent.expected_output or "summary",
+                    )
+                    logger.info(
+                        "[PayrollRouting] Early force %s for %r",
+                        early_tool,
+                        message[:80],
+                    )
+
+            if payroll_orchestration_query and _employee_name_hint(message):
+                context.working_memory.session_facts["pending_entity_clarification"] = {
+                    "query": message,
+                    "payroll_context": True,
+                    "options": [],
+                }
+
             broad_search_query = is_broad_project_search(message)
+            if broad_search_query and should_block_project_entity_search(message, context):
+                broad_search_query = False
             if broad_search_query and effective_strategy_override is None:
                 search_term = extract_broad_project_search_term(message) or message.strip()
                 effective_strategy_override = build_single_tool_strategy(
@@ -838,6 +873,12 @@ class IntelligentQueryHandler:
                 resolved_entities=entity_meta.resolved_entities,
             )
             self._apply_entity_telemetry(telemetry, entity_meta)
+            from gateway.core.topic_shift import infer_turn_domain
+
+            executed_domain = infer_turn_domain(
+                pipeline["tools_called"],
+                pipeline.get("tool_results"),
+            )
             telemetry.finalize_response(
                 response_text=response.text,
                 visualization=response.visualization,
@@ -912,9 +953,9 @@ class IntelligentQueryHandler:
             )
         finally:
             if intent is not None and resolved_session:
-                from gateway.core.topic_shift import persist_last_turn
+                from gateway.core.topic_shift import infer_turn_domain, persist_last_turn
 
-                persist_last_turn(resolved_session, message, intent)
+                persist_last_turn(resolved_session, message, intent, domain=executed_domain)
             await capture.record(telemetry)
 
     @staticmethod

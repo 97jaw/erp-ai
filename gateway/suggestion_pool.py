@@ -226,12 +226,16 @@ def detect_suggestion_context(
             return SuggestionContext.RECEIVABLES
         if tool_name in {
             "get_project_expenses",
+            "get_project_expense_summary",
+            "get_project_expense_breakdown",
             "get_project_financial_data",
             "get_project_cost_categories",
             "get_top_projects_by_metric",
             "get_projects_with_overrun",
         }:
             return SuggestionContext.PROJECT
+        if tool_name in {"get_employee_payslips", "get_my_payslips"}:
+            return SuggestionContext.PAYROLL
         if tool_name == "get_period_comparison":
             return SuggestionContext.COMPARISON
 

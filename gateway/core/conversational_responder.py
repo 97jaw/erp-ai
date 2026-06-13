@@ -328,6 +328,14 @@ class NormalModeResponder:
 def normal_mode_suggestions(message: str, context: ContextStack, language: str = "en") -> list[str]:
     """Refinement chips for normal-mode data turns — each chip is a full next query."""
     suggestions: list[str] = []
+    pending = context.working_memory.session_facts.get("pending_entity_clarification") or {}
+    if pending.get("payroll_context"):
+        return [
+            "Show payslip for last month",
+            "Total payroll cost last month",
+            "Draft payslips count",
+        ][:3]
+
     base = (message or "").strip().rstrip("?.!")
     if base:
         lowered = base.lower()

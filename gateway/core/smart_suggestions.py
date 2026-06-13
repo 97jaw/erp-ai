@@ -76,12 +76,34 @@ class SmartSuggestionsGenerator:
         if "get_project_activity" in tool_names:
             return self._project_activity_suggestions(context, tool_results)
 
+        from gateway.core.payroll_query_routing import is_payroll_orchestration_query
+
+        pending = context.working_memory.session_facts.get("pending_entity_clarification") or {}
+        payroll_turn = (
+            intent.subject_area in {"payroll", "hr"}
+            or is_payroll_orchestration_query(
+                context.conversation.message or intent.specific_intent,
+                intent,
+                context,
+            )
+            or bool(pending.get("payroll_context"))
+        )
+        if any(
+            name in tool_names
+            for name in (
+                "get_project_expenses",
+                "get_project_expense_summary",
+                "get_project_expense_breakdown",
+            )
+        ):
+            payroll_turn = False
+
         suggestion_context = detect_suggestion_context(
             tool_names,
             synthesized.visualization,
             tool_results,
         )
-        if intent.subject_area == "payroll":
+        if intent.subject_area == "payroll" or payroll_turn:
             suggestion_context = SuggestionContext.PAYROLL
         elif intent.subject_area == "hr":
             suggestion_context = SuggestionContext.HR
@@ -89,19 +111,27 @@ class SmartSuggestionsGenerator:
         if suggestion_context in {SuggestionContext.HR, SuggestionContext.PAYROLL}:
             data_context = extract_data_context(synthesized.visualization, tool_results)
             pool = get_suggestion_pool(suggestion_context, data_context)
+            if pending.get("payroll_context"):
+                pool = [
+                    "Show payslip for last month",
+                    "Total payroll cost last month",
+                    "Draft payslips count",
+                    *pool,
+                ]
             return [
                 Suggestion(text=text, category=_infer_category(text), priority=5)
                 for text in pick_diverse_suggestions(pool, TARGET_COUNT)
             ]
 
         candidates: list[Suggestion] = []
-        candidates.extend(
-            Suggestion(text=item.text, category=item.category, priority=item.priority)
-            for item in self._predicted_suggestions(predicted_actions)
-        )
-        candidates.extend(self._context_interpolated_suggestions(context, tool_results))
-        candidates.extend(self._drill_down_suggestions(synthesized, intent))
-        candidates.extend(self._comparison_suggestions(synthesized, intent))
+        if not payroll_turn:
+            candidates.extend(
+                Suggestion(text=item.text, category=item.category, priority=item.priority)
+                for item in self._predicted_suggestions(predicted_actions)
+            )
+            candidates.extend(self._context_interpolated_suggestions(context, tool_results))
+            candidates.extend(self._drill_down_suggestions(synthesized, intent))
+            candidates.extend(self._comparison_suggestions(synthesized, intent))
         candidates.extend(self._action_suggestions(synthesized, tool_names))
         candidates.extend(self._insight_suggestions(synthesized, tool_results))
 

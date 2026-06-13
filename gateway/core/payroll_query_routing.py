@@ -53,9 +53,65 @@ _LABOR_COST_RE = re.compile(
     r"\b(labor|labour)\s+costs?\b|\bpayroll\s+costs?\b|\bcost\s+allocation\b",
     re.I,
 )
-_EMPLOYEE_NAME_RE = re.compile(
-    r"(?:payslips?(?:\s+for)?|show\s+|^)\s*([A-Z][A-Za-z\s'.-]{2,50}?)(?:'s|\s+payslip|\s+last|\s+this|\s+cost|\s*$)",
+_EMPLOYEE_FILE_ID_RE = re.compile(r"^\s*(\d{3,6})\s*$")
+_NAME_AFTER_FOR_RE = re.compile(
+    r"\bfor\s+([A-Za-z][A-Za-z\s'.-]{1,60}?)(?:\s*$|\s*,|\s+in\b|\s+last\b|\s+this\b|\s+may\b|\s+jun\b|\s+jul\b|\s+aug\b|\s+sep\b|\s+oct\b|\s+nov\b|\s+dec\b|\s+jan\b|\s+feb\b|\s+mar\b|\s+apr\b)",
     re.I,
+)
+_PAYSLIP_NAME_RE = re.compile(
+    r"\bpayslips?\s+(?:for\s+)?([A-Za-z][A-Za-z\s'.-]{2,50}?)(?:\s+payslip|\s+salary|\s*$)",
+    re.I,
+)
+_BLOCKED_NAME_TOKENS = frozenset(
+    {
+        "need",
+        "show",
+        "get",
+        "want",
+        "give",
+        "payslip",
+        "payslips",
+        "salary",
+        "payroll",
+        "expense",
+        "expenses",
+        "project",
+        "for",
+        "me",
+        "the",
+        "this",
+        "last",
+        "month",
+        "year",
+        "labor",
+        "labour",
+        "villa",
+        "maintenance",
+        "cost",
+        "costs",
+        "draft",
+        "finalized",
+        "total",
+    },
+)
+_NON_PAYROLL_MARKERS = (
+    "project expense",
+    "project expenses",
+    "expenses for",
+    "expense of",
+    "expenses of",
+    "expense for",
+    "p&l",
+    "profit and loss",
+    "balance sheet",
+    "trial balance",
+    "general ledger",
+    "invoice",
+    "receivable",
+    "purchase order",
+    "national guard",
+    "show me project",
+    "cost of project",
 )
 _MONTH_YEAR_RE = re.compile(
     r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
@@ -92,6 +148,8 @@ def _active_payroll_context(context: ContextStack | None) -> bool:
     if pending.get("payroll_context"):
         return True
     last = facts.get("last_turn") or {}
+    if last.get("domain") == "payroll":
+        return True
     if last.get("subject_area") in {"payroll", "hr"}:
         last_msg = str(last.get("message") or "").lower()
         if any(token in last_msg for token in _PAYROLL_SUBJECT_TOKENS):
@@ -132,14 +190,59 @@ def message_has_payroll_period(message: str) -> bool:
     )
 
 
+def is_explicit_non_payroll_query(message: str) -> bool:
+    """True when the message is clearly about project/financial data, not payroll."""
+    lowered = message.lower()
+    if any(marker in lowered for marker in _NON_PAYROLL_MARKERS):
+        return True
+    if "expense" in lowered and "project" in lowered:
+        return True
+    return False
+
+
+def extract_employee_file_id(message: str) -> str | None:
+    """Return a bare employee File ID / emp_id when the message is numeric-only."""
+    match = _EMPLOYEE_FILE_ID_RE.match((message or "").strip())
+    if not match:
+        return None
+    return match.group(1)
+
+
+def is_payroll_file_id_follow_up(message: str, context: ContextStack | None) -> bool:
+    """True when a numeric-only reply is answering a prior payslip clarification."""
+    if extract_employee_file_id(message) is None:
+        return False
+    if context is None:
+        return False
+    facts = context.working_memory.session_facts or {}
+    pending = facts.get("pending_entity_clarification") or {}
+    if pending.get("payroll_context"):
+        return True
+    last = facts.get("last_turn") or {}
+    if last.get("domain") == "payroll":
+        return True
+    last_msg = str(last.get("message") or "").lower()
+    return any(token in last_msg for token in ("payslip", "salary", "payroll"))
+
+
+def should_block_project_entity_search(message: str, context: ContextStack | None) -> bool:
+    """Prevent project WO search when user supplied an employee File ID in payroll context."""
+    return is_payroll_file_id_follow_up(message, context)
+
+
 def is_payroll_orchestration_query(
     message: str,
     intent: Intent,
     context: ContextStack | None = None,
 ) -> bool:
     """True when the question should use payroll models, not generic HR employee reads."""
+    if is_explicit_non_payroll_query(message):
+        return False
+
     blob = _query_blob(message, intent)
     if intent.subject_area == "payroll":
+        return True
+    if is_payroll_file_id_follow_up(message, context):
         return True
     if _LABOR_COST_RE.search(blob):
         return True
@@ -154,12 +257,20 @@ def is_payroll_orchestration_query(
     msg = message.lower()
     if "across projects" in msg and ("cost" in msg or "labor" in msg or "labour" in msg):
         return True
-    if message_has_payroll_period(message) and _looks_like_employee_name_fragment(message):
+    if message_has_payroll_period(message) and (
+        _employee_name_hint(message) or _looks_like_employee_name_fragment(message)
+    ):
         return True
     if context is not None and _active_payroll_context(context):
-        if _looks_like_employee_name_fragment(message) or message_has_payroll_period(message):
+        if is_explicit_non_payroll_query(message):
+            return False
+        if extract_employee_file_id(message):
             return True
-        if len(message.split()) <= 10 and not looks_like_project_cost_only(message):
+        if any(token in blob for token in _PAYROLL_SUBJECT_TOKENS):
+            return True
+        if _employee_name_hint(message):
+            return True
+        if message_has_payroll_period(message) and _looks_like_employee_name_fragment(message):
             return True
     return False
 
@@ -281,6 +392,23 @@ def _parse_month_year(message: str) -> tuple[str, str] | None:
     return str(month_num), str(match.group(2))
 
 
+def _clean_name_candidate(raw: str) -> str:
+    """Normalize and validate a extracted employee name fragment."""
+    name = " ".join(str(raw or "").strip(" '\"").split())
+    if not name or len(name) < 2:
+        return ""
+    tokens = [token for token in name.split() if token]
+    if not tokens:
+        return ""
+    if all(token.lower() in _BLOCKED_NAME_TOKENS for token in tokens):
+        return ""
+    if tokens[0].lower() in _BLOCKED_NAME_TOKENS:
+        return ""
+    if any(token.lower() in {"expense", "expenses", "project", "invoice", "guard"} for token in tokens):
+        return ""
+    return name
+
+
 def _employee_name_hint(message: str) -> str:
     cleaned = _MONTH_YEAR_RE.sub("", message).strip(" ,")
     lowered = cleaned.lower()
@@ -289,30 +417,86 @@ def _employee_name_hint(message: str) -> str:
         for token in ("labor cost", "labour cost", "cost allocation", "villa maintenance", "villa no")
     ):
         return ""
-    match = _EMPLOYEE_NAME_RE.search(cleaned.strip())
-    if match:
-        name = match.group(1).strip(" '\"")
-        if name.lower() not in ("draft", "finalized", "total", "payroll", "payslips", "labor", "labour"):
-            return name
+    if is_explicit_non_payroll_query(message):
+        return ""
+
+    for_match = _NAME_AFTER_FOR_RE.search(cleaned)
+    if for_match:
+        candidate = _clean_name_candidate(for_match.group(1))
+        if candidate:
+            return candidate
+
+    payslip_match = _PAYSLIP_NAME_RE.search(cleaned)
+    if payslip_match:
+        candidate = _clean_name_candidate(payslip_match.group(1))
+        if candidate:
+            return candidate
+
+    leading_before_period = _MONTH_YEAR_RE.split(cleaned)[0].strip(" ,")
+    if leading_before_period:
+        candidate = _clean_name_candidate(leading_before_period)
+        if candidate:
+            return candidate
+
+    leading_cost = re.match(
+        r"^([A-Za-z][A-Za-z\s'.-]{2,50}?)\s+(?:cost|labor|labour)\s+across\b",
+        cleaned,
+        re.I,
+    )
+    if leading_cost:
+        candidate = _clean_name_candidate(leading_cost.group(1))
+        if candidate:
+            return candidate
+
     if "'s" in cleaned:
-        return cleaned.split("'s")[0].strip()
-    tokens = [token for token in re.split(r"[\s,]+", cleaned) if len(token) > 1]
-    blocked = {
-        "labor",
-        "labour",
-        "villa",
-        "maintenance",
-        "project",
-        "payroll",
-        "this",
-        "month",
-        "last",
-        "cost",
-        "costs",
-    }
-    if len(tokens) >= 2 and tokens[0][0].isalpha() and not any(token.lower() in blocked for token in tokens):
-        return " ".join(tokens[:4])
+        candidate = _clean_name_candidate(cleaned.split("'s")[0])
+        if candidate:
+            return candidate
+
     return ""
+
+
+def _payslip_period_payload(
+    message: str,
+    context: ContextStack | None = None,
+) -> dict[str, str]:
+    """Optional date bounds for get_employee_payslips filtering in synthesis."""
+    month_year = _parse_month_year(message)
+    if not month_year and context is not None:
+        pending = context.working_memory.session_facts.get("pending_entity_clarification") or {}
+        prior_query = str(pending.get("query") or "")
+        last_turn = context.working_memory.session_facts.get("last_turn") or {}
+        month_year = _parse_month_year(prior_query) or _parse_month_year(
+            str(last_turn.get("message") or ""),
+        )
+    if not month_year:
+        return {}
+    month, year = month_year
+    last_day = calendar.monthrange(int(year), int(month))[1]
+    return {
+        "date_from": f"{year}-{int(month):02d}-01",
+        "date_to": f"{year}-{int(month):02d}-{last_day:02d}",
+    }
+
+
+def _resolve_payslip_by_file_id(
+    message: str,
+    context: ContextStack | None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Route numeric File ID replies to the dedicated payslip tool."""
+    file_id = extract_employee_file_id(message)
+    if not file_id:
+        return None
+    if not (
+        is_payroll_file_id_follow_up(message, context)
+        or "payslip" in message.lower()
+        or "salary" in message.lower()
+    ):
+        if context is None or not _active_payroll_context(context):
+            return None
+    payload: dict[str, Any] = {"employee_file_id": file_id, "limit": 20}
+    payload.update(_payslip_period_payload(message, context))
+    return "get_employee_payslips", payload
 
 
 def resolve_payroll_tool(
@@ -323,6 +507,10 @@ def resolve_payroll_tool(
     """Return (tool_name, payload) for payroll queries, or None if not payroll-routed."""
     if not is_payroll_orchestration_query(message, intent, context):
         return None
+
+    file_id_route = _resolve_payslip_by_file_id(message, context)
+    if file_id_route is not None:
+        return file_id_route
 
     blob = _query_blob(message, intent)
     msg = message.lower()
