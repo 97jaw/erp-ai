@@ -41,7 +41,7 @@ _CAPABILITY_RE = re.compile(
 _BUSINESS_SIGNAL_RE = re.compile(
     r"\b(expense|cost|revenue|profit|loss|p&l|pnl|balance|ledger|invoice|budget|"
     r"payment|receivable|payable|ageing|aging|trial|cash\s*flow|project|villa|"
-    r"partner|client|vendor|customer|report|account|journal|salary|payroll|"
+    r"partner|client|vendor|customer|report|account|journal|salary|payroll|payslip|payslips|"
     r"maintenance|school|wo\b|work\s*order)\b"
     r"|مصروف|مصاريف|ايراد|إيراد|ربح|خسارة|مشروع|فاتورة|ميزانية|تقرير|عميل|مورد",
     re.IGNORECASE,

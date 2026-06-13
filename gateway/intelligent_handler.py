@@ -469,6 +469,16 @@ class IntelligentQueryHandler:
                 early_payroll = resolve_payroll_tool(message, intent, context)
                 if early_payroll is not None:
                     early_tool, early_input = early_payroll
+                    from dataclasses import replace
+
+                    intent = replace(
+                        intent,
+                        primary_action="fetch_data",
+                        subject_area="payroll",
+                        specific_intent=message,
+                        requires_clarification=False,
+                        clarification_question=None,
+                    )
                     effective_strategy_override = build_single_tool_strategy(
                         tool=early_tool,
                         tool_input=early_input,
