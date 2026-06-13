@@ -819,6 +819,22 @@ def narrate_universal_aggregate(
     if model == "employee.requests":
         total_count = 0
         dept_lines: list[str] = []
+        if len(groups) == 1 and isinstance(groups[0], dict):
+            lone = groups[0]
+            if lone.get("__count") is not None and len(lone) <= 2:
+                try:
+                    total_count = int(float(lone.get("__count") or 0))
+                except (TypeError, ValueError):
+                    total_count = 0
+                blob = (user_message or "").lower()
+                event = "terminations"
+                if "resign" in blob:
+                    event = "resignations"
+                elif "clearance" in blob:
+                    event = "clearance"
+                elif "leave" in blob:
+                    event = "leave requests"
+                return f"{total_count:,} {event} in the selected period."
         for group in groups[:15]:
             if not isinstance(group, dict):
                 continue

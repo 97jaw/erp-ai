@@ -17,6 +17,11 @@ class MockAdapter:
     def __init__(self) -> None:
         self.safe_search_read_calls: list[tuple[Any, ...]] = []
         self.read_group_calls: list[tuple[Any, ...]] = []
+        self.search_count_calls: list[tuple[Any, ...]] = []
+
+    def search_count(self, model: str, domain: list[Any]) -> int:
+        self.search_count_calls.append((model, domain))
+        return 12
 
     def safe_search_read(
         self,
@@ -91,6 +96,26 @@ async def test_aggregate_odoo_employees_per_department() -> None:
     assert result["status"] == "success"
     assert result["group_count"] == 2
     assert adapter.read_group_calls
+
+
+@pytest.mark.asyncio
+async def test_aggregate_odoo_total_count_without_group_by() -> None:
+    adapter = MockAdapter()
+    ctx = build_universal_context()
+    result = await execute_aggregate_odoo(
+        adapter,
+        {
+            "model": "employee.requests",
+            "domain": [["request_type_id.name", "ilike", "termination"]],
+            "group_by": [],
+            "aggregates": ["id:count"],
+        },
+        ctx,
+    )
+    assert result["status"] == "success"
+    assert result["groups"] == [{"__count": 12}]
+    assert adapter.search_count_calls
+    assert adapter.read_group_calls == []
 
 
 @pytest.mark.asyncio

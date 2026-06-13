@@ -2,6 +2,7 @@
 
 from gateway.core.hr_payroll_composer import (
     build_payslip_period_domain,
+    classify_payroll_subtype,
     compose_hr_request_plan,
     compose_payroll_plan,
     compose_separation_plan,
@@ -10,6 +11,7 @@ from gateway.core.hr_payroll_composer import (
     is_hr_request_query,
     is_separation_count_query,
     plan_to_route,
+    resolve_payroll_subtype,
     strip_conversational_filler,
 )
 from gateway.core.intent_analyzer import Intent
@@ -76,6 +78,36 @@ def test_compose_payroll_salary_calculation_with_file_id() -> None:
     tool, payload = routed
     assert tool == "get_payslip_detail"
     assert payload["detail_type"] == "lines"
+
+
+def test_classify_payroll_subtype_typo_alary_calculation() -> None:
+    assert classify_payroll_subtype("alary calculation … may 2026 file id 2721") == "payslip_lines"
+
+
+def test_resolve_payroll_subtype_inherits_prior_salary_calculation() -> None:
+    ctx = _make_context_stack()
+    ctx.working_memory.session_facts["pending_hr_context"] = {
+        "domain": "payroll",
+        "subtype": "payslip_lines",
+        "prior_query": "salary calculation may 2026 file id 2721",
+        "awaiting": [],
+        "resolved": {"date_from": "2026-05-01", "date_to": "2026-05-31"},
+    }
+    assert resolve_payroll_subtype("2721", ctx) == "payslip_lines"
+    plan = compose_payroll_plan("2721", _intent(subject_area="payroll"), ctx)
+    assert plan is not None
+    assert plan.tool_input.get("detail_type") == "lines"
+
+
+def test_compose_payroll_salary_calculation_typo_routes_lines() -> None:
+    plan = compose_payroll_plan(
+        "alary calculation … may 2026 file id 2721",
+        _intent(subject_area="payroll"),
+        None,
+    )
+    assert plan is not None
+    assert plan.tool == "get_payslip_detail"
+    assert plan.tool_input.get("detail_type") == "lines"
 
 
 def test_build_payslip_period_domain_may_2026() -> None:

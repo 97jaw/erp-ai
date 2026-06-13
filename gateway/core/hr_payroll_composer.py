@@ -460,7 +460,7 @@ def merge_pending_hr_context(
 
 def classify_payroll_subtype(message: str) -> str:
     """Classify payroll query detail level."""
-    blob = message.lower()
+    blob = normalize_month_typos(message).lower()
     if "payslip" in blob and "distribution" in blob:
         return "payslip_distribution"
     if any(
@@ -479,9 +479,37 @@ def classify_payroll_subtype(message: str) -> str:
         )
     ):
         return "payslip_lines"
+    if "calculation" in blob or "computation" in blob:
+        if any(
+            token in blob
+            for token in ("salary", "payroll", "payslip", "slip", "file id", "emp_id", "emp id")
+        ) or extract_inline_file_id(message):
+            return "payslip_lines"
+        if re.search(r"\b(?:s)?alary\b", blob):
+            return "payslip_lines"
     if any(token in blob for token in ("worked days", "worked_days", "job mission")):
         return "payslip_worked_days"
     return "payslip_header"
+
+
+def resolve_payroll_subtype(
+    message: str,
+    context: ContextStack | None = None,
+) -> str:
+    """Resolve detail subtype from message and session (inherits prior payslip intent)."""
+    pending = merge_pending_hr_context(context, message) if context else {}
+    pending_ctx = get_pending_hr_context(context)
+    stored = pending.get("subtype") or pending_ctx.get("subtype")
+    from_message = classify_payroll_subtype(message)
+    if from_message != "payslip_header":
+        return from_message
+    if stored and stored != "payslip_header":
+        return str(stored)
+    prior = str(pending.get("prior_query") or pending_ctx.get("prior_query") or "")
+    from_prior = classify_payroll_subtype(prior)
+    if from_prior != "payslip_header":
+        return from_prior
+    return str(stored or from_message or "payslip_header")
 
 
 def is_separation_count_query(message: str, intent: Intent) -> bool:
@@ -543,14 +571,16 @@ def compose_payroll_plan(
             "salary breakdown",
             "deduction",
             "payroll",
+            "calculation",
+            "breakdown",
         )
+    ) and not (
+        "calculation" in blob and (extract_inline_file_id(message) or "file id" in blob)
     ):
         return None
 
     resolved = pending.get("resolved") or {}
-    subtype = pending.get("subtype") or pending_ctx.get("subtype") or classify_payroll_subtype(
-        str(pending.get("prior_query") or pending_ctx.get("prior_query") or message)
-    )
+    subtype = resolve_payroll_subtype(message, context)
 
     file_id = extract_inline_file_id(message) or resolved.get("employee_file_id")
     name_hint = extract_employee_name(message) or resolved.get("employee_name_hint")

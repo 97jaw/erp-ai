@@ -24,15 +24,21 @@ def build_employee_disambiguation_clarification(
             label = f"{name} (File ID {file_id})"
         if department:
             label = f"{label} — {department}"
-        options.append(
-            {
-                "id": row.get("id"),
-                "name": name,
-                "emp_id": file_id,
-                "label": label,
-                "type": "employee",
-            }
-        )
+        option: dict[str, Any] = {
+            "id": row.get("id"),
+            "name": name,
+            "emp_id": file_id,
+            "label": label,
+            "type": "employee",
+            "entity_type": "employee",
+            "entity_id": row.get("id"),
+            "action": "confirm_hr_employee",
+        }
+        if file_id:
+            option["query_suffix"] = f" file id {file_id}"
+        elif name:
+            option["query_suffix"] = f" {name}"
+        options.append(option)
 
     if language == "ar":
         question = (

@@ -345,10 +345,36 @@ async def execute_aggregate_odoo(
             "message": f"Your role cannot read '{model}'.",
         }
 
-    if not aggregates or not group_by:
+    if not aggregates:
         return {
             "status": "error",
-            "message": "Both group_by and aggregates are required.",
+            "message": "aggregates are required.",
+        }
+
+    if not group_by:
+        count_specs = {str(spec).strip() for spec in aggregates}
+        if count_specs <= {"id:count", "__count"}:
+            try:
+                total = await asyncio.to_thread(adapter.search_count, model, domain)
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "error_code": "aggregation_failed",
+                    "message": str(e),
+                }
+            logger.info("[aggregate_odoo] model=%s total_count=%d (no group_by)", model, total)
+            return {
+                "status": "success",
+                "model": model,
+                "group_by": [],
+                "aggregates": aggregates,
+                "group_count": 1,
+                "groups": [{"__count": total}],
+                "_source": "universal_odoo_aggregate",
+            }
+        return {
+            "status": "error",
+            "message": "group_by is required for non-count aggregates.",
         }
 
     try:

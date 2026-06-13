@@ -485,13 +485,13 @@ def _resolve_payslip_by_file_id(
     ):
         if context is None or not _active_payroll_context(context):
             return None
-    from gateway.core.hr_payroll_composer import classify_payroll_subtype
+    from gateway.core.hr_payroll_composer import resolve_payroll_subtype
 
     payload: dict[str, Any] = {
         "employee_file_id": file_id,
         "detail_type": "header",
     }
-    subtype = classify_payroll_subtype(message)
+    subtype = resolve_payroll_subtype(message, context)
     if subtype == "payslip_lines":
         payload["detail_type"] = "lines"
     elif subtype == "payslip_distribution":

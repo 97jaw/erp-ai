@@ -859,6 +859,28 @@ class IntelligentQueryHandler:
             synthesized = pipeline["synthesized"]
             proactive_cache_keys: list[str] = []
             suggestions: list[str] = []
+
+            hr_disambiguation = self._hr_employee_disambiguation_from_pipeline(
+                pipeline.get("tool_results") or [],
+                message=message,
+                context=context,
+                language=language,
+            )
+            if hr_disambiguation is not None:
+                hr_context = hr_disambiguation.get("hr_context")
+                if isinstance(hr_context, dict):
+                    context.working_memory.session_facts["pending_hr_context"] = dict(hr_context)
+                duration_ms = int((time.perf_counter() - started) * 1000)
+                return self._finalize_clarification(
+                    clarification=hr_disambiguation,
+                    context=context,
+                    telemetry=telemetry,
+                    resolved_session=resolved_session,
+                    language=language,
+                    started=started,
+                    intent=intent,
+                )
+
             try:
                 proactive = await self._run_stage(
                     PipelineStage.PROACTIVE,
@@ -1973,6 +1995,64 @@ class IntelligentQueryHandler:
         )
         return response
 
+    def _hr_employee_disambiguation_from_pipeline(
+        self,
+        tool_results: list[Any],
+        *,
+        message: str,
+        context: ContextStack,
+        language: str,
+    ) -> dict[str, Any] | None:
+        """Return structured clarification when HR tools find multiple employee matches."""
+        from gateway.core.hr_clarification import build_employee_disambiguation_clarification
+        from gateway.core.hr_payroll_composer import (
+            get_pending_hr_context,
+            parse_period_window,
+            resolve_payroll_subtype,
+        )
+
+        for payload in reversed(tool_results):
+            if not isinstance(payload, dict):
+                continue
+            ambiguous = payload.get("ambiguous_employees") or []
+            if not ambiguous:
+                continue
+            pending = get_pending_hr_context(context)
+            prior_query = str(pending.get("prior_query") or message)
+            source = str(payload.get("_source") or "")
+            domain = pending.get("domain") or (
+                "payroll" if source == "get_payslip_detail" else "hr"
+            )
+            subtype = resolve_payroll_subtype(prior_query, context)
+            if subtype == "payslip_header":
+                subtype = resolve_payroll_subtype(message, context)
+            name_hint = str(payload.get("employee_name") or "").strip()
+            query_label = name_hint or prior_query
+            clarification = build_employee_disambiguation_clarification(
+                query=prior_query,
+                employees=ambiguous,
+                domain=str(domain),
+                subtype=subtype,
+                language=language,
+            )
+            if name_hint and name_hint.lower() not in prior_query.lower():
+                clarification["question"] = (
+                    f"I found multiple employees matching **{name_hint}**.\n\n"
+                    "Which employee do you mean? Pick a name below or reply with their File ID."
+                )
+            resolved = dict(pending.get("resolved") or {})
+            period = parse_period_window(message, context) or parse_period_window(prior_query, context)
+            if period:
+                resolved["date_from"] = period.date_from
+                resolved["date_to"] = period.date_to
+                resolved["label"] = period.label
+            hr_context = dict(clarification.get("hr_context") or {})
+            hr_context["resolved"] = resolved
+            hr_context["subtype"] = subtype
+            clarification["hr_context"] = hr_context
+            return clarification
+        return None
+
     def _finalize_clarification(
         self,
         *,
@@ -1989,6 +2069,9 @@ class IntelligentQueryHandler:
             if language == "ar"
             else clarification.get("question")
         ) or clarification.get("question", "")
+        hr_context = clarification.get("hr_context")
+        if isinstance(hr_context, dict):
+            context.working_memory.session_facts["pending_hr_context"] = dict(hr_context)
         duration_ms = int((time.perf_counter() - started) * 1000)
         response = IntelligentQueryResponse(
             session_id=resolved_session,
