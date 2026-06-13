@@ -356,7 +356,7 @@ class IntelligentQueryHandler:
 
             has_active_project = bool(active and active.project_id)
             hr_project_staff_query = is_hr_project_staff_query(message)
-            payroll_orchestration_query = is_payroll_orchestration_query(message, intent)
+            payroll_orchestration_query = is_payroll_orchestration_query(message, intent, context)
             record_type = derive_record_type(message)
             activity_type = derive_activity_type(message)
             # Records lane fires on explicit "<type> of/for <project>" phrasing
@@ -1178,6 +1178,27 @@ class IntelligentQueryHandler:
                 context.working_memory.session_facts["last_expense_summary_project_id"] = pid
 
     @staticmethod
+    def _normalize_clarify_query(text: str) -> str:
+        import re
+
+        return re.sub(r"[^\w\s]", " ", (text or "").lower()).strip()
+
+    @classmethod
+    def _queries_equivalent_for_clarification(cls, left: str, right: str) -> bool:
+        normalized_left = cls._normalize_clarify_query(left)
+        normalized_right = cls._normalize_clarify_query(right)
+        if not normalized_left or not normalized_right:
+            return False
+        if normalized_left == normalized_right:
+            return True
+        if normalized_left in normalized_right or normalized_right in normalized_left:
+            return True
+        left_tokens = set(normalized_left.split())
+        right_tokens = set(normalized_right.split())
+        shared = left_tokens & right_tokens
+        return len(shared) >= 2 and len(shared) >= min(len(left_tokens), len(right_tokens)) // 2
+
+    @staticmethod
     def _try_repeat_query_entity_confirm(
         message: str,
         context: ContextStack,
@@ -1189,21 +1210,21 @@ class IntelligentQueryHandler:
         pending = context.working_memory.session_facts.get("pending_entity_clarification")
         if not isinstance(pending, dict):
             return None
-        prior_query = str(pending.get("query") or "").strip().lower()
-        if prior_query != message.strip().lower():
+        prior_query = str(pending.get("query") or "").strip()
+        if not IntelligentQueryHandler._queries_equivalent_for_clarification(prior_query, message):
             return None
         options = pending.get("options") or []
         defaults = [option for option in options if option.get("is_default")]
-        if len(defaults) != 1:
+        chosen = defaults[0] if len(defaults) == 1 else (options[0] if len(options) == 1 else None)
+        if chosen is None:
             return None
-        option = defaults[0]
-        if option.get("action") != "confirm_entity" or not option.get("entity_id"):
+        if chosen.get("action") != "confirm_entity" or not chosen.get("entity_id"):
             return None
         return [
             ConfirmedEntityRef(
-                type=str(option.get("entity_type") or "project"),
-                id=int(option["entity_id"]),
-                name=str(option.get("label") or option["entity_id"]),
+                type=str(chosen.get("entity_type") or "project"),
+                id=int(chosen["entity_id"]),
+                name=str(chosen.get("label") or chosen["entity_id"]),
             ),
         ]
 
@@ -1332,9 +1353,12 @@ class IntelligentQueryHandler:
         meta.clarification_matches = result.matches
         meta.clarification_options = result.options or build_entity_options(result.matches)
         meta.query_label = result.query_label
+        from gateway.core.payroll_query_routing import is_payroll_orchestration_query
+
         context.working_memory.session_facts["pending_entity_clarification"] = {
             "query": message,
             "options": meta.clarification_options,
+            "payroll_context": is_payroll_orchestration_query(message, intent, context),
         }
         meta.compare_pending_query = result.compare_pending_query
         meta.compare_resolved_projects = list(result.compare_resolved_projects)
@@ -1386,6 +1410,15 @@ class IntelligentQueryHandler:
             }
 
         if should_offer_date_clarification(message):
+            from gateway.core.payroll_query_routing import (
+                is_payroll_orchestration_query,
+                message_has_payroll_period,
+            )
+
+            if is_payroll_orchestration_query(message, intent, context) and message_has_payroll_period(
+                message,
+            ):
+                return None
             return build_date_range_clarification(language)
 
         return None
@@ -1991,6 +2024,7 @@ class IntelligentQueryHandler:
             elif len(entity_meta.clarification_options) == 1:
                 label = entity_meta.clarification_options[0].get("label", "")
                 from gateway.core.hr_query_routing import is_hr_person_query
+                from gateway.core.payroll_query_routing import is_payroll_orchestration_query
 
                 if profile_query:
                     question = (
@@ -1998,7 +2032,10 @@ class IntelligentQueryHandler:
                         if language != "ar"
                         else f"هل تقصد **{label}**؟"
                     )
-                elif is_hr_person_query(message):
+                elif intent is not None and (
+                    is_payroll_orchestration_query(message, intent, context)
+                    or is_hr_person_query(message)
+                ):
                     question = (
                         f"I found **{label}**. Is this the employee you mean?"
                         if language != "ar"

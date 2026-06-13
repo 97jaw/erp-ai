@@ -101,3 +101,31 @@ def test_hr_orchestration_skips_payroll_labor_cost() -> None:
         "labor cost for Villa Maintenance No. 34 this month",
         intent,
     )
+
+
+def test_name_and_month_year_routes_to_payslip_query() -> None:
+    ctx = _make_context_stack()
+    message = "jawad ur rehman, may 2026"
+    intent = _intent(
+        primary_action="fetch_data",
+        subject_area="other",
+        specific_intent=message,
+    )
+    assert is_payroll_orchestration_query(message, intent, ctx)
+    tool, payload = resolve_payroll_tool(message, intent, ctx)
+    assert tool == "query_odoo"
+    assert payload["model"] == "hr.payslip"
+    domain_text = str(payload["domain"])
+    assert "employee_id.name" in domain_text
+    assert "2026" in domain_text
+
+
+def test_payroll_follow_up_after_prior_payslip_turn() -> None:
+    ctx = _make_context_stack()
+    ctx.working_memory.session_facts["last_turn"] = {
+        "message": "show payslip amount for jawad",
+        "subject_area": "payroll",
+    }
+    message = "jawad ur rehman, may 2026"
+    intent = _intent(subject_area="other", specific_intent=message)
+    assert is_payroll_orchestration_query(message, intent, ctx)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import calendar
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -42,6 +43,39 @@ _EXPLICIT_RANGE_RE = re.compile(
 
 _LAST_N_MONTHS_RE = re.compile(r"(?:last|past)\s+(\d+)\s+months?", re.IGNORECASE)
 
+_MONTH_YEAR_RE = re.compile(
+    r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
+    r"aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+    r"\s*,?\s*(\d{4})\b",
+    re.IGNORECASE,
+)
+_MONTH_NUM = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
+
+
+def _month_year_date_range(blob: str) -> tuple[str, str] | None:
+    match = _MONTH_YEAR_RE.search(blob)
+    if not match:
+        return None
+    month_num = _MONTH_NUM.get(match.group(1)[:3].lower())
+    if not month_num:
+        return None
+    year = int(match.group(2))
+    last_day = calendar.monthrange(year, month_num)[1]
+    return f"{year:04d}-{month_num:02d}-01", f"{year:04d}-{month_num:02d}-{last_day:02d}"
+
 
 def resolve_report_date_range(query: str, temporal: Any) -> tuple[str, str]:
     """Map a period phrase in the query to (date_from, date_to).
@@ -53,6 +87,10 @@ def resolve_report_date_range(query: str, temporal: Any) -> tuple[str, str]:
     explicit = _EXPLICIT_RANGE_RE.search(blob)
     if explicit:
         return explicit.group(1), explicit.group(2)
+
+    month_year = _month_year_date_range(blob)
+    if month_year:
+        return month_year
 
     if "this month" in blob:
         today = temporal.today
@@ -717,7 +755,7 @@ class StrategyPlanner:
             resolve_payroll_tool,
         )
 
-        if is_payroll_orchestration_query(message, intent):
+        if is_payroll_orchestration_query(message, intent, context):
             routed = resolve_payroll_tool(message, intent, context)
             if routed is not None:
                 return routed

@@ -964,8 +964,10 @@ class EntityGate:
         using_weak: bool,
     ) -> dict[str, Any] | None:
         """Return the project summary to auto-confirm for numbered villa/project queries."""
-        if using_weak or not matches:
+        if not matches:
             return None
+
+        from gateway.core.payroll_query_routing import _LABOR_COST_RE
 
         number_hint = _number_hint_from_query_and_message(message, message)
         if not number_hint:
@@ -980,6 +982,11 @@ class EntityGate:
             top = numbered[0]
             if float(top.get("confidence") or 0.0) >= CONFIDENT_CONFIDENCE_MIN:
                 return top
+            if _LABOR_COST_RE.search(message.lower()):
+                return top
+
+        if using_weak:
+            return None
 
         if context.user.assumption_level() == "aggressive" and len(matches) >= 2:
             top = matches[0]

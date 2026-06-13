@@ -7,6 +7,7 @@ without new Odoo tools.
 from __future__ import annotations
 
 import re
+import calendar
 from datetime import timedelta
 from typing import Any
 
@@ -56,13 +57,86 @@ _EMPLOYEE_NAME_RE = re.compile(
     r"(?:payslips?(?:\s+for)?|show\s+|^)\s*([A-Z][A-Za-z\s'.-]{2,50}?)(?:'s|\s+payslip|\s+last|\s+this|\s+cost|\s*$)",
     re.I,
 )
+_MONTH_YEAR_RE = re.compile(
+    r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
+    r"aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+    r"\s*,?\s*(\d{4})\b",
+    re.I,
+)
+_MONTH_NUM = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
 
 
 def _query_blob(message: str, intent: Intent) -> str:
     return f"{message} {intent.specific_intent} {intent.subject_area}".lower().replace("_", " ")
 
 
-def is_payroll_orchestration_query(message: str, intent: Intent) -> bool:
+def _active_payroll_context(context: ContextStack | None) -> bool:
+    """True when the prior turn was payroll/HR and this message is likely a follow-up."""
+    if context is None:
+        return False
+    facts = context.working_memory.session_facts or {}
+    pending = facts.get("pending_entity_clarification") or {}
+    if pending.get("payroll_context"):
+        return True
+    last = facts.get("last_turn") or {}
+    if last.get("subject_area") in {"payroll", "hr"}:
+        last_msg = str(last.get("message") or "").lower()
+        if any(token in last_msg for token in _PAYROLL_SUBJECT_TOKENS):
+            return True
+        if "payslip" in last_msg or "salary" in last_msg:
+            return True
+    return False
+
+
+def _looks_like_employee_name_fragment(message: str) -> bool:
+    """Heuristic: two+ name tokens, not a project/cost query."""
+    cleaned = _MONTH_YEAR_RE.sub("", message).strip(" ,")
+    lowered = cleaned.lower()
+    if any(
+        token in lowered
+        for token in ("villa", "maintenance", "project", "invoice", "p&l", "profit", "client")
+    ):
+        return False
+    tokens = [token for token in re.split(r"[\s,]+", cleaned) if len(token) > 1]
+    return len(tokens) >= 2
+
+
+def message_has_payroll_period(message: str) -> bool:
+    """Return True when the user named an explicit month/year or relative payroll period."""
+    blob = message.lower()
+    if _MONTH_YEAR_RE.search(blob):
+        return True
+    return any(
+        token in blob
+        for token in (
+            "last month",
+            "this month",
+            "this year",
+            "last quarter",
+            "ytd",
+            "year to date",
+        )
+    )
+
+
+def is_payroll_orchestration_query(
+    message: str,
+    intent: Intent,
+    context: ContextStack | None = None,
+) -> bool:
     """True when the question should use payroll models, not generic HR employee reads."""
     blob = _query_blob(message, intent)
     if intent.subject_area == "payroll":
@@ -80,7 +154,21 @@ def is_payroll_orchestration_query(message: str, intent: Intent) -> bool:
     msg = message.lower()
     if "across projects" in msg and ("cost" in msg or "labor" in msg or "labour" in msg):
         return True
+    if message_has_payroll_period(message) and _looks_like_employee_name_fragment(message):
+        return True
+    if context is not None and _active_payroll_context(context):
+        if _looks_like_employee_name_fragment(message) or message_has_payroll_period(message):
+            return True
+        if len(message.split()) <= 10 and not looks_like_project_cost_only(message):
+            return True
     return False
+
+
+def looks_like_project_cost_only(message: str) -> bool:
+    lowered = message.lower()
+    return bool(_LABOR_COST_RE.search(lowered)) and any(
+        token in lowered for token in ("villa", "maintenance", "project", "wo ")
+    )
 
 
 def _confirmed_project_id(context: ContextStack | None) -> int | None:
@@ -153,14 +241,29 @@ def _allocation_month_year(
     return month, year, domain
 
 
+def _parse_month_year(message: str) -> tuple[str, str] | None:
+    match = _MONTH_YEAR_RE.search(message.lower())
+    if not match:
+        return None
+    month_key = match.group(1)[:3].lower()
+    month_num = _MONTH_NUM.get(month_key)
+    if not month_num:
+        return None
+    return str(month_num), str(match.group(2))
+
+
 def _employee_name_hint(message: str) -> str:
-    match = _EMPLOYEE_NAME_RE.search(message.strip())
+    cleaned = _MONTH_YEAR_RE.sub("", message).strip(" ,")
+    match = _EMPLOYEE_NAME_RE.search(cleaned.strip())
     if match:
         name = match.group(1).strip(" '\"")
         if name.lower() not in ("draft", "finalized", "total", "payroll", "payslips"):
             return name
-    if "'s" in message:
-        return message.split("'s")[0].strip()
+    if "'s" in cleaned:
+        return cleaned.split("'s")[0].strip()
+    tokens = [token for token in re.split(r"[\s,]+", cleaned) if len(token) > 1]
+    if len(tokens) >= 2 and tokens[0][0].isalpha():
+        return " ".join(tokens[:4])
     return ""
 
 
@@ -403,12 +506,26 @@ def resolve_payroll_tool(
             "order": "date_to desc",
         }
 
-    if "payslip" in blob:
+    if "payslip" in blob or (
+        employee_hint and (message_has_payroll_period(message) or _active_payroll_context(context))
+    ):
         ps_domain: list[Any] = []
-        if "last month" in blob or "this month" in blob or "this year" in blob:
+        month_year = _parse_month_year(message)
+        if month_year:
+            month, year = month_year
+            ps_domain.extend([["date_from", ">=", f"{year}-{int(month):02d}-01"]])
+            last_day = calendar.monthrange(int(year), int(month))[1]
+            ps_domain.append(
+                ["date_to", "<=", f"{year}-{int(month):02d}-{last_day:02d}"],
+            )
+        elif "last month" in blob or "this month" in blob or "this year" in blob:
             ps_domain = _payslip_date_domain(message, intent, context)
         if employee_hint:
-            ps_domain.append(["employee_id.name", "ilike", employee_hint.split()[0]])
+            parts = [part for part in employee_hint.split() if len(part) > 1]
+            if parts:
+                ps_domain.append(["employee_id.name", "ilike", parts[0]])
+                if len(parts) > 1:
+                    ps_domain.append(["employee_id.name", "ilike", parts[-1]])
         return "query_odoo", {
             "model": "hr.payslip",
             "domain": ps_domain,

@@ -22,6 +22,8 @@ class SuggestionContext(str, Enum):
     COMPARISON = "comparison"
     DATA_TABLE = "data_table"
     BAR_CHART = "bar_chart"
+    HR = "hr"
+    PAYROLL = "payroll"
     GENERAL = "general"
 
 
@@ -95,6 +97,39 @@ RECEIVABLES_SUGGESTIONS: dict[str, list[str]] = {
     ],
 }
 
+HR_SUGGESTIONS: dict[str, list[str]] = {
+    "roster": [
+        "Who works in the Civil department?",
+        "List employees who joined this year",
+        "Show department head count by project",
+    ],
+    "attendance": [
+        "Who was absent yesterday?",
+        "Show attendance count today",
+    ],
+    "compliance": [
+        "Employees with visas expiring in 30 days",
+        "Who has missing required documents?",
+    ],
+}
+
+PAYROLL_SUGGESTIONS: dict[str, list[str]] = {
+    "costs": [
+        "Total payroll cost last month",
+        "Most expensive project by labor cost",
+        "Labor cost for Villa Maintenance No. 34 this month",
+    ],
+    "payslips": [
+        "Draft payslips count",
+        "Show payslip for last month",
+        "Overtime cost this month",
+    ],
+    "analysis": [
+        "Payroll by department last month",
+        "Average labor cost per project this year",
+    ],
+}
+
 AR_SUGGESTIONS: dict[str, str] = {
     "Compare with last month": "قارن مع الشهر الماضي",
     "Show top 5 cost categories": "اعرض أهم 5 فئات تكلفة",
@@ -156,7 +191,17 @@ def _translate_suggestion(text: str, language: str) -> str:
 def detect_suggestion_context(
     tool_names: list[str],
     visualization: dict[str, Any] | None,
+    tool_results: list[Any] | None = None,
 ) -> SuggestionContext:
+    for result in reversed(tool_results or []):
+        if not isinstance(result, dict):
+            continue
+        model = str(result.get("model") or "")
+        if model.startswith("hr.payslip"):
+            return SuggestionContext.PAYROLL
+        if model.startswith("hr."):
+            return SuggestionContext.HR
+
     visual_type = (visualization or {}).get("visual_type") or ""
     if visual_type == "FINANCIAL_REPORT":
         label = str((visualization or {}).get("label") or "").lower()
@@ -270,6 +315,12 @@ def get_suggestion_pool(context: SuggestionContext, data: dict[str, Any]) -> lis
             "Filter to the top 10 rows only",
             "Compare with the previous period",
         ])
+    elif context == SuggestionContext.HR:
+        for items in HR_SUGGESTIONS.values():
+            pool.extend(items)
+    elif context == SuggestionContext.PAYROLL:
+        for items in PAYROLL_SUGGESTIONS.values():
+            pool.extend(items)
     else:
         pool.extend([
             "Show more details",
@@ -349,7 +400,7 @@ def build_post_response_suggestions(
     if not tool_names and not visualization:
         return (model_suggestions or [])[:3], None
 
-    context = detect_suggestion_context(tool_names, visualization)
+    context = detect_suggestion_context(tool_names, visualization, tool_results)
     data_context = extract_data_context(visualization, tool_results)
     pool = get_suggestion_pool(context, data_context)
 
