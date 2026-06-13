@@ -314,6 +314,15 @@ async def _app_lifespan(_app: FastAPI):
         await run_all_credit_checks()
     except Exception:
         logger.exception("Initial API credit check failed")
+
+    # Warm up voice engines so first request doesn't pay cold-start penalty
+    try:
+        get_stt()
+        get_tts()
+        logger.info("[Lifespan] Voice engines initialised (WhisperSTT + ElevenLabsTTS)")
+    except Exception as _exc:
+        logger.warning("[Lifespan] Voice engine warm-up skipped: %s", _exc)
+
     yield
     stop_credit_check_scheduler()
     if auth_db_enabled():
@@ -3257,12 +3266,14 @@ async def voice(
     http_request: Request,
     audio: UploadFile = File(...),
     session_id: str | None = Form(None),
+    language_hint: str | None = Form(None),
     credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
 ):
     """
     Voice conversation endpoint.
 
     Accepts : audio file (wav, mp3, m4a, webm, ogg)
+              language_hint (optional) — 'en', 'ar', or 'ur'
     Returns : audio/mpeg stream (spoken response)
 
     Pipeline:
@@ -3280,6 +3291,7 @@ async def voice(
             chat_user=chat_user,
             user_id=chat_user.id if chat_user else None,
             extension_from_filename=audio.filename or "audio.webm",
+            language_hint=language_hint,
         )
     finally:
         set_request_user(None)
@@ -3292,9 +3304,15 @@ async def _voice_pipeline(
     chat_user: CurrentUser,
     user_id: int | None = None,
     extension_from_filename: str,
+    language_hint: str | None = None,
 ) -> StreamingResponse:
+    import json as _json
+
     filename  = extension_from_filename
     extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "webm"
+
+    # Initialize before try block so finally can always reference it safely
+    tmp_path: str | None = None
 
     # Save uploaded audio to temp file
     try:
@@ -3318,10 +3336,10 @@ async def _voice_pipeline(
         )
 
     try:
-        # Step 1: STT — transcribe audio to text
+        # Step 1: STT — async transcription (non-blocking, language-hinted)
         stt = get_stt()
         try:
-            transcript = stt.transcribe(tmp_path)
+            transcript = await stt.async_transcribe(tmp_path, language_hint=language_hint)
             logger.info("[/voice] Transcript: '%s'", transcript)
         except Exception as exc:
             logger.exception("[/voice] Transcription failed")
@@ -3347,47 +3365,57 @@ async def _voice_pipeline(
                 session_id,
                 chat_user,
             )
-            response = {
-                "text": result.text,
-                "language": result.language,
-            }
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-        text     = response.get("text", "I could not process your request.")
-        language = response.get("language", "en")
+        text     = result.text or "I could not process your request."
+        language = result.language or "en"
+        suggestions = getattr(result, "suggestions", None) or []
 
-        # Step 3: TTS — convert response to speech
+        # Step 3: Streaming TTS via ElevenLabs /stream endpoint
         tts = get_tts()
-        try:
-            audio_bytes = tts.synthesize(text, language=language)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Speech synthesis failed: {exc}"
-            )
 
-        # Return audio stream with metadata headers
+        from integrations.voice_engine import prepare_for_tts as _prepare_for_tts
+        tts_text = _prepare_for_tts(text)
+
+        async def _audio_stream():
+            try:
+                async for chunk in tts.stream_synthesize(text, language=language):
+                    yield chunk
+            except Exception as exc:
+                logger.exception("[/voice] TTS streaming failed: %s", exc)
+                # Nothing we can do mid-stream; log and stop
+
+        suggestions_header = ""
+        try:
+            if suggestions:
+                suggestions_header = _ascii_header(_json.dumps(suggestions, ensure_ascii=False))
+        except Exception:
+            pass
+
+        # Return streaming audio with metadata headers
         return StreamingResponse(
-            iter([audio_bytes]),
+            _audio_stream(),
             media_type = "audio/mpeg",
             headers    = {
                 "X-Session-Id"     : session_id,
                 "X-Language"       : language,
                 "X-Transcript"     : _ascii_header(transcript),
-                "X-Response"       : _ascii_header(text),
+                "X-Response"       : _ascii_header(tts_text),
                 "X-Transcript-B64" : _utf8_header(transcript),
                 "X-Response-B64"   : _utf8_header(text),
+                "X-Suggestions"    : suggestions_header,
             },
         )
 
     finally:
         # Clean up temp file
         import os as _os
-        try:
-            _os.unlink(tmp_path)
-        except Exception:
-            pass
+        if tmp_path:
+            try:
+                _os.unlink(tmp_path)
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
