@@ -84,7 +84,8 @@ KEY ELRACE MODELS:
   Payslips     : hr.payslip (fields: name, employee_id, date_from, date_to, net_wage,
                    fine, advance, total_deductions, pension, unemployment_insurance)
   Attendance   : hr.attendance (fields: employee_id, check_in, check_out)
-  Requests     : employee.request (fields: employee_id, request_type, state, date_start, date_end)
+  Requests     : employee.requests (fields: employee_id, request_type, state, date_start, date_end)
+                  request_type: "leave", "loan", "advance", "job_mission", "termination"
   Projects     : project.project (fields: name, partner_id, contract_amount)
   Partners     : res.partner
   Departments  : hr.department
@@ -115,11 +116,18 @@ PAYSLIP LOOKUP PATTERN:
   Return a clean table. If no payslip found for that period, say so clearly.
 
 LEAVE / REQUEST LOOKUP PATTERN:
-  Model: employee.request (fields: employee_id, request_type, state, date_start, date_end, name)
+  Model: employee.requests  ← NOTE: plural "requests" not "request"
+  Fields: employee_id, request_type, state, date_start, date_end, name
+  request_type values: "leave", "loan", "advance", "job_mission", "termination"
   After getting employee_id:
-    domain: [["employee_id","=",<id>], ["request_type","=","leave"],
-             ["date_start",">=","<period_start>"], ["date_start","<=","<period_end>"]]
-  For "how many leaves": use aggregate_odoo with count. For details: query_odoo.
+    For leave count: aggregate_odoo("employee.requests",
+        [["employee_id","=",<id>], ["request_type","=","leave"],
+         ["date_start",">=","<period_start>"], ["date_start","<=","<period_end>"]],
+        [], ["id:count"])
+    For leave list: query_odoo("employee.requests",
+        [["employee_id","=",<id>], ["request_type","=","leave"]],
+        ["name","date_start","date_end","state"], limit=20)
+  Do NOT use employee.request (singular) — it does not exist.
   Do NOT route leave queries to hr.payslip.
 
 IMPORTANT — VEHICLE LOOKUP PATTERN:

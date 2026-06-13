@@ -1948,23 +1948,42 @@ class IntelligentQueryHandler:
             # self-contained when clicked (e.g. "Jawad leave balance" not "leave balance").
             orig = (original_query or "").lower()
 
-            # Try to extract a 1-2 word person name hint from the original query
+            # Extract a person name from original_query using stopword filtering.
+            # Works on all-lowercase queries like "how many leaves jawad took this month".
+            _SUGGESTION_STOPWORDS = frozenset({
+                "how", "many", "show", "me", "get", "check", "tell", "find", "give",
+                "what", "when", "where", "who", "which", "the", "a", "an", "of",
+                "for", "in", "on", "to", "from", "at", "by", "with", "this", "that",
+                "is", "are", "was", "were", "has", "have", "had", "do", "does", "did",
+                "will", "would", "can", "could", "should", "may", "might", "be", "been",
+                "last", "month", "year", "week", "today", "yesterday", "about", "all",
+                "their", "his", "her", "its", "our", "your",
+                # domain words — not names
+                "leave", "leaves", "vacation", "attendance", "vehicle", "car", "fleet",
+                "payslip", "salary", "visa", "passport", "insurance", "took", "take",
+                "history", "balance", "request", "requests", "record", "records",
+                "detail", "details", "summary", "information", "info", "list",
+                "employees", "employee", "staff", "worker", "workers",
+                "expiring", "expired", "expiry", "renewal", "renew", "next", "upcoming",
+            })
             _name_hint = ""
-            _name_m = _re.search(
-                r"\b(?:for|of|show|get|check)\s+([a-z]+(?:\s+[a-z]+)?)\b",
-                orig,
-            )
-            if not _name_m:
-                # First capitalized-looking word(s) in original query
-                _name_m2 = _re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b", original_query or "")
-                if _name_m2:
-                    _name_hint = _name_m2.group(1).split()[0]  # first name only
-            else:
-                _name_hint = _name_m.group(1).split()[0].capitalize()
+            for _w in orig.split():
+                _w_clean = _w.strip(".,?!")
+                if _w_clean and _w_clean not in _SUGGESTION_STOPWORDS and len(_w_clean) > 2:
+                    _name_hint = _w_clean.capitalize()
+                    break
 
-            # Prefix suggestions with the name when we have one, so chips are self-contained
+            # Prefix suggestions with the name only when the hint looks like a person name —
+            # exclude months, generic nouns, and query-type words.
+            _NOT_A_PERSON = frozenset({
+                "august", "january", "february", "march", "april", "may", "june",
+                "july", "september", "october", "november", "december",
+                "vehicles", "vehicle", "employees", "employee", "fleet", "company",
+            })
+            _use_name_prefix = bool(_name_hint) and _name_hint.lower() not in _NOT_A_PERSON
+
             def _s(base: str) -> str:
-                return f"{_name_hint} {base.lower()}" if _name_hint else base
+                return f"{_name_hint} {base.lower()}" if _use_name_prefix else base
 
             if any(w in orig for w in ("vehicle", "car", "fleet", "navara", "pickup")):
                 if language == "ar":
