@@ -43,9 +43,15 @@ _CAPABILITY_RE = re.compile(
 # business-signal guard so they route to the conversational handler, not the pipeline.
 _CAPABILITY_INFO_RE = re.compile(
     r"(?:"
+    # "can you give/provide/show/tell information about X"
     r"can\s+you\s+(?:give|provide|show|tell|explain|share)\s+(?:me\s+)?(?:some\s+)?(?:information|info|details?)\s+(?:about|on|regarding|for)\b"
+    # "can you information about X" — verb omitted (common non-native phrasing)
+    r"|can\s+you\s+(?:me\s+)?(?:information|info|details?)\s+(?:about|on|regarding|for)\b"
+    # "what information can you provide about X"
     r"|what\s+(?:information|data|details?)\s+(?:can\s+you|do\s+you)\s+(?:provide|have|show|give|access)\b"
+    # "can you handle/do/support payslips/employees/vehicles"
     r"|can\s+you\s+(?:handle|do|manage|support|access|work\s+with)\s+(?:payslip|payroll|employee|vehicle|attendance|leave|salary|visa)\b"
+    # "are you able to show / is it possible to get"
     r"|(?:are\s+you\s+able|is\s+it\s+possible)\s+to\s+(?:show|get|view|check|fetch|provide|give)\b"
     r"|do\s+you\s+(?:have\s+access\s+to|support|handle|know\s+about)\b"
     r")",

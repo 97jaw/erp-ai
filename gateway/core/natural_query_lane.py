@@ -213,7 +213,7 @@ def should_use_fast_lane(
         and any(w in msg_lower for w in ("payslip", "salary", "net salary", "net pay"))
         and bool(intent.entities)
     ):
-        logger.debug("[FastLane] Signal 4 — payslip lookup with entity=%r", [e.name for e in intent.entities])
+        logger.debug("[FastLane] Signal 4 — payslip lookup with entity=%r", [e.value for e in intent.entities])
         return True
 
     # Signal 5: attendance or leave lookup with a named entity.
@@ -223,7 +223,7 @@ def should_use_fast_lane(
         any(w in msg_lower for w in ("attendance", "absent", "check in", "check out", "check-in", "check-out"))
         and bool(intent.entities)
     ):
-        logger.debug("[FastLane] Signal 5 — attendance lookup with entity=%r", [e.name for e in intent.entities])
+        logger.debug("[FastLane] Signal 5 — attendance lookup with entity=%r", [e.value for e in intent.entities])
         return True
 
     # Signal 6: visa/passport/document expiry queries — best handled by fast lane

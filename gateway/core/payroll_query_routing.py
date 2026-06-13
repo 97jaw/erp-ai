@@ -125,6 +125,15 @@ _NON_PAYROLL_MARKERS = (
     "number of department",
     "list of department",
     "all department",
+    # Financial abbreviations — "pnl for this month" must NOT go to payroll
+    # even though _employee_name_hint("pnl") returns "pnl" as a name fragment.
+    "pnl",
+    "ageing summary",
+    "aging summary",
+    "receivables ageing",
+    "receivables aging",
+    "payables ageing",
+    "payables aging",
 )
 _MONTH_YEAR_RE = re.compile(
     r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
@@ -191,7 +200,13 @@ def _looks_like_employee_name_fragment(message: str) -> bool:
             "project",
             "invoice",
             "p&l",
+            "pnl",
             "profit",
+            "loss",
+            "receivable",
+            "payable",
+            "ageing",
+            "aging",
             "client",
             "terminated",
             "termination",
