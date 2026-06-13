@@ -27,6 +27,8 @@ _ENTITY_DATA_RE = re.compile(
     r"\b("
     r"project|villa|school|maintenance|partner|client|vendor|customer|"
     r"invoice|payment|journal|account|wo|work\s*order|"
+    r"employee|employees|department|departments|payslip|payslips|payroll|"
+    r"labor\s+cost|labour\s+cost|headcount|head\s+count|"
     r"compare|breakdown|break\s+down|drill\s*down|summary|total"
     r")\b"
     r"|مشروع|فيلا|مدرسة|صيانة|عميل|مورد|فاتورة|مقارنة|ملخص|إجمالي",

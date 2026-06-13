@@ -22,8 +22,8 @@ fi
 echo "==> git pull"
 git pull
 
-echo "==> restart gateway (live mount reads /opt/ooa)"
-docker compose ${COMPOSE} --env-file "${ENV_FILE}" restart gateway
+echo "==> recreate gateway (reload .env.production + live mount at /opt/ooa)"
+docker compose ${COMPOSE} --env-file "${ENV_FILE}" up -d gateway
 
 echo "==> health check"
 for _ in $(seq 1 20); do

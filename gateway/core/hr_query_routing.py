@@ -78,6 +78,8 @@ def is_hr_orchestration_query(message: str, intent: Intent) -> bool:
         return True
     if "who works on" in blob or "works on" in blob:
         return True
+    if re.search(r"who works(?:\s+in|\s+at)?", blob):
+        return True
     if "head count by project" in blob or "headcount by project" in blob:
         return True
     return False
@@ -464,6 +466,36 @@ def resolve_hr_tool(
             "domain": active_domain + [["child_ids", "!=", False]],
             "fields": ["name", "job_title", "department_id", "child_ids"],
             "limit": 50,
+        }
+
+    # --- Department roster (who works in X department) ---
+    if (
+        (
+            re.search(r"who works(?:\s+in|\s+at)?", blob)
+            or "employees in" in blob
+            or "staff in" in blob
+        )
+        and "department" in blob
+        and "by project" not in blob
+        and "head count" not in blob
+        and "headcount" not in blob
+    ):
+        roster_domain: list[Any] = list(active_domain)
+        dept_match = re.search(
+            r"(?:in|at|from)\s+(?:the\s+)?([a-z][a-z\s&.-]+?)\s+department",
+            message,
+            re.I,
+        )
+        if "civil" in blob:
+            roster_domain.append(["department_id.name", "ilike", "civil"])
+        elif dept_match:
+            roster_domain.append(["department_id.name", "ilike", dept_match.group(1).strip()])
+        return "query_odoo", {
+            "model": "hr.employee",
+            "domain": roster_domain,
+            "fields": ["name", "job_id", "department_id", "work_email"],
+            "limit": 100,
+            "order": "name asc",
         }
 
     # --- Default headcount (existing open-gate behavior, refined) ---

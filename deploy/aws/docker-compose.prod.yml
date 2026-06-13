@@ -41,6 +41,7 @@ services:
       OOA_GATEWAY_PORT: 8000
       OOA_LOG_JSON: "true"
       OOA_LOG_FILE: /app/logs/ooa-gateway.jsonl
+      ODOO_V14_UID: ${ODOO_V14_UID:-}
     volumes:
       - ooa-logs:/app/logs
       - ooa-cache:/app/.cache

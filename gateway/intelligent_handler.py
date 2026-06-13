@@ -474,10 +474,12 @@ class IntelligentQueryHandler:
             # Project profile queries bypass this: header reads need no Deep Think.
             if (
                 not deep_think
-                and                 not profile_query
+                and not profile_query
                 and not records_query
                 and not activity_query
                 and not broad_search_query
+                and not hr_orchestration_query
+                and not payroll_orchestration_query
                 and not is_active_follow_up
                 and effective_strategy_override is None
                 and self._requires_deep_think(message, intent)

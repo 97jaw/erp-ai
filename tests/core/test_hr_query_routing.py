@@ -111,6 +111,16 @@ def test_project_staff_query_detection() -> None:
     assert is_hr_project_staff_query("who works on Villa 34")
 
 
+def test_who_works_in_department_lists_employees() -> None:
+    tool, payload = resolve_hr_tool(
+        "who works in the Civil department",
+        _intent(subject_area="hr", specific_intent="list civil department employees"),
+    )
+    assert tool == "query_odoo"
+    assert payload["model"] == "hr.employee"
+    assert ["department_id.name", "ilike", "civil"] in payload["domain"]
+
+
 def test_strategy_planner_delegates_hr_routing() -> None:
     from gateway.core.strategy_planner import StrategyPlanner
 
