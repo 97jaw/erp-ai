@@ -705,6 +705,17 @@ export default function ChatScreen({
 
       // Parse X-Deep-Think-Available so the Deep Think button lights up after voice answers
       const voiceDeepThinkAvailable = res.headers.get("X-Deep-Think-Available") === "true";
+      const voiceAwaitingClarification = res.headers.get("X-Awaiting-Clarification") === "true";
+
+      // Decode clarification object (entity picker options) from Base64-encoded UTF-8 JSON
+      let voiceClarification = null;
+      try {
+        const clarB64 = res.headers.get("X-Clarification-B64");
+        if (clarB64) {
+          const bytes = Uint8Array.from(atob(clarB64), (c) => c.charCodeAt(0));
+          voiceClarification = JSON.parse(new TextDecoder("utf-8").decode(bytes));
+        }
+      } catch { /* ignore malformed header */ }
 
       const audioBlob = await res.blob();
       const url = URL.createObjectURL(audioBlob);
@@ -745,14 +756,17 @@ export default function ChatScreen({
         id: queryId,
         question: `🎤 ${transcript}`,
         createdAt: Date.now(),
-        status: "complete",
+        // Show clarification card (entity picker) when server needs confirmation
+        status: voiceAwaitingClarification ? "awaiting_clarification" : "complete",
         vizType: null,
         response: {
-          text: responseText,
+          text: voiceAwaitingClarification
+            ? (voiceClarification?.question || responseText)
+            : responseText,
           visualization: null,
           suggestions: voiceSuggestions,
           suggestionMeta: null,
-          clarification: null,
+          clarification: voiceClarification,
           deepThinkAvailable: voiceDeepThinkAvailable,
         },
       }, ...prev]);
