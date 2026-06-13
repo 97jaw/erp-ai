@@ -2,6 +2,7 @@
 
 from gateway.core.payroll_query_routing import (
     is_payroll_orchestration_query,
+    requires_payroll_project_confirmation,
     resolve_payroll_tool,
 )
 from gateway.core.intent_analyzer import Intent
@@ -26,6 +27,14 @@ def _intent(**overrides: object) -> Intent:
     }
     base.update(overrides)
     return Intent(**base)
+
+
+def test_labor_cost_without_confirmed_project_requires_entity_pick() -> None:
+    ctx = _make_context_stack()
+    message = "labor cost for Villa Maintenance No. 34 this month"
+    intent = _intent(specific_intent=message, subject_area="project")
+    assert requires_payroll_project_confirmation(message, intent, ctx)
+    assert resolve_payroll_tool(message, intent, ctx) is None
 
 
 def test_labor_cost_routes_to_cost_allocation() -> None:

@@ -1944,11 +1944,24 @@ class IntelligentQueryHandler:
                 else "يرجى تأكيد المشروع المقصود."
             )
         else:
-            generic_question = (
-                "Please confirm which record you mean before I fetch financial data."
-                if language != "ar"
-                else "يرجى تأكيد السجل المطلوب قبل جلب البيانات المالية."
-            )
+            from gateway.core.payroll_query_routing import is_payroll_orchestration_query
+
+            pending = context.working_memory.session_facts.get("pending_entity_clarification") or {}
+            payroll_context = bool(pending.get("payroll_context"))
+            if payroll_context or (
+                intent is not None and is_payroll_orchestration_query(message, intent, context)
+            ):
+                generic_question = (
+                    "Please confirm which record you mean before I fetch payroll data."
+                    if language != "ar"
+                    else "يرجى تأكيد السجل المطلوب قبل جلب بيانات الرواتب."
+                )
+            else:
+                generic_question = (
+                    "Please confirm which record you mean before I fetch financial data."
+                    if language != "ar"
+                    else "يرجى تأكيد السجل المطلوب قبل جلب البيانات المالية."
+                )
         has_candidates = bool(entity_meta.clarification_options)
         if has_candidates:
             duration_ms = int((time.perf_counter() - started) * 1000)

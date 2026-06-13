@@ -171,6 +171,35 @@ def looks_like_project_cost_only(message: str) -> bool:
     )
 
 
+def requires_payroll_project_confirmation(
+    message: str,
+    intent: Intent,
+    context: ContextStack | None = None,
+) -> bool:
+    """True when a named-project labor-cost query needs project pick before payroll tools."""
+    if not is_payroll_orchestration_query(message, intent, context):
+        return False
+    if _confirmed_project_id(context) is not None:
+        return False
+    if looks_like_project_cost_only(message):
+        return True
+    from gateway.core.project_query_utils import (
+        extract_project_name_hint,
+        extract_project_number_hint,
+    )
+
+    if _LABOR_COST_RE.search(message.lower()) and (
+        extract_project_name_hint(message) or extract_project_number_hint(message)
+    ):
+        return True
+    return False
+
+
+def confirmed_project_id(context: ContextStack | None) -> int | None:
+    """Public accessor for the active confirmed project id in session facts."""
+    return _confirmed_project_id(context)
+
+
 def _confirmed_project_id(context: ContextStack | None) -> int | None:
     if context is None:
         return None
@@ -292,7 +321,7 @@ def resolve_payroll_tool(
     context: ContextStack | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     """Return (tool_name, payload) for payroll queries, or None if not payroll-routed."""
-    if not is_payroll_orchestration_query(message, intent):
+    if not is_payroll_orchestration_query(message, intent, context):
         return None
 
     blob = _query_blob(message, intent)
@@ -373,20 +402,9 @@ def resolve_payroll_tool(
                 "limit": 10,
             }
 
-        from gateway.core.project_query_utils import extract_project_name_hint
-
-        project_hint = extract_project_name_hint(message)
-        if project_hint:
-            domain.append(["project_id.name", "ilike", project_hint[:60]])
-            if month and year and "last 6 months" not in msg and "trend" not in msg:
-                domain.extend([["month", "=", month], ["year", "=", year]])
-            return "aggregate_odoo", {
-                "model": COST_ALLOCATION_MODEL,
-                "domain": domain,
-                "group_by": ["project_id"],
-                "aggregates": ["amount:sum"],
-                "limit": 10,
-            }
+        # Named-project labor cost must go through entity confirmation first.
+        if requires_payroll_project_confirmation(message, intent, context):
+            return None
 
     # --- Category D: worked days ---
     if any(token in blob for token in ("job mission", "worked days", "annual leave salary", "sick leave usage")):

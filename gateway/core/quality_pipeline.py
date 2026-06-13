@@ -221,6 +221,25 @@ def no_data_message(
                 return "That data is restricted in this assistant."
             if message:
                 return f"The Odoo query did not complete: {message[:240]}"
+        if payload.get("model") == "hr.payslip" and int(payload.get("record_count") or 0) == 0:
+            from gateway.core.payroll_query_routing import (
+                _employee_name_hint,
+                message_has_payroll_period,
+            )
+
+            query_text = user_message or intent.specific_intent
+            employee = _employee_name_hint(query_text)
+            period_hint = (
+                "for the period you named"
+                if message_has_payroll_period(query_text)
+                else "for the requested period"
+            )
+            if employee:
+                return (
+                    f"No payslip found for **{employee}** {period_hint}. "
+                    "The slip may not be generated yet, or try last month."
+                )
+            return f"No payslip records found {period_hint}. Try last month or a finalized batch."
 
     tool_name = _resolve_tool_name(tool_names, tool_results)
     if tool_name == "get_project_expense_breakdown":
@@ -275,8 +294,30 @@ def _minimal_context(message: str) -> ContextStack:
     )
 
 
-def default_suggestions(intent: Intent) -> list[str]:
+def default_suggestions(
+    intent: Intent,
+    *,
+    tool_names: list[str] | None = None,
+    tool_results: list[Any] | None = None,
+) -> list[str]:
     """Provide actionable follow-ups when the response lacks suggestions."""
+    from gateway.suggestion_pool import (
+        SuggestionContext,
+        detect_suggestion_context,
+        extract_data_context,
+        get_suggestion_pool,
+        pick_diverse_suggestions,
+    )
+
+    context = detect_suggestion_context(tool_names or [], None, tool_results)
+    if intent.subject_area == "payroll":
+        context = SuggestionContext.PAYROLL
+    elif intent.subject_area == "hr":
+        context = SuggestionContext.HR
+    if context in {SuggestionContext.HR, SuggestionContext.PAYROLL}:
+        pool = get_suggestion_pool(context, extract_data_context(None, tool_results))
+        return pick_diverse_suggestions(pool, 3)
+
     if intent.primary_action == "compare":
         return ["Compare the same clients for project expenses in the same period."]
     return ["Show revenue by client for the last quarter."]
@@ -336,7 +377,8 @@ def build_quality_response(
         return QualityResponse(
             text=honest_text,
             visualization=None,
-            suggestions=suggestions or default_suggestions(intent),
+            suggestions=suggestions
+            or default_suggestions(intent, tool_names=tool_names, tool_results=tool_results),
             tool_results=tool_results,
         )
 
@@ -348,7 +390,11 @@ def build_quality_response(
         tool_results=tool_results,
         language=language,
     )
-    final_suggestions = suggestions or default_suggestions(intent)
+    final_suggestions = suggestions or default_suggestions(
+        intent,
+        tool_names=tool_names,
+        tool_results=tool_results,
+    )
     return QualityResponse(
         text=polished_text,
         visualization=polished_visual,
@@ -402,7 +448,10 @@ class QualityResponseReviser:
             ).strip()
 
         if "actionable_suggestions" in failed_names:
-            suggestions = default_suggestions(intent)
+            suggestions = default_suggestions(
+                intent,
+                tool_results=tool_results,
+            )
 
         if "appropriate_detail" in failed_names and len(text) < 25:
             text = (

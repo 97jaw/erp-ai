@@ -22,6 +22,8 @@ _DATE_IN_QUERY_RE = re.compile(
     r"last\s+\d+\s+(?:days?|months?|weeks?)|past\s+\d+\s+months?|"
     r"q[1-4]|quarter|january|february|march|april|may|june|july|august|"
     r"september|october|november|december|"
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
+    r"aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*,?\s*\d{4}|"
     r"\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|"
     r"from\s+\d|to\s+\d|between\s+\d|"
     r"هذا\s+الشهر|الشهر\s+الماضي|هذا\s+العام|آخر\s+\d+|"
@@ -76,6 +78,10 @@ def should_offer_date_clarification(message: str = "") -> bool:
     )
 
     if looks_like_project_cost_query(text) and extract_project_name_hint(text):
+        return False
+    from gateway.core.payroll_query_routing import message_has_payroll_period
+
+    if message_has_payroll_period(text):
         return False
     if _DATE_IN_QUERY_RE.search(text):
         return False

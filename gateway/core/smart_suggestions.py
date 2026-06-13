@@ -10,6 +10,7 @@ from gateway.core.intent_analyzer import Intent
 from gateway.core.proactive_intelligence import PredictedAction, _top_client_from_visualization
 from gateway.core.result_synthesizer import SynthesizedResult
 from gateway.suggestion_pool import (
+    SuggestionContext,
     detect_suggestion_context,
     extract_data_context,
     get_suggestion_pool,
@@ -75,6 +76,24 @@ class SmartSuggestionsGenerator:
         if "get_project_activity" in tool_names:
             return self._project_activity_suggestions(context, tool_results)
 
+        suggestion_context = detect_suggestion_context(
+            tool_names,
+            synthesized.visualization,
+            tool_results,
+        )
+        if intent.subject_area == "payroll":
+            suggestion_context = SuggestionContext.PAYROLL
+        elif intent.subject_area == "hr":
+            suggestion_context = SuggestionContext.HR
+
+        if suggestion_context in {SuggestionContext.HR, SuggestionContext.PAYROLL}:
+            data_context = extract_data_context(synthesized.visualization, tool_results)
+            pool = get_suggestion_pool(suggestion_context, data_context)
+            return [
+                Suggestion(text=text, category=_infer_category(text), priority=5)
+                for text in pick_diverse_suggestions(pool, TARGET_COUNT)
+            ]
+
         candidates: list[Suggestion] = []
         candidates.extend(
             Suggestion(text=item.text, category=item.category, priority=item.priority)
@@ -86,7 +105,15 @@ class SmartSuggestionsGenerator:
         candidates.extend(self._action_suggestions(synthesized, tool_names))
         candidates.extend(self._insight_suggestions(synthesized, tool_results))
 
-        suggestion_context = detect_suggestion_context(tool_names, synthesized.visualization)
+        suggestion_context = detect_suggestion_context(
+            tool_names,
+            synthesized.visualization,
+            tool_results,
+        )
+        if intent.subject_area == "payroll":
+            suggestion_context = SuggestionContext.PAYROLL
+        elif intent.subject_area == "hr":
+            suggestion_context = SuggestionContext.HR
         data_context = extract_data_context(synthesized.visualization, tool_results)
         for text in get_suggestion_pool(suggestion_context, data_context):
             candidates.append(Suggestion(text=text, category=_infer_category(text)))
