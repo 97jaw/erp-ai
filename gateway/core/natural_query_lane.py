@@ -188,29 +188,36 @@ class NaturalQueryLane:
         session_context_lines: list[str] = []
         sf = context.working_memory.session_facts
 
-        # Include fast-lane prior turn so Claude knows what it was doing
+        # Detect whether we are continuing a prior fast-lane disambiguation turn.
+        # When we are, do NOT inject unrelated session context (payroll/payslip from a
+        # previous topic) — it confuses Claude into querying payslips instead of
+        # continuing the original vehicle/attendance/etc lookup.
         pending = sf.get(FAST_LANE_SESSION_KEY)
-        if isinstance(pending, dict) and pending.get("awaiting_clarification"):
-            session_context_lines.append(
-                f"PRIOR FAST-LANE CONTEXT: The user was asked: \"{pending.get('last_response', '')}\"\n"
-                f"Original query that started this flow: \"{pending.get('original_query', '')}\"\n"
-                "The user's current message is their answer to that question. "
-                "Continue the lookup you were doing — do NOT start over or ask about financial data."
-            )
+        is_continuation = isinstance(pending, dict) and pending.get("awaiting_clarification")
 
-        if sf.get("pending_hr_context"):
+        if is_continuation:
             session_context_lines.append(
-                f"Session HR context: {json.dumps(sf['pending_hr_context'], default=str)}"
+                f"CONTINUING PREVIOUS LOOKUP:\n"
+                f"  Original query : \"{pending.get('original_query', '')}\"\n"
+                "The user's latest message is their answer to your disambiguation question.\n"
+                "Complete the task from the original query. "
+                "Do NOT query payslips. Do NOT ask about financial data."
             )
-        if sf.get("last_payslip_scope"):
-            session_context_lines.append(
-                f"Last payslip scope: {json.dumps(sf['last_payslip_scope'], default=str)}"
-            )
-        active = context.working_memory.get_active_project()
-        if active and active.project_id:
-            session_context_lines.append(
-                f"Active project: {active.project_name} (id={active.project_id})"
-            )
+        else:
+            # Fresh fast-lane query — inject relevant session context only.
+            if sf.get("pending_hr_context"):
+                session_context_lines.append(
+                    f"Session HR context: {json.dumps(sf['pending_hr_context'], default=str)}"
+                )
+            if sf.get("last_payslip_scope"):
+                session_context_lines.append(
+                    f"Last payslip scope: {json.dumps(sf['last_payslip_scope'], default=str)}"
+                )
+            active = context.working_memory.get_active_project()
+            if active and active.project_id:
+                session_context_lines.append(
+                    f"Active project: {active.project_name} (id={active.project_id})"
+                )
 
         session_context = "\n".join(session_context_lines)
         return FAST_LANE_SYSTEM_PROMPT.format(today=today, session_context=session_context)
