@@ -720,8 +720,16 @@ export default function ChatScreen({
         audioRef.current = null;
       }
 
-      setInput(transcript);
+      // Clear the input bar (don't leave transcript text there)
+      setInput("");
       setVoicePhase("processing");
+
+      // Parse suggestion chips from X-Suggestions header (JSON array)
+      let voiceSuggestions = [];
+      try {
+        const sugHeader = res.headers.get("X-Suggestions");
+        if (sugHeader) voiceSuggestions = JSON.parse(sugHeader);
+      } catch { /* ignore malformed header */ }
 
       const queryId = Date.now();
       setQueries((prev) => [{
@@ -733,7 +741,10 @@ export default function ChatScreen({
         response: {
           text: responseText,
           visualization: null,
-          suggestions: [],
+          suggestions: voiceSuggestions,
+          suggestionMeta: null,
+          clarification: null,
+          deepThinkAvailable: false,
         },
       }, ...prev]);
       setActiveQueryId(queryId);
