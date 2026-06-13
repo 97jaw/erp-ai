@@ -679,6 +679,8 @@ export default function ChatScreen({
     const extension = recordingExtension(mimeType);
     form.append("audio", blob, `recording.${extension}`);
     form.append("session_id", chatThreadId);
+    // Pass deep_think state so voice queries honour the toggle like text queries do
+    if (deepThink && deepThinkEligible) form.append("deep_think", "true");
 
     try {
       const res = await authFetch("/voice", {
@@ -688,7 +690,7 @@ export default function ChatScreen({
       if (!res.ok) throw new Error(await parseApiError(res, `Voice error: ${res.status}`));
 
       setVoicePhase("processing");
-      setLoadingStage("Preparing your answer…");
+      setLoadingStage(deepThink && deepThinkEligible ? "Deep thinking — pulling live data…" : "Preparing your answer…");
 
       const transcript = decodeHeader(
         res.headers.get("X-Transcript-B64"),
@@ -700,6 +702,9 @@ export default function ChatScreen({
         res.headers.get("X-Response"),
         "Processing...",
       );
+
+      // Parse X-Deep-Think-Available so the Deep Think button lights up after voice answers
+      const voiceDeepThinkAvailable = res.headers.get("X-Deep-Think-Available") === "true";
 
       const audioBlob = await res.blob();
       const url = URL.createObjectURL(audioBlob);
@@ -722,7 +727,11 @@ export default function ChatScreen({
 
       // Clear the input bar (don't leave transcript text there)
       setInput("");
+      setDeepThink(false);
       setVoicePhase("processing");
+
+      // Activate Deep Think button if the response indicates it's available
+      if (voiceDeepThinkAvailable) setDeepThinkEligible(true);
 
       // Parse suggestion chips from X-Suggestions header (JSON array)
       let voiceSuggestions = [];
@@ -744,7 +753,7 @@ export default function ChatScreen({
           suggestions: voiceSuggestions,
           suggestionMeta: null,
           clarification: null,
-          deepThinkAvailable: false,
+          deepThinkAvailable: voiceDeepThinkAvailable,
         },
       }, ...prev]);
       setActiveQueryId(queryId);
