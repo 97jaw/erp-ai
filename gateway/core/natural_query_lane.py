@@ -4,11 +4,15 @@ When the intent analyzer signals uncertainty (subject_area='other' or ambiguous
 cross-entity phrasing like "Adil Khan vehicle"), bypass the rigid pipeline and
 let Claude reason directly with all tools available.
 
-CRITICAL FOR FOLLOW-UPS:
-  When the fast lane asks a disambiguation question ("which Adil Khan?"), the
-  user's reply must also go through the fast lane — NOT the entity gate.
-  We achieve this by persisting a 'fast_lane_pending' slot in the session store
-  and checking it in should_use_fast_lane() on every subsequent turn.
+CONTINUATION DESIGN:
+  When the fast lane asks "which Adil Khan?", the user's reply must go back to
+  the fast lane — NOT the entity gate. We persist fast_lane_pending in the session
+  and check it as Signal 0 in should_use_fast_lane().
+
+  For continuation turns we do NOT reconstruct the messy formatted history.
+  Instead we merge the original query + the user's selection into a single clean
+  message: "Adil khan vehicle — user selected: Adil Khan Sher Dil Khan (ID 698)".
+  This avoids confusing Claude with long markdown assistant turns.
 """
 
 from __future__ import annotations
@@ -32,11 +36,17 @@ FAST_LANE_MAX_TURNS = 5
 FAST_LANE_MAX_TOKENS = 2048
 TOOL_RESULT_CHAR_LIMIT = 10000
 
-# Session key used to persist fast-lane state across HTTP turns.
 FAST_LANE_SESSION_KEY = "fast_lane_pending"
 
-# Cross-entity signals: words that suggest the query spans multiple Odoo models
-# and that the rigid pipeline (which resolves a single entity type) is likely to fail.
+# Financial query phrases — these must NEVER hit the fast lane even if the intent
+# analyzer says subject_area='other' (it doesn't recognise abbreviations like "pnl").
+# The normal pipeline handles them via get_financial_report.
+_FINANCIAL_EXCLUDES: tuple[str, ...] = (
+    "pnl", "p&l", "profit", "loss", "balance sheet", "pandl",
+    "cash flow", "revenue", "income statement",
+)
+
+# Cross-entity signals: words suggesting the query spans multiple Odoo models.
 _CROSS_ENTITY_SIGNALS: frozenset[str] = frozenset(
     {
         "vehicle", "vehicles", "car", "cars",
@@ -70,49 +80,45 @@ KEY ELRACE MODELS:
   Departments  : hr.department
 
 HOW TO ANSWER:
-1. Read the query carefully. Handle typos and natural phrasing (e.g. Arabic/Urdu mixed in).
-2. Identify entities (person names, project names, date hints) and what is being asked.
-3. For cross-entity queries ("Adil Khan vehicle"), decompose: first find the employee,
-   then use their id to find the related record.
-4. Call tools sequentially. Use introspect_odoo_schema when unsure of field names.
-5. If multiple records match a name, list them and ask which one — do NOT guess.
-6. If the user's message is a reply to your previous disambiguation question,
-   use the full name/ID they provided to continue the lookup you were doing.
-7. If no data is found, explain what you searched and ask for more detail.
+1. Read the query carefully. Handle typos and natural phrasing (Arabic/Urdu mixed in).
+2. Identify entities (person names, project names, date hints) and what is being asked about them.
+3. For cross-entity queries ("Adil Khan vehicle"):
+   - Step 1: query_odoo hr.employee to find the employee.
+   - If ONE match: immediately proceed to step 2 (look up vehicle/attendance/etc).
+   - If MULTIPLE matches: list names + IDs and ask which one. Stop there — do NOT proceed.
+4. When the user confirms an employee by name or ID, go DIRECTLY to the related record.
+   Do NOT re-search employees. Use the ID provided and query the target model.
+5. Use introspect_odoo_schema when unsure of field names.
+6. If no data found, explain and ask for more detail.
+
+IMPORTANT — VEHICLE LOOKUP PATTERN:
+  After confirming employee_id, ALWAYS use this domain:
+    ["|", ["employee_id","=", <id>], ["driver_id","=", <id>]]
+  If that returns nothing, try:
+    [["employee_id.name","ilike","<name>"]]
+
+IMPORTANT — DO NOT:
+  - Re-search all employees when the user has already given you an ID.
+  - Call query_odoo with an empty domain [] — always filter.
+  - Ask about financial data when looking up vehicles/attendance/etc.
 
 EXAMPLES:
 
-Turn 1 — User: "Adil Khan vehicle"
-  → query_odoo("hr.employee", [["name","ilike","Adil Khan"]], ["id","name","file_id"], limit=5)
-  → If multiple: "I found 3 employees named Adil Khan: [1] Adil Khan Sher Dil Khan ..."
-    "Which one would you like? I'll find their vehicle once you confirm."
-  → If one: query_odoo("fleet.vehicle",
-        ["|", ["employee_id","=", id], ["driver_id.name","ilike","Adil Khan"]],
-        ["name","license_plate","model_id","state_id"], limit=5)
-    then show vehicle details.
+Fresh query — "Adil Khan vehicle":
+  1. query_odoo("hr.employee", [["name","ilike","Adil Khan"]], ["id","name","file_id"], limit=5)
+  2a. One result → query_odoo("fleet.vehicle", ["|",["employee_id","=",id],["driver_id","=",id]],
+        ["name","license_plate","model_id","state_id"])
+  2b. Multiple → list them and ask which one (STOP, wait for reply).
 
-Turn 2 — User: "Adil Khan Sher Dil Khan" (reply to the disambiguation above)
-  → This is a clarification of the previous question about VEHICLES.
-  → query_odoo("hr.employee", [["name","ilike","Adil Khan Sher Dil Khan"]], ["id","name"], limit=3)
-  → query_odoo("fleet.vehicle", [["employee_id","=", employee_id]],
-        ["name","license_plate","model_id","state_id"], limit=5)
-  → Show the vehicle. DO NOT ask about financial data. This is a vehicle query.
-
-User: "vehicles needing insurance renewal"
-  → query_odoo("fleet.vehicle",
-        [["insurance_expiry_date","<=", <next_month_date>]],
-        ["name","license_plate","insurance_expiry_date","employee_id"], limit=50)
-  → List the vehicles and their expiry dates.
+Continuation — "Adil khan vehicle — user selected: Adil Khan Sher Dil Khan (employee id=698)":
+  → Go DIRECTLY to fleet.vehicle:
+    query_odoo("fleet.vehicle", ["|",["employee_id","=",698],["driver_id","=",698]],
+               ["name","license_plate","model_id","state_id","employee_id"])
+  → Report the vehicle. No need to re-search employees.
 
 PERMISSIONS:
-  - Read-only. Never call create/write/unlink on any model.
+  - Read-only. Never call create/write/unlink.
   - System models (res.users, ir.config_parameter) are forbidden.
-
-ASK, DON'T REFUSE:
-  Bad:  "Is this the one you want financial data for?"   ← WRONG, never say this
-  Good: "I found them. Now looking up their vehicle..."
-  Bad:  "No employee found matching X"
-  Good: "I searched for X but found no match — did you mean Y?"
 
 RESPOND IN THE USER'S LANGUAGE. Be concise. Use tables or lists when helpful.
 Today's date: {today}
@@ -127,18 +133,27 @@ def should_use_fast_lane(
 ) -> bool:
     """Decide whether to bypass the pipeline for this query.
 
-    Fires when:
-    1. The intent classifier expressed uncertainty (subject_area='other')
-    2. The session has an active fast-lane follow-up pending (disambiguation reply)
-    3. Natural cross-entity phrasing with a 'general' subject
+    Signal 0 — active fast-lane follow-up (highest priority, checked first).
+    Signal 1 — intent classifier uncertainty (subject_area='other').
+    Signal 2 — 'general' subject with cross-entity keywords.
+
+    Financial queries are explicitly excluded even if subject_area='other'
+    because the normal pipeline handles them via get_financial_report.
     """
-    # Signal 0 (highest priority): active fast-lane follow-up — the user is
-    # replying to the fast lane's disambiguation question.
+    # Signal 0: active fast-lane follow-up — the user is replying to the
+    # fast lane's disambiguation question. Must route back here, not to entity gate.
     if context is not None:
         pending = context.working_memory.session_facts.get(FAST_LANE_SESSION_KEY)
         if isinstance(pending, dict) and pending.get("awaiting_clarification"):
-            logger.debug("[FastLane] Follow-up detected — routing to fast lane (pending=%r)", pending)
+            logger.debug("[FastLane] Signal 0 — follow-up pending=%r", pending.get("original_query"))
             return True
+
+    # Financial queries must never hit the fast lane — the normal pipeline handles
+    # them correctly via get_financial_report. The intent analyzer sometimes returns
+    # subject_area='other' for abbreviations like "pnl" but the pipeline recovers.
+    msg_lower = message.lower()
+    if any(phrase in msg_lower for phrase in _FINANCIAL_EXCLUDES):
+        return False
 
     # Signal 1: intent classifier expressed uncertainty
     if intent.subject_area == "other":
@@ -154,9 +169,9 @@ def should_use_fast_lane(
 
 
 def _response_is_question(text: str) -> bool:
-    """True when Claude's response ends with a question (disambiguation pending)."""
+    """True when Claude's response ends with a question (disambiguation still pending)."""
     stripped = text.rstrip()
-    return stripped.endswith("?") or "?" in stripped[-120:]
+    return stripped.endswith("?") or "?" in stripped[-150:]
 
 
 class NaturalQueryLane:
@@ -181,30 +196,22 @@ class NaturalQueryLane:
             )
         return self._client
 
-    def _build_system_prompt(self, context: ContextStack, prior_turn: dict | None) -> str:
+    def _build_system_prompt(self, context: ContextStack, is_continuation: bool) -> str:
         from datetime import date
 
         today = date.today().isoformat()
         session_context_lines: list[str] = []
-        sf = context.working_memory.session_facts
-
-        # Detect whether we are continuing a prior fast-lane disambiguation turn.
-        # When we are, do NOT inject unrelated session context (payroll/payslip from a
-        # previous topic) — it confuses Claude into querying payslips instead of
-        # continuing the original vehicle/attendance/etc lookup.
-        pending = sf.get(FAST_LANE_SESSION_KEY)
-        is_continuation = isinstance(pending, dict) and pending.get("awaiting_clarification")
 
         if is_continuation:
+            # When continuing a fast-lane flow, do NOT inject payroll/payslip context
+            # from previous unrelated queries — it contaminates the lookup.
             session_context_lines.append(
-                f"CONTINUING PREVIOUS LOOKUP:\n"
-                f"  Original query : \"{pending.get('original_query', '')}\"\n"
-                "The user's latest message is their answer to your disambiguation question.\n"
-                "Complete the task from the original query. "
-                "Do NOT query payslips. Do NOT ask about financial data."
+                "NOTE: Complete the task as stated in the user's message. "
+                "Use the employee ID/name already provided — do NOT re-search employees. "
+                "Go directly to the target model (fleet.vehicle, hr.attendance, etc.)."
             )
         else:
-            # Fresh fast-lane query — inject relevant session context only.
+            sf = context.working_memory.session_facts
             if sf.get("pending_hr_context"):
                 session_context_lines.append(
                     f"Session HR context: {json.dumps(sf['pending_hr_context'], default=str)}"
@@ -227,19 +234,25 @@ class NaturalQueryLane:
         message: str,
         context: ContextStack,
     ) -> list[dict[str, Any]]:
-        """Build messages list, prepending prior fast-lane turn if available."""
-        messages: list[dict[str, Any]] = []
+        """Build messages for the API call.
+
+        For continuation turns: merge original query + user selection into one
+        clean synthetic message instead of reconstructing the long formatted history.
+        Long formatted assistant turns confuse Claude into re-querying everything.
+        """
         sf = context.working_memory.session_facts
         pending = sf.get(FAST_LANE_SESSION_KEY)
         if isinstance(pending, dict) and pending.get("awaiting_clarification"):
-            # Reconstruct the prior turn so Claude has full context
-            orig_query = pending.get("original_query", "")
-            last_response = pending.get("last_response", "")
-            if orig_query and last_response:
-                messages.append({"role": "user", "content": orig_query})
-                messages.append({"role": "assistant", "content": last_response})
-        messages.append({"role": "user", "content": message})
-        return messages
+            orig = pending.get("original_query", "")
+            # Synthesise a single clean message the LLM can act on directly.
+            combined = (
+                f"{orig}\n\n"
+                f"User selected / clarified: {message}\n\n"
+                "Now complete the original task using the selection above. "
+                "Do NOT re-search employees — proceed straight to the target lookup."
+            )
+            return [{"role": "user", "content": combined}]
+        return [{"role": "user", "content": message}]
 
     async def handle(
         self,
@@ -253,11 +266,8 @@ class NaturalQueryLane:
 
         sf = context.working_memory.session_facts
         pending = sf.get(FAST_LANE_SESSION_KEY)
-        original_query = (
-            pending.get("original_query", message)
-            if isinstance(pending, dict)
-            else message
-        )
+        is_continuation = isinstance(pending, dict) and bool(pending.get("awaiting_clarification"))
+        original_query = pending.get("original_query", message) if is_continuation else message
 
         executor = GatewayToolExecutor(
             self._adapter,
@@ -266,7 +276,7 @@ class NaturalQueryLane:
             user=self._user,
         )
         tools = list(UNIVERSAL_ODOO_TOOL_DEFINITIONS)
-        system_prompt = self._build_system_prompt(context, prior_turn=pending)
+        system_prompt = self._build_system_prompt(context, is_continuation)
         messages = self._build_messages(message, context)
         tools_called: list[str] = []
         client = self._get_client()
@@ -304,7 +314,6 @@ class NaturalQueryLane:
                 logger.warning("[FastLane] unexpected stop_reason=%s", response.stop_reason)
                 break
 
-            # Execute tools
             messages.append({"role": "assistant", "content": response.content})
             tool_blocks = [b for b in response.content if b.type == "tool_use"]
             tool_results = []
@@ -333,7 +342,6 @@ class NaturalQueryLane:
         else:
             logger.warning("[FastLane] max turns reached session=%s", self._session_id)
 
-        # Extract final text
         text = ""
         if response is not None:
             for block in response.content:
@@ -365,22 +373,18 @@ def persist_fast_lane_state(
     from gateway.session_scope import SessionScopeStore
 
     if awaiting_clarification:
-        # Keep the conversation alive — next turn will also go to fast lane
-        state = {
+        state: dict[str, Any] = {
             "original_query": original_query,
             "last_response": last_response,
             "awaiting_clarification": True,
         }
         logger.debug("[FastLane] Persisting pending state original_query=%r", original_query)
     else:
-        # Conversation complete — clear the fast-lane pending flag
         state = {}
         logger.debug("[FastLane] Clearing pending state (answer delivered)")
 
     context.working_memory.session_facts[FAST_LANE_SESSION_KEY] = state
     if session_id:
-        # Force-write to the session store so the next HTTP request picks it up
         current = SessionScopeStore.get(session_id)
         current[FAST_LANE_SESSION_KEY] = state
-        # Use the internal dict directly since update() merges dicts
         SessionScopeStore._memory[session_id] = current
