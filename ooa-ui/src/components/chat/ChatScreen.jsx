@@ -703,18 +703,25 @@ export default function ChatScreen({
         "Processing...",
       );
 
-      // Parse X-Deep-Think-Available so the Deep Think button lights up after voice answers
-      const voiceDeepThinkAvailable = res.headers.get("X-Deep-Think-Available") === "true";
-      const voiceAwaitingClarification = res.headers.get("X-Awaiting-Clarification") === "true";
+      // Helper: decode a Base64-encoded UTF-8 JSON header into a JS value
+      const decodeB64Json = (header) => {
+        if (!header) return null;
+        try {
+          const bytes = Uint8Array.from(atob(header), (c) => c.charCodeAt(0));
+          return JSON.parse(new TextDecoder("utf-8").decode(bytes));
+        } catch { return null; }
+      };
 
-      // Decode clarification object (entity picker options) from Base64-encoded UTF-8 JSON
-      let voiceClarification = null;
+      const voiceDeepThinkAvailable  = res.headers.get("X-Deep-Think-Available") === "true";
+      const voiceAwaitingClarif      = res.headers.get("X-Awaiting-Clarification") === "true";
+      const voiceClarification       = decodeB64Json(res.headers.get("X-Clarification-B64"));
+      const voiceVisualization       = decodeB64Json(res.headers.get("X-Visualization-B64"));
+      const voiceSuggestionMeta      = decodeB64Json(res.headers.get("X-Suggestion-Meta-B64"));
+
+      let voiceSuggestions = [];
       try {
-        const clarB64 = res.headers.get("X-Clarification-B64");
-        if (clarB64) {
-          const bytes = Uint8Array.from(atob(clarB64), (c) => c.charCodeAt(0));
-          voiceClarification = JSON.parse(new TextDecoder("utf-8").decode(bytes));
-        }
+        const sugHeader = res.headers.get("X-Suggestions");
+        if (sugHeader) voiceSuggestions = JSON.parse(sugHeader);
       } catch { /* ignore malformed header */ }
 
       const audioBlob = await res.blob();
@@ -736,36 +743,27 @@ export default function ChatScreen({
         audioRef.current = null;
       }
 
-      // Clear the input bar (don't leave transcript text there)
+      // Clear the input bar and reset deep think toggle
       setInput("");
       setDeepThink(false);
       setVoicePhase("processing");
 
-      // Activate Deep Think button if the response indicates it's available
       if (voiceDeepThinkAvailable) setDeepThinkEligible(true);
-
-      // Parse suggestion chips from X-Suggestions header (JSON array)
-      let voiceSuggestions = [];
-      try {
-        const sugHeader = res.headers.get("X-Suggestions");
-        if (sugHeader) voiceSuggestions = JSON.parse(sugHeader);
-      } catch { /* ignore malformed header */ }
 
       const queryId = Date.now();
       setQueries((prev) => [{
         id: queryId,
         question: `🎤 ${transcript}`,
         createdAt: Date.now(),
-        // Show clarification card (entity picker) when server needs confirmation
-        status: voiceAwaitingClarification ? "awaiting_clarification" : "complete",
-        vizType: null,
+        status: voiceAwaitingClarif ? "awaiting_clarification" : "complete",
+        vizType: voiceVisualization?.visual_type || null,
         response: {
-          text: voiceAwaitingClarification
+          text: voiceAwaitingClarif
             ? (voiceClarification?.question || responseText)
             : responseText,
-          visualization: null,
+          visualization: voiceVisualization,
           suggestions: voiceSuggestions,
-          suggestionMeta: null,
+          suggestionMeta: voiceSuggestionMeta,
           clarification: voiceClarification,
           deepThinkAvailable: voiceDeepThinkAvailable,
         },
