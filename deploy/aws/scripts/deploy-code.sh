@@ -23,7 +23,7 @@ echo "==> git pull"
 git pull
 
 echo "==> recreate gateway (reload .env.production + live mount at /opt/ooa)"
-docker compose ${COMPOSE} --env-file "${ENV_FILE}" up -d gateway
+docker compose ${COMPOSE} --env-file "${ENV_FILE}" up -d --force-recreate gateway
 
 echo "==> health check"
 for _ in $(seq 1 20); do

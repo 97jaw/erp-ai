@@ -459,8 +459,6 @@ class ExecutionOrchestrator:
                 return True
             if "groups" in result and isinstance(result["groups"], list) and not result["groups"]:
                 return True
-            if "records" in result and isinstance(result["records"], list) and not result["records"]:
-                return True
             if not result:
                 return True
         if isinstance(result, list) and not result:
