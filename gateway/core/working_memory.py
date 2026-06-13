@@ -109,6 +109,7 @@ class WorkingMemory:
             intent,
             last_turn=last_turn,
             active=self.get_active_project(),
+            session_facts=dict(self.session_facts),
         )
 
     def clear_entity_context(self) -> None:

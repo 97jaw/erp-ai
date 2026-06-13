@@ -35,6 +35,7 @@ ENTITY_SCOPE_KEYS = (
     "project_ids",
     "pending_entity_clarification",
     "pending_hr_context",
+    "last_payslip_scope",
 )
 
 _PAYROLL_DOMAIN_TOKENS = (
@@ -44,6 +45,10 @@ _PAYROLL_DOMAIN_TOKENS = (
     "labor cost",
     "labour cost",
     "overtime cost",
+    "overtime",
+    "deduction",
+    "worked day",
+    "worked days",
 )
 
 _PROJECT_DOMAIN_TOKENS = (
@@ -166,10 +171,27 @@ def detect_topic_shift(
     *,
     last_turn: dict[str, Any] | None = None,
     active: Any | None = None,
+    session_facts: dict[str, Any] | None = None,
 ) -> bool:
     """Return True when the current turn shifts away from the previous topic/entity."""
     if not last_turn:
         return False
+
+    if session_facts:
+        from gateway.core.hr_payroll_composer import (
+            is_hr_request_detail_query,
+            is_payslip_drill_down_query,
+        )
+
+        class _SessionContext:
+            working_memory: Any
+
+            def __init__(self, facts: dict[str, Any]) -> None:
+                self.working_memory = type("_WM", (), {"session_facts": facts})()
+
+        ctx = _SessionContext(session_facts)
+        if is_payslip_drill_down_query(message, ctx) or is_hr_request_detail_query(message, ctx):
+            return False
 
     if _is_pure_follow_up_turn(message, intent):
         return False
@@ -230,3 +252,4 @@ def apply_topic_shift_clear(session_id: str, working_memory: Any) -> None:
     working_memory.clear_entity_context()
     working_memory.session_facts.pop("pending_entity_clarification", None)
     working_memory.session_facts.pop("pending_hr_context", None)
+    working_memory.session_facts.pop("last_payslip_scope", None)

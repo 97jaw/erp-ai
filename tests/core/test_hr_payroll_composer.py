@@ -15,6 +15,7 @@ from gateway.core.hr_payroll_composer import (
     strip_conversational_filler,
 )
 from gateway.core.intent_analyzer import Intent
+from gateway.core.working_memory import WorkingMemory
 from tests.core.test_context_stack import _make_context_stack
 
 
@@ -258,3 +259,45 @@ def test_validation_status_follow_up_after_hr_request_list() -> None:
     plan = compose_hr_request_detail_plan("validation status", _intent(subject_area="hr"), ctx)
     assert plan is not None
     assert plan.tool_input.get("request_id") == 39540
+
+
+def test_extract_request_reference_validation_status_of_partial_number() -> None:
+    from gateway.core.hr_payroll_composer import (
+        compose_hr_request_detail_plan,
+        extract_request_reference,
+        is_hr_request_detail_query,
+    )
+
+    request_id, request_name = extract_request_reference("validation status of 04557")
+    assert request_id is None
+    assert request_name == "04557"
+    assert is_hr_request_detail_query("validation status of 04557", None)
+    plan = compose_hr_request_detail_plan(
+        "validation status of 04557",
+        _intent(subject_area="hr"),
+        _make_context_stack(),
+    )
+    assert plan is not None
+    assert plan.tool_input.get("request_name") == "04557"
+
+
+def test_session_scope_persists_hr_context_between_turns() -> None:
+    from gateway.session_scope import SessionScopeStore
+
+    SessionScopeStore.clear("sess-hr-1")
+    wm = WorkingMemory()
+    wm.session_facts["pending_hr_context"] = {
+        "domain": "payroll",
+        "resolved": {
+            "employee_file_id": "2721",
+            "date_from": "2026-05-01",
+            "date_to": "2026-05-31",
+        },
+    }
+    wm.session_facts["last_payslip_scope"] = {"employee_file_id": "2721"}
+    SessionScopeStore.persist_hr_session("sess-hr-1", wm)
+
+    loaded = SessionScopeStore.get("sess-hr-1")
+    assert loaded["pending_hr_context"]["domain"] == "payroll"
+    assert loaded["pending_hr_context"]["resolved"]["employee_file_id"] == "2721"
+    assert loaded["last_payslip_scope"]["employee_file_id"] == "2721"

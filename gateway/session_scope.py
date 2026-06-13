@@ -20,6 +20,12 @@ def _dedupe_list(items: list[Any]) -> list[Any]:
     return merged
 
 
+HR_SESSION_KEYS = (
+    "pending_hr_context",
+    "last_payslip_scope",
+)
+
+
 class SessionScopeStore:
     """Lightweight structured memory for follow-up ERP queries."""
 
@@ -44,6 +50,22 @@ class SessionScopeStore:
             current.pop(key, None)
         cls._memory[session_id] = current
         return dict(current)
+
+    @classmethod
+    def persist_hr_session(cls, session_id: str | None, working_memory: Any) -> None:
+        """Persist HR/payroll follow-up slots so the next HTTP turn can inherit them."""
+        if not session_id or working_memory is None:
+            return
+        facts = getattr(working_memory, "session_facts", None) or {}
+        updates: dict[str, Any] = {}
+        pending = facts.get("pending_hr_context")
+        if isinstance(pending, dict) and pending:
+            updates["pending_hr_context"] = dict(pending)
+        last_scope = facts.get("last_payslip_scope")
+        if isinstance(last_scope, dict) and last_scope:
+            updates["last_payslip_scope"] = dict(last_scope)
+        if updates:
+            cls.update(session_id, **updates)
 
     @classmethod
     def update(cls, session_id: str, **values: Any) -> dict[str, Any]:

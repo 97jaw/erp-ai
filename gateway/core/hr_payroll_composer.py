@@ -71,6 +71,10 @@ _REQUEST_NAME_RE = re.compile(
     r"\b((?:REQ|ER|HR)[-/][A-Za-z0-9/-]{3,40})\b",
     re.I,
 )
+_VALIDATION_REF_RE = re.compile(
+    r"\b(?:validation|approval)(?:\s+status)?\s+(?:of|for|on)\s+([A-Za-z0-9][A-Za-z0-9/-]{2,40})\b",
+    re.I,
+)
 _BLOCKED_NAME_TOKENS = frozenset(
     {
         "need",
@@ -278,6 +282,25 @@ def extract_request_reference(message: str) -> tuple[int | None, str | None]:
     name_match = _REQUEST_NAME_RE.search(text)
     if name_match:
         return None, name_match.group(1).strip()
+    validation_match = _VALIDATION_REF_RE.search(text)
+    if validation_match:
+        token = validation_match.group(1).strip()
+        if re.fullmatch(r"\d{3,8}", token):
+            return None, token
+        return None, token
+    of_request_match = re.search(
+        r"\b(?:request|req)\s+(?:id|#|no\.?|number)?\s*[:#-]?\s*([A-Za-z0-9][A-Za-z0-9/-]{2,40})\b",
+        text,
+        re.I,
+    )
+    if of_request_match:
+        token = of_request_match.group(1).strip()
+        if re.fullmatch(r"\d{1,8}", token):
+            try:
+                return int(token), None
+            except ValueError:
+                pass
+        return None, token
     stripped = text.strip()
     if re.fullmatch(r"\d{1,8}", stripped):
         return int(stripped), None

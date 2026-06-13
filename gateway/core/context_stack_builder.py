@@ -81,6 +81,14 @@ class ContextStackBuilder:
                 )
             if scope.get("last_turn"):
                 working_memory.session_facts["last_turn"] = dict(scope["last_turn"])
+            if scope.get("pending_hr_context"):
+                working_memory.session_facts["pending_hr_context"] = dict(
+                    scope["pending_hr_context"],
+                )
+            if scope.get("last_payslip_scope"):
+                working_memory.session_facts["last_payslip_scope"] = dict(
+                    scope["last_payslip_scope"],
+                )
         return ContextStack(
             user=self._build_user_context(user),
             conversation=ConversationContext(

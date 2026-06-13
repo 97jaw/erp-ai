@@ -550,6 +550,7 @@ class IntelligentQueryHandler:
                     "awaiting": existing.get("awaiting", []) if is_payroll_follow_up else [],
                     "resolved": resolved,
                 }
+                self._sync_hr_session_store(context)
 
             broad_search_query = is_broad_project_search(message)
             if broad_search_query and should_block_project_entity_search(message, context):
@@ -942,6 +943,7 @@ class IntelligentQueryHandler:
                 hr_context = hr_disambiguation.get("hr_context")
                 if isinstance(hr_context, dict):
                     context.working_memory.session_facts["pending_hr_context"] = dict(hr_context)
+                    IntelligentQueryHandler._sync_hr_session_store(context)
                 duration_ms = int((time.perf_counter() - started) * 1000)
                 return self._finalize_clarification(
                     clarification=hr_disambiguation,
@@ -1363,6 +1365,15 @@ class IntelligentQueryHandler:
                 context.working_memory.session_facts["last_expense_summary_project_id"] = pid
 
     @staticmethod
+    def _sync_hr_session_store(context: ContextStack) -> None:
+        session_id = context.conversation.session_id if context.conversation else None
+        if not session_id:
+            return
+        from gateway.session_scope import SessionScopeStore
+
+        SessionScopeStore.persist_hr_session(session_id, context.working_memory)
+
+    @staticmethod
     def _persist_hr_payroll_scope(
         *,
         context: ContextStack,
@@ -1451,6 +1462,7 @@ class IntelligentQueryHandler:
             )
             context.working_memory.session_facts["pending_hr_context"] = pending
             _store_last_payslip_scope(resolved)
+            IntelligentQueryHandler._sync_hr_session_store(context)
             return
 
     @staticmethod
@@ -1494,6 +1506,7 @@ class IntelligentQueryHandler:
                 }
             )
             context.working_memory.session_facts["pending_hr_context"] = pending
+            IntelligentQueryHandler._sync_hr_session_store(context)
             return
 
     @staticmethod
@@ -2309,6 +2322,7 @@ class IntelligentQueryHandler:
         hr_context = clarification.get("hr_context")
         if isinstance(hr_context, dict):
             context.working_memory.session_facts["pending_hr_context"] = dict(hr_context)
+            IntelligentQueryHandler._sync_hr_session_store(context)
         duration_ms = int((time.perf_counter() - started) * 1000)
         response = IntelligentQueryResponse(
             session_id=resolved_session,

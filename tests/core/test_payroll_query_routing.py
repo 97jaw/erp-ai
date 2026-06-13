@@ -186,6 +186,11 @@ def test_overtime_follow_up_routes_payslip_detail_not_unscoped_list() -> None:
             "date_to": "2026-05-31",
         },
     }
+    ctx.working_memory.session_facts["last_payslip_scope"] = {
+        "employee_file_id": "2721",
+        "date_from": "2026-05-01",
+        "date_to": "2026-05-31",
+    }
     message = "show overtime on that payslip"
     intent = _intent(subject_area="payroll", specific_intent=message)
     tool, payload = resolve_payroll_tool(message, intent, ctx)

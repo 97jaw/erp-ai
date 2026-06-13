@@ -333,6 +333,11 @@ class EntityGate:
         context: ContextStack | None = None,
     ) -> list[tuple[str, str]]:
         """Return (entity_type, query_value) pairs that must be confirmed."""
+        from gateway.core.hr_payroll_composer import is_hr_request_detail_query
+
+        if is_hr_request_detail_query(message, context):
+            return []
+
         if (
             context is not None
             and is_project_expense_follow_up(message)
@@ -440,6 +445,10 @@ class EntityGate:
 
         if intent.subject_area == "project_attribute":
             return False
+        from gateway.core.hr_payroll_composer import is_hr_request_detail_query
+
+        if is_hr_request_detail_query(message, context):
+            return False
         if is_hr_person_query(message) or is_hr_cross_module_query(message):
             return False
         from gateway.core.payroll_query_routing import (
@@ -451,7 +460,7 @@ class EntityGate:
             return True
         if is_payroll_orchestration_query(message, intent, context):
             return False
-        if is_hr_orchestration_query(message, intent) and not is_hr_project_staff_query(message):
+        if is_hr_orchestration_query(message, intent, context) and not is_hr_project_staff_query(message):
             if intent.subject_area == "hr" or not looks_like_project_cost_query(
                 f"{message} {intent.specific_intent}".lower(),
                 subject_area=intent.subject_area,
