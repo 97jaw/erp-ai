@@ -26,11 +26,11 @@ _FILLER_PREFIX_RE = re.compile(
     re.I,
 )
 _INLINE_FILE_ID_RE = re.compile(
-    r"(?:file\s*id|fileid|emp(?:loyee)?\s*id|emp_id)\s*[:\s#-]*(\d{3,6})\b",
+    r"(?:file\s*id|fileid|emp(?:loyee)?\s*id|emp_id)\s*(?:is\s*)?[:\s#-]*(\d{3,6})\b",
     re.I,
 )
 _FILE_ID_PHRASE_RE = re.compile(
-    r"(?:file\s*id|fileid|emp(?:loyee)?\s*id|emp_id)\s*[:\s#-]*\d{3,6}\b",
+    r"(?:and\s+)?(?:file\s*id|fileid|emp(?:loyee)?\s*id|emp_id)\s*(?:is\s*)?[:\s#-]*\d{3,6}\b",
     re.I,
 )
 _BARE_FILE_ID_RE = re.compile(r"^\s*(\d{3,6})\s*$")
