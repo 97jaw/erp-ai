@@ -393,6 +393,25 @@ class IntelligentQueryHandler:
                 )
             # ----------------------------------------------------------------
 
+            # Guard: list queries NEVER route to single-entity tools
+            if intent.primary_action == "list_records":
+                logger.info(
+                    "[ListQuery] Routing to universal list flow — subject=%s entities=%s",
+                    intent.subject_area,
+                    [(getattr(e, "type", ""), getattr(e, "value", "")) for e in (intent.entities or [])],
+                )
+                return await self._handle_list_query(
+                    intent=intent,
+                    message=message,
+                    context=context,
+                    adapter=adapter,
+                    telemetry=telemetry,
+                    resolved_session=resolved_session,
+                    language=language,
+                    started=started,
+                    user=user,
+                )
+
             from gateway.core.project_expense_routing import (
                 apply_active_follow_up_context,
                 is_followup_to_active,
@@ -2084,6 +2103,115 @@ class IntelligentQueryHandler:
             response_text=response.text,
             visualization=None,
             suggestions=suggestions,
+            total_duration_ms=duration_ms,
+            intent=intent,
+        )
+        return response
+
+    async def _handle_list_query(
+        self,
+        *,
+        intent: Intent,
+        message: str,
+        context: Any,
+        adapter: Any,
+        telemetry: Any,
+        resolved_session: str,
+        language: str,
+        started: float,
+        user: Any,
+    ) -> "IntelligentQueryResponse":
+        """Route list_records intent to universal query/aggregate tools."""
+        from gateway.core.list_query_router import build_list_query
+        from gateway.tools.universal_odoo import (
+            build_universal_context,
+            execute_aggregate_odoo,
+            execute_query_odoo,
+        )
+
+        plan = build_list_query(intent, message)
+        universal_ctx = build_universal_context(user_message=message, user=user)
+
+        tool_name: str
+        result: dict[str, Any]
+
+        if plan.get("use_aggregate"):
+            tool_name = "aggregate_odoo"
+            tool_input = {
+                "model": plan["model"],
+                "domain": plan["domain"],
+                "group_by": plan["group_by"],
+                "aggregates": plan.get("aggregates", ["id:count"]),
+                "limit": plan.get("limit", 50),
+            }
+            result = await execute_aggregate_odoo(adapter, tool_input, universal_ctx)
+        else:
+            tool_name = "query_odoo"
+            tool_input = {
+                "model": plan["model"],
+                "domain": plan["domain"],
+                "fields": plan.get("fields", []),
+                "limit": plan.get("limit", 50),
+            }
+            if plan.get("order"):
+                tool_input["order"] = plan["order"]
+            result = await execute_query_odoo(adapter, tool_input, universal_ctx)
+
+        # Build a readable text response from the result
+        status = result.get("status", "error")
+        if status == "success":
+            if plan.get("use_aggregate"):
+                groups = result.get("groups") or []
+                group_count = result.get("group_count", len(groups))
+                text = (
+                    f"Found {group_count} group(s) for {plan['model']} "
+                    f"grouped by {plan['group_by']}.\n\n"
+                )
+                for g in groups[:20]:
+                    text += f"- {g}\n"
+            else:
+                records = result.get("records") or []
+                count = result.get("record_count", len(records))
+                truncated = result.get("truncated", False)
+                text = f"Found {count} record(s) in {plan['model']}.\n\n"
+                for rec in records[:50]:
+                    name = rec.get("name") or rec.get("display_name") or str(rec.get("id", ""))
+                    partner = rec.get("partner_id")
+                    partner_str = f" — {partner[1]}" if isinstance(partner, (list, tuple)) and len(partner) > 1 else ""
+                    text += f"- {name}{partner_str}\n"
+                if truncated:
+                    text += f"\n_(Showing first {len(records)} records. Refine your query for more specific results.)_"
+        else:
+            error_msg = result.get("message", "Unknown error")
+            text = f"Could not retrieve list: {error_msg}"
+
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "[ListQuery] Done model=%s tool=%s status=%s duration_ms=%d",
+            plan["model"],
+            tool_name,
+            status,
+            duration_ms,
+        )
+
+        response = IntelligentQueryResponse(
+            session_id=resolved_session,
+            text=text,
+            language=language,
+            visualization=None,
+            orchestration_log=[],
+            execution_duration_ms=duration_ms,
+            orchestration_duration_ms=0,
+            strategy_step_count=1,
+            tools_called=[tool_name],
+            execution_result=None,
+            suggestions=[],
+            interaction_id=telemetry.interaction_id,
+        )
+        telemetry.finalize_response(
+            response_text=text,
+            visualization=None,
+            suggestions=[],
             total_duration_ms=duration_ms,
             intent=intent,
         )
