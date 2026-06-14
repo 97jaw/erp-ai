@@ -45,6 +45,11 @@ _LEADING_ACTIVITY_QUALIFIER_RE = re.compile(
     re.IGNORECASE,
 )
 
+_AGREEMENT_CONTEXT_RE = re.compile(
+    r"\bagreement\b|\bcontract\b|\بعقد\b",
+    re.IGNORECASE,
+)
+
 
 def derive_activity_type(message: str) -> str | None:
     """Map the question to an activity_type, or None."""
@@ -56,7 +61,7 @@ def derive_activity_type(message: str) -> str | None:
 
 
 def is_project_activity_text(message: str) -> bool:
-    """Text-only activity detection."""
+    """Text-only activity detection — covers project AND agreement attachment queries."""
     text = (message or "").strip()
     if len(text) < 4:
         return False
@@ -67,6 +72,8 @@ def is_project_activity_text(message: str) -> bool:
     from gateway.core.project_profile_routing import has_project_context
 
     if has_project_context(text):
+        return True
+    if _AGREEMENT_CONTEXT_RE.search(text):
         return True
     return bool(_LEADING_ACTIVITY_QUALIFIER_RE.search(text))
 

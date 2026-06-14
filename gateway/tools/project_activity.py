@@ -42,17 +42,20 @@ PROJECT_ACTIVITY_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "get_project_activity",
         "description": (
-            "Project ACTIVITY data: attachments/documents, chatter/message summary, "
+            "Project or Agreement ACTIVITY data: attachments/documents, chatter/message summary, "
             "progress %, audit trail (created/last updated by).\n\n"
-            "USE for: 'attachments of project X', 'chatter summary of X', "
-            "'project progress of X', 'last updated by for X'.\n\n"
+            "USE for: 'attachments of project X', 'documents for agreement Y', "
+            "'chatter summary of X', 'project progress of X', 'last updated by for X'.\n\n"
+            "Pass project_id for project attachments (reads project.attachment Elrace model). "
+            "Pass agreement_id instead for agreement attachments (reads agreement.attachment). "
             "NOT for invoices/POs/timesheets (get_project_records) or engineer "
             "amounts/PM/schedule (get_project_profile) or expenses (Deep Think)."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "project_id": {"type": "integer"},
+                "project_id": {"type": "integer", "description": "ID of the project (for project attachments/chatter/progress)"},
+                "agreement_id": {"type": "integer", "description": "ID of the agreement (for agreement.attachment docs)"},
                 "activity_type": {
                     "type": "string",
                     "enum": list(ACTIVITY_TYPE_VALUES),
@@ -60,7 +63,7 @@ PROJECT_ACTIVITY_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "limit": {"type": "integer", "default": 20},
                 "language": {"type": "string", "default": "en"},
             },
-            "required": ["project_id", "activity_type"],
+            "required": ["activity_type"],
         },
     },
 ]
@@ -86,6 +89,28 @@ def _strip_html(html: str) -> str:
 
 
 def _normalize_attachment(row: dict[str, Any]) -> dict[str, Any]:
+    # project.attachment (Elrace custom) vs ir.attachment (standard)
+    if "lead_attachment_type" in row or "file_count" in row:
+        folder = _m2o_name(row.get("x_folder_id"))
+        return {
+            "name": _text(row.get("name")),
+            "type": _text(row.get("lead_attachment_type")),
+            "folder": folder,
+            "file_count": row.get("file_count"),
+            "uploaded_at": _text(row.get("create_date")),
+            "uploaded_by": _m2o_name(row.get("create_uid")),
+        }
+    # agreement.attachment
+    if "attachment_type" in row or "file_type" in row:
+        return {
+            "name": _text(row.get("name")),
+            "type": _text(row.get("attachment_type")),
+            "file_type": _text(row.get("file_type")),
+            "file_count": row.get("file_count"),
+            "uploaded_at": _text(row.get("create_date")),
+            "uploaded_by": _m2o_name(row.get("create_uid")),
+        }
+    # ir.attachment fallback
     size = row.get("file_size")
     return {
         "name": _text(row.get("name")),
@@ -195,8 +220,10 @@ def execute_get_project_activity(
     context: ContextStack | None = None,
 ) -> dict[str, Any]:
     del context
-    project_id = int(tool_input["project_id"])
+    project_id_raw = tool_input.get("project_id")
+    agreement_id_raw = tool_input.get("agreement_id")
     activity_type = str(tool_input.get("activity_type") or "")
+
     if activity_type not in ACTIVITY_TYPE_VALUES:
         return {
             "status": "error",
@@ -207,6 +234,36 @@ def execute_get_project_activity(
     limit = int(tool_input.get("limit") or 20)
     language = str(tool_input.get("language") or "en")
 
+    # --- Agreement attachment branch ---
+    if agreement_id_raw and activity_type == "attachments":
+        agreement_id = int(agreement_id_raw)
+        agr_names = adapter.safe_search_read(
+            "sale.contracted.order", [["id", "=", agreement_id]], ["name"], limit=1,
+        )
+        agr_name = _text(agr_names[0].get("name")) if agr_names else f"Agreement {agreement_id}"
+        result = adapter.read_agreement_attachments(agreement_id, limit=limit)
+        rows = [_normalize_attachment(row) for row in result.get("rows") or []]
+        return {
+            "status": "success",
+            "_source": ACTIVITY_SOURCE,
+            "agreement_id": agreement_id,
+            "agreement_name": agr_name,
+            "activity_type": "attachments",
+            "activity_label": "agreement attachments",
+            "source_model": result.get("source_model", "agreement.attachment"),
+            "total_count": int(result.get("total_count") or 0),
+            "returned_count": len(rows),
+            "rows": rows,
+        }
+
+    if not project_id_raw:
+        return {
+            "status": "error",
+            "_source": ACTIVITY_SOURCE,
+            "error": "project_id is required (or agreement_id for agreement attachments).",
+        }
+
+    project_id = int(project_id_raw)
     names = adapter.safe_search_read(
         "project.project", [["id", "=", project_id]], ["name"], limit=1,
     )
@@ -226,6 +283,7 @@ def execute_get_project_activity(
         rows = [_normalize_attachment(row) for row in result.get("rows") or []]
         payload.update(
             {
+                "source_model": result.get("source_model", "project.attachment"),
                 "total_count": int(result.get("total_count") or 0),
                 "returned_count": len(rows),
                 "rows": rows,

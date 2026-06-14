@@ -911,9 +911,27 @@ class IntelligentQueryHandler:
                     )
 
             if activity_query and effective_strategy_override is None:
+                act_type = derive_activity_type(message) or "progress"
+                # Check for agreement attachment query first
+                from gateway.core.project_activity_routing import _AGREEMENT_CONTEXT_RE
                 activity_project_id = self._resolved_project_id(context, entity_meta)
-                if activity_project_id is not None:
-                    act_type = derive_activity_type(message) or "progress"
+                agreement_id = self._resolved_agreement_id(context, entity_meta)
+                if agreement_id is not None and _AGREEMENT_CONTEXT_RE.search(message) and act_type == "attachments":
+                    effective_strategy_override = build_single_tool_strategy(
+                        tool="get_project_activity",
+                        tool_input={
+                            "agreement_id": agreement_id,
+                            "activity_type": "attachments",
+                            "language": language,
+                        },
+                        description=f"Agreement attachments: {message}",
+                        expected_output=intent.expected_output or "table",
+                    )
+                    logger.info(
+                        "[ProjectActivity] Forcing get_project_activity agreement_id=%s",
+                        agreement_id,
+                    )
+                elif activity_project_id is not None:
                     effective_strategy_override = build_single_tool_strategy(
                         tool="get_project_activity",
                         tool_input={
@@ -2516,6 +2534,24 @@ class IntelligentQueryHandler:
             requires_clarification=False,
             clarification_question=None,
         )
+
+    @staticmethod
+    def _resolved_agreement_id(
+        context: ContextStack,
+        entity_meta: EntityResolutionMeta,
+    ) -> int | None:
+        """Agreement id confirmed this turn or in session facts, if any."""
+        for item in entity_meta.resolved_entities:
+            aid = item.get("agreement_id") or (
+                item.get("id") if item.get("entity_type") == "agreement" else None
+            )
+            if aid:
+                return int(aid)
+        facts = context.working_memory.session_facts
+        confirmed = (facts.get("confirmed_entities") or {}).get("agreement") or {}
+        if confirmed.get("id"):
+            return int(confirmed["id"])
+        return None
 
     @staticmethod
     def _resolved_project_id(

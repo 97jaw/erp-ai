@@ -74,8 +74,8 @@ SUBJECT_MODEL_MAP = {
 }
 
 DEFAULT_FIELDS = {
-    "project.project":       ["name", "partner_id", "date_start", "date", "stage_id"],
-    "project.task":          ["name", "project_id", "user_ids", "stage_id", "date_deadline"],
+    "project.project":       ["name", "partner_id", "date_start", "date", "user_id"],
+    "project.task":          ["name", "project_id", "user_ids", "date_deadline"],
     "hr.employee":           ["name", "department_id", "job_title", "active"],
     "hr.contract":           ["name", "employee_id", "date_start", "date_end", "state"],
     "account.move":          ["name", "partner_id", "amount_total", "state", "invoice_date", "move_type"],

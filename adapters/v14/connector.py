@@ -642,23 +642,57 @@ class OdooV14Adapter(BaseOdooAdapter):
         limit: int = 20,
         offset: int = 0,
     ) -> dict[str, Any]:
-        """List ir.attachment rows linked to one project.project."""
-        domain = [
-            ["res_model", "=", "project.project"],
-            ["res_id", "=", int(project_id)],
-        ]
+        """List project.attachment rows for a project (Elrace custom model).
+
+        Falls back to ir.attachment if project.attachment returns nothing.
+        """
+        domain = [["project_id", "=", int(project_id)]]
         fields = [
-            "name", "mimetype", "file_size", "create_date", "create_uid", "description",
+            "name", "project_id", "lead_attachment_type", "file_count",
+            "attachment_display", "x_folder_id", "create_date", "create_uid",
         ]
-        rows = self.safe_search_read(
-            "ir.attachment",
-            domain,
-            fields,
-            limit=limit,
-            offset=offset,
-            order="create_date desc, id desc",
+        try:
+            rows = self.safe_search_read(
+                "project.attachment", domain, fields,
+                limit=limit, offset=offset, order="create_date desc, id desc",
+            )
+            total = self.search_count("project.attachment", domain)
+            if rows:
+                return {"rows": rows, "total_count": total, "source_model": "project.attachment"}
+        except Exception:
+            pass
+
+        # Fallback: ir.attachment linked to the project record
+        ir_domain = [["res_model", "=", "project.project"], ["res_id", "=", int(project_id)]]
+        ir_fields = ["name", "mimetype", "file_size", "create_date", "create_uid", "description"]
+        ir_rows = self.safe_search_read(
+            "ir.attachment", ir_domain, ir_fields,
+            limit=limit, offset=offset, order="create_date desc, id desc",
         )
-        return {"rows": rows, "total_count": self.search_count("ir.attachment", domain)}
+        return {"rows": ir_rows, "total_count": self.search_count("ir.attachment", ir_domain), "source_model": "ir.attachment"}
+
+    def read_agreement_attachments(
+        self,
+        agreement_id: int,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List agreement.attachment rows for an agreement."""
+        domain = [["agreement_id", "=", int(agreement_id)]]
+        fields = [
+            "name", "agreement_id", "attachment_type", "file_type",
+            "file_count", "create_date", "create_uid",
+        ]
+        try:
+            rows = self.safe_search_read(
+                "agreement.attachment", domain, fields,
+                limit=limit, offset=offset, order="create_date desc, id desc",
+            )
+            total = self.search_count("agreement.attachment", domain)
+            return {"rows": rows, "total_count": total, "source_model": "agreement.attachment"}
+        except Exception as exc:
+            return {"rows": [], "total_count": 0, "error": str(exc)}
 
     def read_project_chatter_messages(
         self,
