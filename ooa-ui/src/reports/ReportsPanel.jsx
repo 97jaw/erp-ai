@@ -56,7 +56,7 @@ async function streamReportsChat({ sessionId, message, onEvent }) {
 }
 
 // A single chat message row
-function Message({ msg }) {
+function Message({ msg, onUserAction }) {
   if (msg.role === "user") {
     return (
       <div className="rpt-msg rpt-msg--user">
@@ -70,8 +70,7 @@ function Message({ msg }) {
     <div className="rpt-msg rpt-msg--agent">
       {msg.text ? <div className="rpt-msg__bubble">{msg.text}</div> : null}
       {(msg.uiBlocks || []).map((block, i) => (
-        // AdaptiveUI doesn't call onUserAction here — file_ready blocks are static
-        <AdaptiveUI key={i} block={block} onUserAction={() => {}} />
+        <AdaptiveUI key={i} block={block} onUserAction={onUserAction || (() => {})} />
       ))}
       {msg.files?.length ? <FileReadyList files={msg.files} /> : null}
     </div>
@@ -230,9 +229,18 @@ export default function ReportsPanel({ user, embedded = false, onCloseToChat }) 
 
       {/* Message body */}
       <div className="rpt-panel__body" ref={scrollRef}>
-        {messages.map((msg, i) => (
-          <Message key={i} msg={msg} />
-        ))}
+        {messages.map((msg, i) => {
+          const isLastAgent = msg.role === "agent" &&
+            !loading &&
+            i === messages.length - 1;
+          return (
+            <Message
+              key={i}
+              msg={msg}
+              onUserAction={isLastAgent ? handleUiAction : null}
+            />
+          );
+        })}
 
         {/* Streaming in-progress turn */}
         {loading && (streamingText || pendingBlocks.length || pendingFiles.length) ? (
