@@ -372,7 +372,7 @@ app.add_middleware(
 )
 app.add_middleware(LoggingContextMiddleware)
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
+app.mount("/report-files", StaticFiles(directory=str(REPORTS_DIR)), name="report-files")
 app.include_router(admin_router)
 
 from visualize.router import router as visualize_router
