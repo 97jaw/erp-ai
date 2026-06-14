@@ -222,11 +222,14 @@ def _date_filter_domain(value: str, model: str) -> list[Any]:
     if len(v) == 4 and v.isdigit():
         # Map model to the right date field
         if model == "project.project":
-            # Projects often don't have reliable date_start; filter by write_date or name year
-            # Use write_date as a broad filter (created/updated in that year)
+            # For projects: match year in name OR date_start falls in that year.
+            # write_date is unreliable (projects get updated every year).
             return [
-                ["write_date", ">=", f"{v}-01-01"],
-                ["write_date", "<=", f"{v}-12-31"],
+                "|",
+                ["name", "ilike", v],
+                "&",
+                ["date_start", ">=", f"{v}-01-01"],
+                ["date_start", "<=", f"{v}-12-31"],
             ]
         field_map = {
             "account.move":          "invoice_date",
