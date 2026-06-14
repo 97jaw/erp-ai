@@ -5,20 +5,20 @@
 /* Panel layout */
 .rpt-panel {
   /* Dark professional theme variables */
-  --rpt-bg: #0d0d1a;
-  --rpt-surface: #141428;
-  --rpt-surface-2: #1e1e35;
-  --rpt-border: #2a2a45;
-  --rpt-accent: #4a90d9;
-  --rpt-accent-hover: #357abd;
+  --rpt-bg: #1c1f2e;
+  --rpt-surface: #252840;
+  --rpt-surface-2: #2e3250;
+  --rpt-border: #3a3f60;
+  --rpt-accent: #5ba3f5;
+  --rpt-accent-hover: #4a90d9;
   --rpt-text: #e8eaf6;
-  --rpt-text-muted: #8890a8;
-  --rpt-pill-bg: #1e1e35;
-  --rpt-pill-active: #4a90d9;
+  --rpt-text-muted: #9ba3c4;
+  --rpt-pill-bg: #2e3250;
+  --rpt-pill-active: #5ba3f5;
   --rpt-pill-active-text: #ffffff;
-  --rpt-user-bubble: #1e3a5f;
-  --rpt-agent-bubble: #1a1a2e;
-  --rpt-download-btn: #4a90d9;
+  --rpt-user-bubble: #2a4a7f;
+  --rpt-agent-bubble: #252840;
+  --rpt-download-btn: #5ba3f5;
 
   display: flex;
   flex-direction: column;
