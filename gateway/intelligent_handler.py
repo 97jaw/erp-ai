@@ -282,6 +282,16 @@ class IntelligentQueryHandler:
                 self._intent_analyzer.analyze(message, context),
             )
 
+            # Force list_records when message matches strong list-pattern keywords,
+            # regardless of session context that might have biased the AI classifier.
+            if intent.primary_action != "list_records":
+                from gateway.core.list_query_router import is_list_pattern
+                if is_list_pattern(message):
+                    logger.info(
+                        "[ListQuery] Keyword pre-detection forced list_records for: %.80s", message
+                    )
+                    intent.primary_action = "list_records"
+
             # Auto-promote to Deep Think when the query requires predefined Odoo
             # methods (financial reports, comparisons, etc.) and the user hasn't
             # already toggled it on. Applies equally to text and voice queries.
