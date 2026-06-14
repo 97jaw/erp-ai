@@ -110,10 +110,19 @@ ATTENDANCE LOOKUP PATTERN:
   Summarise total days present, hours worked. Do not return raw list of 50 rows.
 
 PAYSLIP LOOKUP PATTERN:
-  After getting employee_id, query hr.payslip:
-    domain: [["employee_id","=",<id>], ["date_from",">=","<month_start>"], ["date_to","<=","<month_end>"]]
-    fields: ["name","date_from","date_to","net_wage","fine","advance","total_deductions"]
-  Return a clean table. If no payslip found for that period, say so clearly.
+  After getting employee_id, query hr.payslip using name pattern match OR date overlap.
+  Elrace payslips run mid-month to mid-month (e.g. Mar-21 to Apr-20 for "March").
+  Use the OR domain below — do NOT use date_to <= month_end as it will miss these payslips.
+
+  PREFERRED — name-based (most reliable for Elrace):
+    domain: ["|", ["name","ilike","<Mon-YYYY>"], "&", ["date_from","<=","<month_end>"], ["date_to",">=","<month_start>"]]
+    e.g. for March 2026: ["|",["name","ilike","Mar-2026"],"&",["date_from","<=","2026-03-31"],["date_to",">=","2026-03-01"]]
+
+  FALLBACK — date_from only (if the above returns nothing):
+    domain: [["employee_id","=",<id>], ["date_from",">=","<month_start>"], ["date_from","<=","<month_end>"]]
+
+  fields: ["name","date_from","date_to","net_wage","fine","advance","total_deductions","pension","unemployment_insurance"]
+  Return a clean formatted summary. If no payslip found for that period, say so clearly with the period requested.
 
 LEAVE / REQUEST LOOKUP PATTERN:
   Model: employee.requests  ← NOTE: plural "requests" not "request"

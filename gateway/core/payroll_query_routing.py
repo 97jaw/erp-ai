@@ -412,10 +412,17 @@ def _temporal(context: ContextStack | None):
 
 def _payslip_date_domain(message: str, intent: Intent, context: ContextStack | None) -> list[Any]:
     from gateway.core.strategy_planner import resolve_report_date_range
+    from gateway.core.hr_payroll_composer import build_payslip_period_domain
 
     temporal = _temporal(context)
     date_from, date_to = resolve_report_date_range(_query_blob(message, intent), temporal)
-    return [["date_from", ">=", date_from], ["date_to", "<=", date_to]]
+    # Use name-match OR calendar-overlap domain to handle mid-month payslips
+    try:
+        month = int(str(date_from)[5:7])
+        year = int(str(date_from)[:4])
+        return build_payslip_period_domain(month, year)
+    except (ValueError, IndexError):
+        return [["date_from", ">=", date_from], ["date_to", ">=", date_from]]
 
 
 def _default_payroll_month_year(temporal) -> tuple[str, str]:
