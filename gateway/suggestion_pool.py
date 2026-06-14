@@ -44,10 +44,6 @@ PANDL_SUGGESTIONS: dict[str, list[str]] = {
         "Exclude administrative expenses",
         "Group by operating unit",
     ],
-    "export": [
-        "Generate executive PDF report",
-        "Export to Excel for analysis",
-    ],
     "analysis": [
         "Why is the margin lower than last month?",
         "Which expense categories can be reduced?",
@@ -309,15 +305,13 @@ def get_suggestion_pool(context: SuggestionContext, data: dict[str, Any]) -> lis
         ])
     elif context == SuggestionContext.BAR_CHART:
         pool.extend([
-            "Drill into the top category",
-            "Compare with the previous period",
-            "Show underlying transactions",
+            "Show top 5 projects by expense this year",
+            "Revenue by client last quarter",
         ])
     elif context == SuggestionContext.DATA_TABLE:
         pool.extend([
-            "Export this table to Excel",
-            "Filter to the top 10 rows only",
-            "Compare with the previous period",
+            "Group by client",
+            "Filter active projects only",
         ])
     elif context == SuggestionContext.HR:
         for items in HR_SUGGESTIONS.values():
@@ -326,11 +320,7 @@ def get_suggestion_pool(context: SuggestionContext, data: dict[str, Any]) -> lis
         for items in PAYROLL_SUGGESTIONS.values():
             pool.extend(items)
     else:
-        pool.extend([
-            "Show more details",
-            "Compare with last month",
-            "Generate a PDF report",
-        ])
+        pass  # Unknown context — return empty rather than guessing
 
     # Deduplicate while preserving order
     seen: set[str] = set()

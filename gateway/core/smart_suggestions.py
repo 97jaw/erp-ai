@@ -1,4 +1,8 @@
-"""Context-aware suggestion generation with category diversity (Phase 7)."""
+"""Context-aware suggestion generation — whitelist-only (Phase 7 refactor).
+
+Every suggestion must correspond to a real, working capability.
+If the context is unclear, we return nothing rather than guess.
+"""
 
 from __future__ import annotations
 
@@ -13,12 +17,68 @@ from gateway.suggestion_pool import (
     SuggestionContext,
     detect_suggestion_context,
     extract_data_context,
-    get_suggestion_pool,
     pick_diverse_suggestions,
 )
 
 MAX_SUGGESTION_LENGTH = 90
 TARGET_COUNT = 3
+
+# ---------------------------------------------------------------------------
+# Whitelist pools — ONLY suggestions that map to real tools/capabilities
+# ---------------------------------------------------------------------------
+
+_EXPENSE_POOL = [
+    "Show breakdown of {project} expenses",
+    "Compare {project} with another project",
+    "Show last 3 months expenses for {project}",
+    "Show top 5 projects by expense this year",
+    "Most expensive project by labor cost",
+]
+
+_PROJECT_LIST_POOL = [
+    "Group by client",
+    "Show top 5 by expense",
+    "Filter active projects only",
+    "Client wise projects of {year}",
+]
+
+_PAYROLL_POOL = [
+    "Show payroll breakdown by department",
+    "Total payroll cost last month",
+    "Draft payslips count",
+    "Average labor cost per project",
+]
+
+_HR_POOL = [
+    "Show employees by department",
+    "How many employees do we have",
+    "Employees in Civil department",
+]
+
+_FINANCIAL_POOL = [
+    "Show trial balance",
+    "Show P&L for this year",
+    "Partner ageing report",
+    "Revenue by client last quarter",
+]
+
+_AUDIT_POOL = [
+    "Show changes last week on {project}",
+    "Who modified {project} this week",
+    "Recent stage changes on projects",
+]
+
+_RECORDS_SIBLINGS = {
+    "invoices":          "Show {p} purchase orders",
+    "client_invoices":   "Show {p} LPO invoices",
+    "lpo_invoices":      "Show {p} client invoices",
+    "purchase_orders":   "Show {p} LPO invoices",
+    "timesheets":        "Show {p} staff list",
+    "petty_cash":        "Show {p} petty cash sheets",
+    "petty_cash_sheets": "Show {p} petty cash expenses",
+    "staff":             "Show {p} supervisors",
+    "supervisors":       "Show {p} staff list",
+}
 
 
 @dataclass(frozen=True)
@@ -31,7 +91,7 @@ class Suggestion:
 
 
 class SmartSuggestionsGenerator:
-    """Build diverse, data-specific suggestions from the current response."""
+    """Build diverse, whitelist-only suggestions from the current response."""
 
     def generate(
         self,
@@ -46,12 +106,8 @@ class SmartSuggestionsGenerator:
     ) -> list[str]:
         """Return up to three diverse, actionable suggestion strings."""
         candidates = self._build_candidates(
-            synthesized,
-            intent,
-            context,
-            tool_names=tool_names,
-            tool_results=tool_results,
-            predicted_actions=predicted_actions or [],
+            synthesized, intent, context,
+            tool_names=tool_names, tool_results=tool_results,
         )
         eligible = self._filter_eligible(candidates, context)
         diverse = self._diversify(eligible, target_count=TARGET_COUNT)
@@ -65,10 +121,8 @@ class SmartSuggestionsGenerator:
         *,
         tool_names: list[str],
         tool_results: list[Any],
-        predicted_actions: list[PredictedAction],
     ) -> list[Suggestion]:
-        # Project profile answers get profile chips only — never the expense
-        # drill/compare/table pool (those imply Deep Think flows).
+        # --- Tool-specific whitelists (highest priority) ---
         if "get_project_profile" in tool_names:
             return self._project_profile_suggestions(context, tool_results)
         if "get_project_records" in tool_names:
@@ -76,94 +130,55 @@ class SmartSuggestionsGenerator:
         if "get_project_activity" in tool_names:
             return self._project_activity_suggestions(context, tool_results)
 
-        from gateway.core.payroll_query_routing import is_payroll_orchestration_query
+        # --- Expense tools ---
+        if any(n in tool_names for n in (
+            "get_project_expenses", "get_project_expense_summary",
+            "get_project_expense_breakdown", "get_project_financial_data",
+            "get_project_cost_categories", "compare_project_expenses",
+        )):
+            return self._expense_suggestions(context, tool_results, synthesized)
 
+        # --- List query results ---
+        if any(n in tool_names for n in ("execute_query_odoo", "execute_aggregate_odoo")):
+            return self._list_suggestions(intent, context, tool_results)
+
+        # --- Financial reports ---
+        suggestion_context = detect_suggestion_context(tool_names, synthesized.visualization, tool_results)
+        if suggestion_context in {
+            SuggestionContext.PANDL, SuggestionContext.TRIAL_BALANCE,
+            SuggestionContext.GENERAL_LEDGER, SuggestionContext.BALANCE_SHEET,
+            SuggestionContext.RECEIVABLES, SuggestionContext.PARTNER_AGEING,
+        }:
+            return self._financial_suggestions(suggestion_context, synthesized, tool_results)
+
+        # --- HR / Payroll ---
+        from gateway.core.payroll_query_routing import is_payroll_orchestration_query
         pending = context.working_memory.session_facts.get("pending_entity_clarification") or {}
         payroll_turn = (
             intent.subject_area in {"payroll", "hr"}
             or is_payroll_orchestration_query(
-                context.conversation.message or intent.specific_intent,
-                intent,
-                context,
+                context.conversation.message or intent.specific_intent, intent, context,
             )
             or bool(pending.get("payroll_context"))
         )
-        if any(
-            name in tool_names
-            for name in (
-                "get_project_expenses",
-                "get_project_expense_summary",
-                "get_project_expense_breakdown",
-            )
-        ):
-            payroll_turn = False
-
-        suggestion_context = detect_suggestion_context(
-            tool_names,
-            synthesized.visualization,
-            tool_results,
-        )
-        if intent.subject_area == "payroll" or payroll_turn:
-            suggestion_context = SuggestionContext.PAYROLL
-        elif intent.subject_area == "hr":
-            suggestion_context = SuggestionContext.HR
-
-        if suggestion_context in {SuggestionContext.HR, SuggestionContext.PAYROLL}:
-            data_context = extract_data_context(synthesized.visualization, tool_results)
-            pool = get_suggestion_pool(suggestion_context, data_context)
+        if suggestion_context == SuggestionContext.PAYROLL or (intent.subject_area == "payroll" and payroll_turn):
+            pool = list(_PAYROLL_POOL)
             if pending.get("payroll_context"):
-                pool = [
-                    "Show payslip for last month",
-                    "Total payroll cost last month",
-                    "Draft payslips count",
-                    *pool,
-                ]
-            return [
-                Suggestion(text=text, category=_infer_category(text), priority=5)
-                for text in pick_diverse_suggestions(pool, TARGET_COUNT)
-            ]
+                pool = ["Show payslip for last month", "Total payroll cost last month", *pool]
+            return [Suggestion(text=t, category="drill", priority=5) for t in pool[:TARGET_COUNT]]
 
-        candidates: list[Suggestion] = []
-        if not payroll_turn:
-            candidates.extend(
-                Suggestion(text=item.text, category=item.category, priority=item.priority)
-                for item in self._predicted_suggestions(predicted_actions)
-            )
-            candidates.extend(self._context_interpolated_suggestions(context, tool_results))
-            candidates.extend(self._drill_down_suggestions(synthesized, intent))
-            candidates.extend(self._comparison_suggestions(synthesized, intent))
-        candidates.extend(self._action_suggestions(synthesized, tool_names))
-        candidates.extend(self._insight_suggestions(synthesized, tool_results))
+        if suggestion_context == SuggestionContext.HR or intent.subject_area == "hr":
+            return [Suggestion(text=t, category="drill", priority=5) for t in _HR_POOL[:TARGET_COUNT]]
 
-        suggestion_context = detect_suggestion_context(
-            tool_names,
-            synthesized.visualization,
-            tool_results,
-        )
-        if intent.subject_area == "payroll":
-            suggestion_context = SuggestionContext.PAYROLL
-        elif intent.subject_area == "hr":
-            suggestion_context = SuggestionContext.HR
-        data_context = extract_data_context(synthesized.visualization, tool_results)
-        for text in get_suggestion_pool(suggestion_context, data_context):
-            candidates.append(Suggestion(text=text, category=_infer_category(text)))
+        # --- Audit ---
+        if any(n in tool_names for n in ("audit_query", "audit_search")):
+            return self._audit_suggestions(context)
 
-        if intent.primary_action == "compare":
-            candidates.append(
-                Suggestion(
-                    text="Compare the same clients for project expenses in the same period.",
-                    category="compare",
-                ),
-            )
-
-        return candidates
+        # Unknown context — return nothing (empty is better than wrong)
+        return []
 
     @staticmethod
-    def _project_profile_suggestions(
-        context: ContextStack,
-        tool_results: list[Any],
-    ) -> list[Suggestion]:
-        """Profile-appropriate follow-ups; expenses is the one Deep Think handoff."""
+    def _project_profile_suggestions(context: ContextStack, tool_results: list[Any]) -> list[Suggestion]:
         project_name = None
         focus = "all"
         for payload in tool_results:
@@ -173,48 +188,20 @@ class SmartSuggestionsGenerator:
                 break
         if not project_name:
             active = context.working_memory.get_active_project()
-            project_name = active.project_name if active is not None else "the project"
+            project_name = active.project_name if active is not None else None
+        if not project_name:
+            return []
 
-        suggestions: list[Suggestion] = []
+        out = []
         if focus not in {"schedule", "all"}:
-            suggestions.append(
-                Suggestion(
-                    text=f"Show {project_name} schedule and duration",
-                    category="drill",
-                    priority=5,
-                ),
-            )
+            out.append(Suggestion(f"Show {project_name} schedule and duration", "drill", 5))
         if focus != "team":
-            suggestions.append(
-                Suggestion(
-                    text=f"Who is the project manager of {project_name}?",
-                    category="drill",
-                    priority=4,
-                ),
-            )
-        if focus in {"team", "schedule"}:
-            suggestions.append(
-                Suggestion(
-                    text=f"Show {project_name} engineer amounts",
-                    category="drill",
-                    priority=4,
-                ),
-            )
-        suggestions.append(
-            Suggestion(
-                text=f"Show {project_name} expenses",
-                category="action",
-                priority=3,
-            ),
-        )
-        return [item for item in suggestions if len(item.text) <= MAX_SUGGESTION_LENGTH]
+            out.append(Suggestion(f"Who is the project manager of {project_name}?", "drill", 4))
+        out.append(Suggestion(f"Show {project_name} expenses", "action", 3))
+        return [s for s in out if len(s.text) <= MAX_SUGGESTION_LENGTH]
 
     @staticmethod
-    def _project_records_suggestions(
-        context: ContextStack,
-        tool_results: list[Any],
-    ) -> list[Suggestion]:
-        """Record-list follow-ups: sibling record types + date widen + expenses."""
+    def _project_records_suggestions(context: ContextStack, tool_results: list[Any]) -> list[Suggestion]:
         project_name = None
         record_type = ""
         period_defaulted = False
@@ -228,41 +215,20 @@ class SmartSuggestionsGenerator:
             active = context.working_memory.get_active_project()
             project_name = active.project_name if active is not None else "the project"
 
-        # Staff <-> supervisors cross-suggest; documents cross-suggest each other.
-        sibling_by_type = {
-            "invoices": [("Show {p} purchase orders", "drill")],
-            "client_invoices": [("Show {p} LPO invoices", "drill")],
-            "lpo_invoices": [("Show {p} client invoices", "drill")],
-            "purchase_orders": [("Show {p} LPO invoices", "drill")],
-            "timesheets": [("Show {p} staff list", "drill")],
-            "petty_cash": [("Show {p} petty cash sheets", "drill")],
-            "petty_cash_sheets": [("Show {p} petty cash expenses", "drill")],
-            "staff": [("Show {p} supervisors", "drill")],
-            "supervisors": [("Show {p} staff list", "drill")],
-        }
-        suggestions: list[Suggestion] = []
-        for template, category in sibling_by_type.get(record_type, []):
-            suggestions.append(
-                Suggestion(text=template.format(p=project_name), category=category, priority=5),
-            )
+        out = []
+        sibling = _RECORDS_SIBLINGS.get(record_type)
+        if sibling:
+            out.append(Suggestion(sibling.format(p=project_name), "drill", 5))
         if period_defaulted:
-            suggestions.append(
-                Suggestion(
-                    text=f"Show {project_name} {record_type.replace('_', ' ')} for this year",
-                    category="time",
-                    priority=4,
-                ),
-            )
-        suggestions.append(
-            Suggestion(text=f"Show {project_name} expenses", category="action", priority=3),
-        )
-        return [item for item in suggestions if len(item.text) <= MAX_SUGGESTION_LENGTH]
+            out.append(Suggestion(
+                f"Show {project_name} {record_type.replace('_', ' ')} for this year",
+                "time", 4,
+            ))
+        out.append(Suggestion(f"Show {project_name} expenses", "action", 3))
+        return [s for s in out if len(s.text) <= MAX_SUGGESTION_LENGTH]
 
     @staticmethod
-    def _project_activity_suggestions(
-        context: ContextStack,
-        tool_results: list[Any],
-    ) -> list[Suggestion]:
+    def _project_activity_suggestions(context: ContextStack, tool_results: list[Any]) -> list[Suggestion]:
         project_name = None
         activity_type = ""
         for payload in tool_results:
@@ -272,176 +238,130 @@ class SmartSuggestionsGenerator:
                 break
         if not project_name:
             active = context.working_memory.get_active_project()
-            project_name = active.project_name if active is not None else "the project"
-        siblings = {
-            "attachments": [
-                (f"Chatter summary of {project_name}", "drill"),
-                (f"Show {project_name} progress", "drill"),
-            ],
-            "chatter_summary": [
-                (f"Attachments of {project_name}", "drill"),
-                (f"Last updated by for {project_name}", "drill"),
-            ],
-            "progress": [
-                (f"Attachments of {project_name}", "drill"),
-                (f"Show {project_name} schedule and duration", "drill"),
-            ],
-            "audit": [
-                (f"Chatter summary of {project_name}", "drill"),
-                (f"Show {project_name} progress", "drill"),
-            ],
+            project_name = active.project_name if active is not None else None
+        if not project_name:
+            return []
+
+        # Only suggest real activity_type values (attachments/chatter_summary/progress/audit)
+        siblings: dict[str, list[tuple[str, str]]] = {
+            "attachments":    [(f"Chatter summary of {project_name}", "drill"),
+                               (f"Show {project_name} progress", "drill")],
+            "chatter_summary":[(f"Attachments of {project_name}", "drill"),
+                               (f"Last updated by for {project_name}", "drill")],
+            "progress":       [(f"Attachments of {project_name}", "drill"),
+                               (f"Show {project_name} schedule and duration", "drill")],
+            "audit":          [(f"Chatter summary of {project_name}", "drill"),
+                               (f"Show {project_name} progress", "drill")],
         }
         return [
-            Suggestion(text=text, category=cat, priority=5)
+            Suggestion(text, cat, 5)
             for text, cat in siblings.get(activity_type, [])
-        ][:3]
+            if len(text) <= MAX_SUGGESTION_LENGTH
+        ][:TARGET_COUNT]
 
     @staticmethod
-    def _context_interpolated_suggestions(
-        context: ContextStack,
+    def _expense_suggestions(
+        context: ContextStack, tool_results: list[Any], synthesized: SynthesizedResult,
+    ) -> list[Suggestion]:
+        active = context.working_memory.get_active_project()
+        project_name = active.project_name if active is not None else None
+        for payload in tool_results:
+            if isinstance(payload, dict) and payload.get("project_name"):
+                project_name = payload["project_name"]
+                break
+
+        out = []
+        if project_name:
+            out.append(Suggestion(f"Show breakdown of {project_name} expenses", "drill", 5))
+            out.append(Suggestion(f"Compare {project_name} with another project", "compare", 4))
+        out.append(Suggestion("Show top 5 projects by expense this year", "drill", 3))
+
+        # Data-specific: if in loss, offer why-analysis
+        data = extract_data_context(synthesized.visualization, tool_results)
+        if float(data.get("net_profit", 0) or 0) < 0:
+            out.insert(0, Suggestion("Why is this period showing a loss?", "analysis", 6))
+        if data.get("over_budget"):
+            out.insert(0, Suggestion("Show which cost category caused the overrun", "analysis", 6))
+
+        return [s for s in out if len(s.text) <= MAX_SUGGESTION_LENGTH][:TARGET_COUNT + 1]
+
+    @staticmethod
+    def _list_suggestions(
+        intent: Intent, context: ContextStack, tool_results: list[Any],
+    ) -> list[Suggestion]:
+        """After a list/aggregate query — offer grouped/filtered variants."""
+        subject = (intent.subject_area or "").lower()
+        out = []
+        if subject in {"project", ""}:
+            out.append(Suggestion("Client wise projects of 2025", "drill", 5))
+            out.append(Suggestion("Show top 5 projects by expense this year", "drill", 4))
+            out.append(Suggestion("Active projects of 2026", "filter", 3))
+        elif subject == "financial":
+            out.extend(Suggestion(t, "drill", 4) for t in _FINANCIAL_POOL[:3])
+        elif subject in {"payroll", "hr"}:
+            out.extend(Suggestion(t, "drill", 4) for t in _PAYROLL_POOL[:3])
+        # Generic: return nothing rather than wrong suggestions
+        return [s for s in out if len(s.text) <= MAX_SUGGESTION_LENGTH]
+
+    @staticmethod
+    def _financial_suggestions(
+        suggestion_context: SuggestionContext,
+        synthesized: SynthesizedResult,
         tool_results: list[Any],
     ) -> list[Suggestion]:
-        """Chips built from the actual entities and date range of this turn."""
-        suggestions: list[Suggestion] = []
-        date_from, date_to = _executed_date_range(tool_results)
-        period_label = f"from {date_from} to {date_to}" if date_from and date_to else ""
+        # Whitelist per report type — only real tools
+        pools: dict[SuggestionContext, list[str]] = {
+            SuggestionContext.PANDL: [
+                "Break down expenses by account",
+                "Show top 5 cost categories",
+                "Compare with last month",
+            ],
+            SuggestionContext.TRIAL_BALANCE: [
+                "Show general ledger for this period",
+                "Show P&L for this year",
+                "Compare with last month",
+            ],
+            SuggestionContext.GENERAL_LEDGER: [
+                "Show trial balance",
+                "Show P&L for this period",
+                "Filter by specific account",
+            ],
+            SuggestionContext.BALANCE_SHEET: [
+                "Show breakdown of current assets",
+                "List all outstanding receivables",
+                "Compare assets vs liabilities trend",
+            ],
+            SuggestionContext.RECEIVABLES: [
+                "Which client is most overdue?",
+                "Show invoices overdue by more than 60 days",
+                "Show collection priority list",
+            ],
+            SuggestionContext.PARTNER_AGEING: [
+                "Which client is most overdue?",
+                "Show invoices overdue by more than 60 days",
+            ],
+        }
+        data = extract_data_context(synthesized.visualization, tool_results)
+        chosen = pools.get(suggestion_context, [])
+        out = [Suggestion(t, "drill", 5) for t in chosen]
+        if float(data.get("net_profit", 0) or 0) < 0:
+            out.insert(0, Suggestion("Why is this period showing a loss?", "analysis", 6))
+        return out[:TARGET_COUNT]
 
+    @staticmethod
+    def _audit_suggestions(context: ContextStack) -> list[Suggestion]:
         active = context.working_memory.get_active_project()
         project_name = active.project_name if active is not None else None
         if project_name:
-            breakdown = f"Break down {project_name} expenses by account"
-            if period_label:
-                breakdown = f"{breakdown} {period_label}"
-            suggestions.append(Suggestion(text=breakdown, category="drill", priority=5))
-            if period_label:
-                # Only suggest period comparison when we have an actual bounded period
-                suggestions.append(
-                    Suggestion(
-                        text=f"Compare {project_name} expenses with the previous period",
-                        category="compare",
-                        priority=4,
-                    ),
-                )
-        if period_label:
-            suggestions.append(
-                Suggestion(
-                    text=f"Show the P&L {period_label}",
-                    category="drill",
-                    priority=3,
-                ),
-            )
-        return [item for item in suggestions if len(item.text) <= MAX_SUGGESTION_LENGTH]
-
-    @staticmethod
-    def _predicted_suggestions(predicted_actions: list[PredictedAction]) -> list[Suggestion]:
-        ranked: list[Suggestion] = []
-        for action in sorted(predicted_actions, key=lambda item: item.likelihood, reverse=True):
-            text = action.suggestion_text.strip()
-            if not text:
-                continue
-            ranked.append(
-                Suggestion(
-                    text=text,
-                    category=_infer_category(text),
-                    priority=max(1, int(action.likelihood * 100)),
-                ),
-            )
-        return ranked
-
-    @staticmethod
-    def _drill_down_suggestions(
-        synthesized: SynthesizedResult,
-        intent: Intent,
-    ) -> list[Suggestion]:
-        suggestions: list[Suggestion] = []
-        top_client = _top_client_from_visualization(synthesized.visualization)
-        if top_client:
-            suggestions.append(
-                Suggestion(
-                    text=f"Show project expenses for {top_client} last quarter",
-                    category="drill",
-                    priority=4,
-                ),
-            )
-            suggestions.append(
-                Suggestion(
-                    text=f"Break down costs by category for {top_client}",
-                    category="drill",
-                    priority=3,
-                ),
-            )
-        label = str((synthesized.visualization or {}).get("label") or intent.specific_intent)
-        if "project" in label.lower():
-            suggestions.append(
-                Suggestion(
-                    text="Show which cost category caused the largest spend",
-                    category="drill",
-                ),
-            )
-        return suggestions
-
-    @staticmethod
-    def _comparison_suggestions(
-        synthesized: SynthesizedResult,
-        intent: Intent,
-    ) -> list[Suggestion]:
-        suggestions: list[Suggestion] = []
-        top_client = _top_client_from_visualization(synthesized.visualization)
-        if intent.primary_action == "compare":
-            suggestions.append(
-                Suggestion(
-                    text="Drill into the biggest revenue change driver",
-                    category="analysis",
-                ),
-            )
-        if top_client:
-            suggestions.append(
-                Suggestion(
-                    text=f"Compare {top_client} revenue with last year",
-                    category="compare",
-                ),
-            )
-        return suggestions
-
-    @staticmethod
-    def _action_suggestions(
-        synthesized: SynthesizedResult,
-        tool_names: list[str],
-    ) -> list[Suggestion]:
-        # Export suggestions are omitted — they require Visualize panel to be open,
-        # and clicking them from chat would produce a confusing "tool not found" error.
-        return []
-
-    @staticmethod
-    def _insight_suggestions(
-        synthesized: SynthesizedResult,
-        tool_results: list[Any],
-    ) -> list[Suggestion]:
-        suggestions: list[Suggestion] = []
-        data_context = extract_data_context(synthesized.visualization, tool_results)
-        if float(data_context.get("net_profit", 0) or 0) < 0:
-            suggestions.append(
-                Suggestion(
-                    text="Why is this period showing a loss?",
-                    category="analysis",
-                ),
-            )
-        if data_context.get("over_budget"):
-            suggestions.append(
-                Suggestion(
-                    text="Show which cost category caused the overrun",
-                    category="analysis",
-                ),
-            )
-        rows = ((synthesized.visualization or {}).get("data") or {}).get("rows") or []
-        if len(rows) >= 3:
-            suggestions.append(
-                Suggestion(
-                    text="Show revenue trend for the top 3 clients",
-                    category="analysis",
-                ),
-            )
-        return suggestions
+            return [
+                Suggestion(f"Show changes last week on {project_name}", "drill", 5),
+                Suggestion(f"Who modified {project_name} this week", "drill", 4),
+                Suggestion("Recent stage changes on projects", "drill", 3),
+            ]
+        return [
+            Suggestion("Show changes last week", "drill", 5),
+            Suggestion("Recent stage changes on projects", "drill", 4),
+        ]
 
     @staticmethod
     def _filter_eligible(candidates: list[Suggestion], context: ContextStack) -> list[Suggestion]:
@@ -468,39 +388,26 @@ class SmartSuggestionsGenerator:
     def _diversify(candidates: list[Suggestion], *, target_count: int) -> list[Suggestion]:
         if not candidates:
             return []
-
         ordered = sorted(candidates, key=lambda item: item.priority, reverse=True)
         selected: list[Suggestion] = []
-        seen: set[str] = set()
-
+        seen_cats: dict[str, int] = {}
         for candidate in ordered:
-            if candidate.priority <= 0:
+            if len(selected) >= target_count:
                 break
-            if candidate.text in seen:
+            if candidate.text in {s.text for s in selected}:
+                continue
+            # Allow max 2 from same category for diversity
+            cat_count = seen_cats.get(candidate.category, 0)
+            if cat_count >= 2 and len(selected) < target_count - 1:
                 continue
             selected.append(candidate)
-            seen.add(candidate.text)
-            if len(selected) >= target_count:
-                return selected[:target_count]
-
-        remaining = [candidate for candidate in ordered if candidate.text not in seen]
-        pool = [candidate.text for candidate in remaining]
-        category_by_text = {candidate.text: candidate.category for candidate in remaining}
-        picked = pick_diverse_suggestions(pool, target_count - len(selected), exclude=seen)
-        for text in picked:
-            selected.append(
-                Suggestion(
-                    text=text,
-                    category=category_by_text.get(text, _infer_category(text)),
-                ),
-            )
-
-        for candidate in remaining:
+            seen_cats[candidate.category] = cat_count + 1
+        # Fill remaining slots if diversity filter left gaps
+        for candidate in ordered:
             if len(selected) >= target_count:
                 break
-            if candidate.text not in {item.text for item in selected}:
+            if candidate.text not in {s.text for s in selected}:
                 selected.append(candidate)
-
         return selected[:target_count]
 
 

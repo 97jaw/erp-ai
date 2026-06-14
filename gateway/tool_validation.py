@@ -3,6 +3,21 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# Field-level recovery hints: when a Fault mentions a bad field,
+# suggest a corrected field name so the AI can retry.
+_FIELD_HINTS: dict[str, dict[str, str]] = {
+    "fleet.vehicle": {
+        "partner_id": "Use driver_id (res.partner) or employee_id (hr.employee) — fleet.vehicle has no partner_id",
+        "name_id": "Use name (char) — fleet.vehicle.name is a plain char field",
+    },
+    "project.project": {
+        "stage_id": "project.project has no stage_id field — use last_update_status or active",
+    },
+    "project.task": {
+        "stage_id": "Use stage_id only on project.task.type, not on task directly — or filter by state",
+    },
+}
+
 
 REFETCH_KEYWORDS = (
     "refresh",
@@ -34,14 +49,55 @@ def humanize_tool_error(exc: Exception) -> str:
     return "Could not fetch data. Please try a different query."
 
 
+def _parse_fault(exc: Exception) -> tuple[str, str, str | None]:
+    """Extract (error_type, details, suggestion) from an xmlrpc Fault or ValueError.
+
+    Returns a 3-tuple safe to pass to the AI orchestrator.
+    """
+    raw = str(exc)
+
+    # --- Invalid field: "Invalid field 'stage_id' on model 'project.project'" ---
+    m = re.search(r"Invalid field ['\"]?(\w+)['\"]? on model ['\"]?([\w.]+)['\"]?", raw)
+    if m:
+        field, model = m.group(1), m.group(2)
+        hint = (_FIELD_HINTS.get(model) or {}).get(field)
+        return (
+            "invalid_field",
+            f"{model} has no field '{field}'",
+            hint or f"Check available fields on {model} before retrying",
+        )
+
+    # --- Access error ---
+    if "access" in raw.lower() and ("denied" in raw.lower() or "error" in raw.lower()):
+        return "permission_denied", "Insufficient access rights for that model or record", None
+
+    # --- Generic Odoo fault: strip the Python traceback, keep only the last line ---
+    if "Traceback" in raw:
+        # The meaningful part is the final non-empty line of the fault string
+        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+        clean = lines[-1] if lines else raw[:200]
+        return "odoo_error", clean, "Try a different filter or model"
+
+    # --- ValueError from our own code ---
+    if isinstance(exc, ValueError):
+        return "value_error", raw[:300], None
+
+    return "tool_error", raw[:300], None
+
+
 def format_tool_exception(exc: Exception) -> dict[str, Any]:
-    return {
+    error_type, details, suggestion = _parse_fault(exc)
+    result: dict[str, Any] = {
+        "status": "error",
         "error": True,
-        "error_type": type(exc).__name__,
-        "message": str(exc),
+        "error_type": error_type,
+        "details": details,
         "user_message": humanize_tool_error(exc),
         "retry_safe": "Timeout" in type(exc).__name__,
     }
+    if suggestion:
+        result["suggestion"] = suggestion
+    return result
 
 
 def validate_tool_result(tool_name: str, result: Any) -> Any:
