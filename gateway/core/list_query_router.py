@@ -49,10 +49,20 @@ _NON_LIST_OVERRIDES = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# Person + vehicle queries must go to the dedicated fleet tool, not list router
+# e.g. "adil khan vehicle", "John's car", "vehicle for Ahmed"
+_FLEET_PERSON_QUERY_RE = re.compile(
+    r"\b\w+\s+\w+\s+vehicle|\bvehicle\s+(?:for|of|assigned)\s+\w|\bcar\s+(?:for|of)\s+\w",
+    re.IGNORECASE,
+)
+
 
 def is_list_pattern(message: str) -> bool:
     """Return True if the message strongly looks like a list/browse query."""
     if _NON_LIST_OVERRIDES.search(message):
+        return False
+    # Person+vehicle queries → dedicated fleet orchestration tool, not list router
+    if _FLEET_PERSON_QUERY_RE.search(message):
         return False
     return bool(_LIST_KEYWORDS.search(message))
 
@@ -284,6 +294,9 @@ def _related_entity_domain(value: str, relation: str, model: str) -> list[Any]:
         if model == "fleet.vehicle":
             return [["driver_id.name", "ilike", value]]
         return [["employee_id.name", "ilike", value]]
+    # fleet.vehicle has no partner_id — fall back to driver name search
+    if model == "fleet.vehicle":
+        return [["driver_id.name", "ilike", value]]
     # Fallback: search partner then name
     return [["partner_id.name", "ilike", value]]
 

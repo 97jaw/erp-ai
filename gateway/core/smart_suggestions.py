@@ -276,7 +276,7 @@ class SmartSuggestionsGenerator:
         siblings = {
             "attachments": [
                 (f"Chatter summary of {project_name}", "drill"),
-                (f"Progress of {project_name}", "drill"),
+                (f"Show {project_name} progress", "drill"),
             ],
             "chatter_summary": [
                 (f"Attachments of {project_name}", "drill"),
@@ -288,7 +288,7 @@ class SmartSuggestionsGenerator:
             ],
             "audit": [
                 (f"Chatter summary of {project_name}", "drill"),
-                (f"Progress of {project_name}", "drill"),
+                (f"Show {project_name} progress", "drill"),
             ],
         }
         return [
@@ -313,13 +313,15 @@ class SmartSuggestionsGenerator:
             if period_label:
                 breakdown = f"{breakdown} {period_label}"
             suggestions.append(Suggestion(text=breakdown, category="drill", priority=5))
-            suggestions.append(
-                Suggestion(
-                    text=f"Compare {project_name} expenses with the previous period",
-                    category="compare",
-                    priority=4,
-                ),
-            )
+            if period_label:
+                # Only suggest period comparison when we have an actual bounded period
+                suggestions.append(
+                    Suggestion(
+                        text=f"Compare {project_name} expenses with the previous period",
+                        category="compare",
+                        priority=4,
+                    ),
+                )
         if period_label:
             suggestions.append(
                 Suggestion(
@@ -399,12 +401,6 @@ class SmartSuggestionsGenerator:
                     category="compare",
                 ),
             )
-        suggestions.append(
-            Suggestion(
-                text="Compare with the previous period",
-                category="compare",
-            ),
-        )
         return suggestions
 
     @staticmethod
@@ -412,17 +408,9 @@ class SmartSuggestionsGenerator:
         synthesized: SynthesizedResult,
         tool_names: list[str],
     ) -> list[Suggestion]:
-        visual_type = (synthesized.visualization or {}).get("visual_type") or ""
-        suggestions: list[Suggestion] = []
-        if visual_type in {"DATA_TABLE", "BAR_CHART", "FINANCIAL_REPORT"}:
-            suggestions.append(
-                Suggestion(text="Export this view to Excel", category="export"),
-            )
-        if "get_financial_report" in tool_names or visual_type == "FINANCIAL_REPORT":
-            suggestions.append(
-                Suggestion(text="Generate executive PDF report", category="export"),
-            )
-        return suggestions
+        # Export suggestions are omitted — they require Visualize panel to be open,
+        # and clicking them from chat would produce a confusing "tool not found" error.
+        return []
 
     @staticmethod
     def _insight_suggestions(

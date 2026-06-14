@@ -312,10 +312,10 @@ class PDFGenerator:
 
             preview_url = None
             if _build_preview_image(prepared, preview_path, _chart_theme_key(theme)):
-                preview_url = f"/reports/{preview_path.name}"
+                preview_url = f"/report-files/{preview_path.name}"
 
             return {
-                "pdf_url": f"/reports/{output_path.name}",
+                "pdf_url": f"/report-files/{output_path.name}",
                 "preview_image": preview_url,
                 "size_bytes": output_path.stat().st_size,
                 "generated_at": datetime.utcnow().isoformat(),

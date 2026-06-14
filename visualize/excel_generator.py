@@ -83,8 +83,8 @@ def generate_excel_workbook(spec: dict[str, Any], session_id: str | None = None)
 
     return {
         "output_id": output_id,
-        "excel_url": f"/reports/{output_id}.xlsx",
-        "download_url": f"/reports/{output_id}.xlsx",
+        "excel_url": f"/report-files/{output_id}.xlsx",
+        "download_url": f"/report-files/{output_id}.xlsx",
         "size_bytes": output_path.stat().st_size,
         "title": title,
         "session_id": session_id,
