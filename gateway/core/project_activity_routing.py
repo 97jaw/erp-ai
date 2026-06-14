@@ -20,7 +20,10 @@ _ACTIVITY_TYPE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("chatter_summary", re.compile(
         r"chatter|messages?|activity\s+summary|communication|"
         r"what(?:'s|\s+is)\s+(?:the\s+)?latest|recent\s+(?:notes?|updates?|activity)"
-        r"|notes?\s+on\s+the\s+project|ملخص\s+النشاط|رسائل",
+        r"|notes?\s+on\s+the\s+project"
+        # Arabic: ملخص محادثات (summary of conversations/chats), ملخص النشاط (activity summary), رسائل (messages)
+        r"|ملخص\s+(?:محادثات?|النشاط|الرسائل?|الأنشطة)|محادثات?\s+(?:المشروع|الفريق)?"
+        r"|رسائل|أحدث\s+(?:نشاط|تحديث|رسائل)",
         re.IGNORECASE,
     )),
     ("progress", re.compile(
@@ -31,8 +34,10 @@ _ACTIVITY_TYPE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     )),
     ("audit", re.compile(
         r"last\s+updated|updated\s+by|created\s+by|created\s+on|"
-        r"audit\s+trail|who\s+last\s+(?:updated|changed)|"
-        r"آخر\s+تحديث|من\s+حدّ?ث",
+        r"audit\s+trail|who\s+(?:last\s+)?(?:updated?|modified?|changed?|edit)"
+        r"|who\s+did\s+(?:update|modify|change)"
+        r"|what\s+(?:changed?|was\s+modif)"
+        r"|آخر\s+تحديث|من\s+(?:حدّ?ث|عدّل|غيّر)|من\s+آخر\s+تعديل",
         re.IGNORECASE,
     )),
 )
@@ -40,8 +45,9 @@ _ACTIVITY_TYPE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 _LEADING_ACTIVITY_QUALIFIER_RE = re.compile(
     r"^\s*(?:show\s+(?:me\s+)?|list\s+|give\s+me\s+|get\s+|tell\s+me\s+)?"
     r"(?:all\s+|the\s+|latest\s+|recent\s+)*"
-    r"(?:attachments?|documents?|files?|chatter|messages?|progress|audit(?:\s+trail)?)"
-    r"\s+(?:of|for|on)\s+",
+    r"(?:attachments?|documents?|files?|chatter|messages?|progress|audit(?:\s+trail)?"
+    r"|ملخص\s+(?:محادثات?|النشاط|الرسائل?)|محادثات?|مرفقات?)"
+    r"\s*(?:of|for|on|ل|من|عن|\s)\s*",
     re.IGNORECASE,
 )
 

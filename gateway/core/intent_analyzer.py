@@ -19,8 +19,20 @@ logger = logging.getLogger(__name__)
 INTENT_ANALYZER_MODEL = "claude-sonnet-4-20250514"
 
 _WRITE_OPERATION_RE = re.compile(
-    r"\b(create|delete|update|approve|modify|change|edit|post|cancel|validate|"
-    r"remove|archive|unlink)\b",
+    r"\b(create|delete|approve|post|cancel|validate|remove|archive|unlink|"
+    r"edit|modify|update|change)\b",
+    re.IGNORECASE,
+)
+
+# Read/audit phrasings that look like write but are actually questions about history.
+# When these match, the write-guard is suppressed.
+_AUDIT_QUESTION_RE = re.compile(
+    r"\b(who\s+(modify|modified|update[sd]?|changed?|did\s+(update|modify|change))"
+    r"|what\s+(changed?|was\s+modified)"
+    r"|when\s+(was|did)\s+\w+\s+(modif|updat|chang)"
+    r"|show\s+(changes?|modifications?|updates?)"
+    r"|last\s+(updated?|modified?|changed?)\s+by"
+    r"|audit|history\s+of|ملخص\s+محادثات|من\s+عدّل|من\s+غيّر|من\s+حدّث)\b",
     re.IGNORECASE,
 )
 _WRITE_TARGET_RE = re.compile(
@@ -401,7 +413,12 @@ class IntentAnalyzer:
                 ),
             )
 
-        if _WRITE_OPERATION_RE.search(lowered) and _WRITE_TARGET_RE.search(lowered):
+        if (
+            _WRITE_OPERATION_RE.search(lowered)
+            and _WRITE_TARGET_RE.search(lowered)
+            # Suppress write-guard for audit/history questions ("who modified X", etc.)
+            and not _AUDIT_QUESTION_RE.search(lowered)
+        ):
             return replace(
                 intent,
                 requires_clarification=False,

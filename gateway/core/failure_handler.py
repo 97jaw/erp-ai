@@ -111,10 +111,7 @@ class HonestFailureResponder:
                 "{alternative_clause}"
             ),
             never="Don't invent system errors or ask the user to retry",
-            default_suggestions=(
-                "Show me available financial reports.",
-                "List active projects I can query.",
-            ),
+            default_suggestions=(),  # No suggestions — empty is better than wrong for out-of-scope
         ),
         FailureMode.NO_DATA_FOUND: _FailureTemplate(
             tone="honest, exploratory",
