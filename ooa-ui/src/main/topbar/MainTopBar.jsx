@@ -37,6 +37,7 @@ export default function MainTopBar({
   visualizeOpen = false,
   onOpenAudit,
   onCloseAudit,
+  onOpenReports,
   onToggleVisualize,
   onBuildDashboard,
 }) {
@@ -52,6 +53,7 @@ export default function MainTopBar({
   const compactIntegrations = viewportTier !== "desktop";
   const isMobile = viewportTier === "mobile";
   const isAuditView = mainView === "audit";
+  const isReportsView = mainView === "reports";
 
   useEffect(() => {
     if (!integrationsOpen) return undefined;
@@ -248,6 +250,21 @@ export default function MainTopBar({
           >
             <IconAudit size={18} />
             <span className="ooa-main-topbar__btn-label">Audit</span>
+          </button>
+        ) : null}
+        {onOpenReports ? (
+          <button
+            type="button"
+            className={`ooa-main-topbar__ai-btn ooa-main-topbar__ai-btn--reports${
+              isReportsView ? " ooa-main-topbar__ai-btn--active" : ""
+            }`}
+            aria-label={isReportsView ? "Close reports — back to chat" : "Reports"}
+            title={isReportsView ? "Back to chat" : "Reports — generate financial reports"}
+            aria-pressed={isReportsView}
+            onClick={onOpenReports}
+          >
+            <span aria-hidden="true" style={{ fontSize: 16, lineHeight: 1 }}>📊</span>
+            <span className="ooa-main-topbar__btn-label">Reports</span>
           </button>
         ) : null}
         {!isAuditView && onToggleVisualize ? (

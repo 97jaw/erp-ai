@@ -396,6 +396,24 @@
   border-color: color-mix(in srgb, #22c55e 50%, var(--ooa-glass-border));
 }
 
+.ooa-main-topbar__ai-btn--reports {
+  color: #ffffff;
+  background: #1a1a2e;
+  border-color: #2a2a45;
+}
+
+.ooa-main-topbar__ai-btn--reports:hover {
+  background: #2d2d50;
+  border-color: #4a90d9;
+  color: #ffffff;
+}
+
+.ooa-main-topbar__ai-btn--reports.ooa-main-topbar__ai-btn--active {
+  background: #4a90d9;
+  border-color: #357abd;
+  color: #ffffff;
+}
+
 .ooa-main-topbar__ai-btn--visualize {
   color: #b91c1c;
   background: color-mix(in srgb, #fca5a5 30%, var(--ooa-glass-bg) 48%);

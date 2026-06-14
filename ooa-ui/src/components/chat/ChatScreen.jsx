@@ -854,6 +854,7 @@ export default function ChatScreen({
           onNewChat={handleNewChat}
           onOpenAudit={openAuditView}
           onCloseAudit={switchToChat}
+          onOpenReports={openReportsView}
           onToggleVisualize={handleToggleVisualize}
           onBuildDashboard={() => setDashboardModalOpen(true)}
           onOpenChats={() => {

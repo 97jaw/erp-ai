@@ -280,7 +280,13 @@ class ReportsHandler:
                     tool_name = block.name
                     tool_input = dict(block.input or {})
 
-                    yield _sse({"type": "status", "message": f"Processing {tool_name}..."})
+                    status_msg = {
+                        "generate_report": "Fetching financial data from Odoo...",
+                        "get_financial_report": "Querying financial data from Odoo...",
+                        "get_trial_balance": "Fetching trial balance from Odoo...",
+                        "get_project_expense_summary": "Loading project expense data...",
+                    }.get(tool_name, f"Processing {tool_name}...")
+                    yield _sse({"type": "status", "message": status_msg})
 
                     result, ui_event = await self._execute_tool(
                         tool_name, tool_input, user=user, session_id=session_id
@@ -434,23 +440,31 @@ class ReportsHandler:
         params = tool_input.get("params") or {}
         fmt = tool_input.get("format", "pdf")
 
-        # --- Fetch data ---
+        # --- Fetch data from Odoo ---
         data: dict[str, Any] = {}
         report_type_for_file = template
 
         if template == "pandl":
-            data = self.adapter.accounting.get_financial_report(
-                report_type="pandl",
+            raw = self.adapter.accounting.get_financial_report(
+                report_type=params.get("report_type", "pandl"),
                 date_from=params.get("date_from"),
                 date_to=params.get("date_to"),
+                target_move=params.get("target_move", "posted"),
             )
-            report_type_for_file = "pandl"
+            # Normalized output has: report_lines (list), kpis, income_lines, expense_lines
+            # Extract rows for generators: list of {account, amount, level, highlight}
+            data = _extract_generator_data(raw, template)
+            report_type_for_file = params.get("report_type", "pandl")
 
         elif template == "trial_balance":
-            data = self.adapter.accounting.get_trial_balance(
+            raw = self.adapter.accounting.get_trial_balance(
                 date_from=params.get("date_from"),
                 date_to=params.get("date_to"),
+                target_moves=params.get("target_move", "posted"),
+                display_accounts=params.get("display_accounts", "all"),
+                show_hierarchy=bool(params.get("show_hierarchy", False)),
             )
+            data = _extract_generator_data(raw, template)
             report_type_for_file = "trial_balance"
 
         elif template == "project_expense":
@@ -469,11 +483,12 @@ class ReportsHandler:
                 except Exception:
                     pass
             if project_id:
-                data = await execute_project_expense_tool(
+                raw = await execute_project_expense_tool(
                     "get_project_expense_summary",
                     {"project_id": int(project_id)},
                     self.adapter,
                 )
+                data = _extract_generator_data(raw, template)
             report_type_for_file = "project_expense"
 
         if not isinstance(data, dict):
@@ -519,6 +534,82 @@ class ReportsHandler:
         }
         # Emit each file as a ui_block file_ready
         return tool_result, {"type": "file_ready_list", "files": results}
+
+
+def _extract_generator_data(raw: dict[str, Any], template: str) -> dict[str, Any]:
+    """
+    Convert normalized Odoo API response into generator-friendly structure.
+
+    Generators expect:
+      - data["rows"] = list of {account, amount, level, highlight}
+      - data["kpis"] = summary dict
+      - all original keys passed through for _extract_summary / _extract_lines fallback
+    """
+    if not isinstance(raw, dict):
+        return {}
+
+    # Pass raw data through so existing _extract_lines / _extract_summary in generators still work
+    result = dict(raw)
+
+    # Build unified rows from report_lines (financial reports) or expense_lines (project expense)
+    rows: list[dict[str, Any]] = []
+
+    if template in ("pandl", "balance_sheet", "cash_flow", "trial_balance"):
+        report_lines = raw.get("report_lines") or []
+        for line in report_lines:
+            name = line.get("name") or ""
+            balance = float(line.get("balance") or 0)
+            debit = float(line.get("debit") or 0)
+            credit = float(line.get("credit") or 0)
+            level = int(line.get("level") or 0)
+            style = line.get("style") or line.get("style_type") or "main"
+            highlight = style in ("main", "bold", "total") or level <= 1
+            rows.append({
+                "account": name,
+                "amount": balance,
+                "debit": debit,
+                "credit": credit,
+                "level": level,
+                "highlight": highlight,
+            })
+
+    elif template == "project_expense":
+        # expense_lines: [{label, amount}], top_expenses: [{name, amount, percent}]
+        expense_lines = raw.get("expense_lines") or []
+        for line in expense_lines:
+            label = line.get("label") or line.get("name") or ""
+            amount = float(line.get("amount") or 0)
+            rows.append({
+                "account": label,
+                "amount": amount,
+                "level": 0,
+                "highlight": False,
+            })
+        # Also expose top-level KPIs as rows if no expense_lines
+        if not rows:
+            for key in ("total_expenses", "wo_amount", "variance_amount"):
+                if raw.get(key) is not None:
+                    rows.append({
+                        "account": key.replace("_", " ").title(),
+                        "amount": float(raw[key] or 0),
+                        "level": 0,
+                        "highlight": True,
+                    })
+
+    result["rows"] = rows
+
+    # Ensure kpis exists for summary section
+    if "kpis" not in result:
+        kpis: dict[str, Any] = {}
+        for key in ("total_income", "total_expense", "net_profit", "margin",
+                    "total_debit", "total_credit", "balance",
+                    "total_expenses", "wo_amount", "spend_percent_of_wo"):
+            if raw.get(key) is not None:
+                kpis[key] = raw[key]
+        if kpis:
+            result["kpis"] = kpis
+
+    return result
 
 
 def _make_filename(template: str, params: dict[str, Any], ext: str) -> str:

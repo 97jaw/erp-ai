@@ -100,7 +100,7 @@ def _extract_summary(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_lines(data: dict[str, Any]) -> list[dict[str, Any]]:
-    for key in ("lines", "line_ids", "accounts", "items", "rows", "data"):
+    for key in ("rows", "report_lines", "lines", "line_ids", "accounts", "items", "data"):
         val = data.get(key)
         if isinstance(val, list) and val:
             return val

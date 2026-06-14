@@ -263,6 +263,14 @@ export default function ReportsPanel({ user, embedded = false, onCloseToChat }) 
         ) : null}
       </div>
 
+      {/* Generating-in-progress banner above composer */}
+      {loading && status ? (
+        <div className="rpt-generating-bar">
+          <span className="rpt-spinner" aria-hidden="true" />
+          {status}
+        </div>
+      ) : null}
+
       {/* Composer — also shows after agent messages with UI blocks for typing */}
       <form className="rpt-panel__composer" onSubmit={handleSubmit}>
         <textarea

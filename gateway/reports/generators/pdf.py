@@ -63,7 +63,7 @@ def _report_title(report_type: str) -> str:
 def _extract_lines(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Best-effort extraction of line items from various API response shapes."""
     # Try common shapes
-    for key in ("lines", "line_ids", "accounts", "items", "rows", "data"):
+    for key in ("rows", "report_lines", "lines", "line_ids", "accounts", "items", "data"):
         val = data.get(key)
         if isinstance(val, list) and val:
             return val
