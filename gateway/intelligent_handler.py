@@ -1710,16 +1710,46 @@ class IntelligentQueryHandler:
         context: ContextStack,
         confirmed_entities: list[ConfirmedEntityRef] | None,
     ) -> list[ConfirmedEntityRef] | None:
-        """When the user re-sends the same query, apply the prior default clarification option."""
+        """Resolve a pending clarification when user clicks a candidate or re-sends the query.
+
+        Handles two cases:
+        1. User re-sends the exact same query → use the default/only option.
+        2. User clicks a candidate chip (message matches a pending option label) → use that option.
+        """
         if confirmed_entities:
             return confirmed_entities
         pending = context.working_memory.session_facts.get("pending_entity_clarification")
         if not isinstance(pending, dict):
             return None
+        options = pending.get("options") or []
+        if not options:
+            return None
+
+        # Case 2: message matches one of the pending option labels (candidate click)
+        msg_clean = message.strip().lower()
+        for option in options:
+            label = str(option.get("label") or "").strip().lower()
+            if not label:
+                continue
+            # Exact match OR user message starts with the label (sometimes extra text follows)
+            if label == msg_clean or msg_clean.startswith(label) or label.startswith(msg_clean):
+                if option.get("action") == "confirm_entity" and option.get("entity_id"):
+                    logger.info(
+                        "[CandidateClick] matched pending option label=%s entity_id=%s",
+                        option.get("label"), option.get("entity_id"),
+                    )
+                    return [
+                        ConfirmedEntityRef(
+                            type=str(option.get("entity_type") or "project"),
+                            id=int(option["entity_id"]),
+                            name=str(option.get("label") or option["entity_id"]),
+                        ),
+                    ]
+
+        # Case 1: user re-sends same query → apply default/only option
         prior_query = str(pending.get("query") or "").strip()
         if not IntelligentQueryHandler._queries_equivalent_for_clarification(prior_query, message):
             return None
-        options = pending.get("options") or []
         defaults = [option for option in options if option.get("is_default")]
         chosen = defaults[0] if len(defaults) == 1 else (options[0] if len(options) == 1 else None)
         if chosen is None:

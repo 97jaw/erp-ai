@@ -37,6 +37,20 @@ function normalizeBarSeries(data = {}) {
   return [];
 }
 
+function fmtAxis(value) {
+  const n = Number(value);
+  if (isNaN(n)) return value;
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  return n.toLocaleString();
+}
+
+function fmtTooltip(value) {
+  const n = Number(value);
+  if (isNaN(n)) return value;
+  return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
 export default function BarChart({ data }) {
   const series = useMemo(() => normalizeBarSeries(data?.data), [data]);
   if (!series.length) return null;
@@ -58,11 +72,12 @@ export default function BarChart({ data }) {
       </motion.div>
       <div className="ooa-chart-card__canvas">
         <ResponsiveContainer width="100%" height={240}>
-          <RechartsBarChart data={series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <RechartsBarChart data={series} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
             <CartesianGrid stroke="var(--ooa-glass-border)" vertical={false} />
             <XAxis dataKey="label" tick={{ fill: "var(--ooa-text-muted)", fontSize: 11 }} />
-            <YAxis tick={{ fill: "var(--ooa-text-muted)", fontSize: 11 }} />
+            <YAxis tickFormatter={fmtAxis} tick={{ fill: "var(--ooa-text-muted)", fontSize: 11 }} width={60} />
             <Tooltip
+              formatter={(value) => [fmtTooltip(value), data.currency || "Value"]}
               contentStyle={{
                 background: "var(--ooa-glass-bg)",
                 border: "1px solid var(--ooa-glass-border)",
