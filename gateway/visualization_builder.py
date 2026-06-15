@@ -18,6 +18,43 @@ def _coerce_payload(result: Any) -> dict[str, Any] | None:
     return None
 
 
+def _fleet_vehicles_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
+    vehicles = payload.get("vehicles") or []
+    if not vehicles:
+        employee = payload.get("employee_name") or "Employee"
+        return {
+            "visual_type": "KPI_CARD",
+            "label": f"Fleet — {employee}",
+            "value": 0,
+            "unit": "vehicles",
+            "data": {"note": payload.get("note") or "No assigned vehicles found."},
+        }
+
+    rows = []
+    for vehicle in vehicles:
+        rows.append([
+            vehicle.get("license_plate") or vehicle.get("name"),
+            vehicle.get("model"),
+            vehicle.get("employee_name") or vehicle.get("driver_name"),
+            vehicle.get("project_name"),
+            vehicle.get("location"),
+            vehicle.get("mobile"),
+        ])
+
+    employee = payload.get("employee_name") or ""
+    title = f"Fleet vehicles — {employee}" if employee else "Fleet vehicles"
+    return {
+        "visual_type": "DATA_TABLE",
+        "label": title,
+        "value": len(vehicles),
+        "unit": "vehicles",
+        "data": {
+            "headers": ["Plate", "Model", "Driver/Employee", "Project", "Location", "Mobile"],
+            "rows": rows,
+        },
+    }
+
+
 def _purchase_orders_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
     orders = payload.get("orders") or []
     request = payload.get("request") or {}
@@ -191,6 +228,8 @@ def choose_response_visualization(
     tool_results        : list[Any],
 ) -> dict[str, Any] | None:
     model_visualization = normalize_visualization_shape(model_visualization)
+    if model_visualization and model_visualization.get("query_id"):
+        return model_visualization
     if not is_renderable_visualization(model_visualization):
         model_visualization = None
 
@@ -1188,6 +1227,8 @@ def _visual_from_payload(
 ) -> dict[str, Any] | None:
     if tool_name == "get_purchase_orders":
         return _purchase_orders_visual(payload)
+    if tool_name == "search_fleet_vehicles" or payload.get("_source") == "search_fleet_vehicles":
+        return _fleet_vehicles_visual(payload)
     if tool_name == "get_projects_summary":
         return _projects_visual(payload)
     if tool_name == "get_top_projects_by_metric":
@@ -1218,6 +1259,13 @@ def _visual_from_payload(
         return _project_records_visual(payload)
     if tool_name == "get_project_activity" or payload.get("_source") == "project_activity":
         return _project_activity_visual(payload)
+    if tool_name == "list_attachments" or payload.get("_source") == "list_attachments":
+        prebuilt = payload.get("_visualization")
+        if isinstance(prebuilt, dict):
+            return prebuilt
+        from gateway.attachments.visualization import build_file_list_visualization
+
+        return build_file_list_visualization(payload, session_id=None)
     if tool_name == "get_project_expense_summary":
         return _project_expense_summary_visual(payload)
     if tool_name == "get_project_expense_breakdown":
@@ -1279,6 +1327,9 @@ def is_renderable_visualization(visual: dict[str, Any] | None) -> bool:
     if visual_type == "DATA_TABLE":
         rows = (visual.get("data") or {}).get("rows") or []
         return bool(rows)
+    if visual_type == "FILE_LIST":
+        files = (visual.get("data") or {}).get("files") or []
+        return bool(files)
     if visual_type == "FINANCIAL_REPORT":
         kpis = visual.get("kpis")
         if not isinstance(kpis, dict):

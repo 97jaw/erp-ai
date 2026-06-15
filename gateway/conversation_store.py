@@ -68,6 +68,7 @@ class ConversationStore:
         language: str | None = None,
         visualization: dict[str, Any] | None = None,
         suggestions: list[str] | None = None,
+        tool_calls: Any = None,
         response_time_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         if cls._use_admin_db() and user_id is not None:
@@ -82,6 +83,7 @@ class ConversationStore:
                 language=language,
                 visualization=visualization,
                 suggestions=suggestions,
+                tool_calls=tool_calls,
                 response_time_ms=response_time_ms,
             )
             return await repo.get_agent_messages(conv_id, limit=_AGENT_MESSAGE_LIMIT)
@@ -99,15 +101,22 @@ class ConversationStore:
         session_id: str,
         *,
         user_id: int | None = None,
+        delete_persisted: bool = False,
     ) -> None:
-        if cls._use_admin_db() and user_id is not None:
+        """Clear session mapping. DB rows are kept unless delete_persisted=True."""
+        if delete_persisted and cls._use_admin_db() and user_id is not None:
             repo = await cls._repo()
             conv_id = await repo.resolve_id(user_id, session_id)
             if conv_id:
                 await repo.delete_conversation(user_id, conv_id)
-            cls._conversation_ids.pop(session_id, None)
-            return
+        cls._conversation_ids.pop(session_id, None)
         cls._legacy_clear(session_id)
+
+    @classmethod
+    def clear_ephemeral(cls, session_id: str) -> None:
+        """Drop in-memory / legacy cache only — past chats stay in admin DB."""
+        cls._conversation_ids.pop(session_id, None)
+        cls._memory.pop(session_id, None)
 
     @classmethod
     def _legacy_get(cls, session_id: str) -> list:

@@ -11,6 +11,7 @@ import GroupedTable from "./GroupedTable";
 import ProjectExpenseSummary from "./project_expense/ProjectExpenseSummary";
 import ProjectExpenseBreakdown from "./project_expense/ProjectExpenseBreakdown";
 import ProjectExpenseComparison from "./project_expense/ProjectExpenseComparison";
+import FileList from "./FileList";
 import DateRangeBadge from "./DateRangeBadge";
 import DisclosurePrompt from "./DisclosurePrompt";
 import {
@@ -63,7 +64,7 @@ export default function VisualizationPanel({ viz }) {
     && (resolved.visual_type === "FINANCIAL_REPORT" || resolved.visual_type === "DATA_TABLE")
     && (detailRows.length > 0 || resolved.query_id);
 
-  const tableLabel = resolved.detail_label || resolved.expand_label || "Account breakdown";
+  const tableLabel = resolved.detail_label || resolved.expand_label || resolved.label || "Details";
   const usePagination = Boolean(resolved.query_id) && level !== "full";
 
   return (
@@ -140,6 +141,9 @@ export default function VisualizationPanel({ viz }) {
       ) : null}
       {resolved.visual_type === "PDF_REPORT" ? (
         <PDFReportCard data={resolved.data} label={resolved.label} />
+      ) : null}
+      {resolved.visual_type === "FILE_LIST" ? (
+        <FileList data={resolved} />
       ) : null}
 
       {showDisclosure ? (

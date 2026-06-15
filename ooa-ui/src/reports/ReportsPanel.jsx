@@ -144,6 +144,14 @@ export default function ReportsPanel({ user, embedded = false, onCloseToChat }) 
             }
             if (event.type === "done") {
               if (event.text) streamed = event.text;
+              if (event.ui_blocks?.length) {
+                localBlocks.push(...event.ui_blocks);
+                setPendingBlocks([...localBlocks]);
+              }
+              if (event.files?.length) {
+                localFiles.push(...event.files);
+                setPendingFiles([...localFiles]);
+              }
             }
             if (event.type === "error" && event.message) {
               setStatus(event.message);

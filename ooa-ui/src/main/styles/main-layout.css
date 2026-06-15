@@ -1095,6 +1095,43 @@
   text-align: left;
 }
 
+.ooa-chat-ui-blocks .rpt-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--ooa-gold, #5ba3f5) 12%, white);
+  color: color-mix(in srgb, var(--ooa-text, #1a1f36) 88%, #2e3250);
+  border: 1px solid color-mix(in srgb, var(--ooa-gold, #5ba3f5) 28%, transparent);
+  box-shadow: none;
+}
+
+.ooa-chat-ui-blocks .rpt-pill:hover {
+  background: color-mix(in srgb, var(--ooa-gold, #5ba3f5) 20%, white);
+  border-color: color-mix(in srgb, var(--ooa-gold, #5ba3f5) 42%, transparent);
+}
+
+.ooa-chat-ui-blocks .rpt-pill--active {
+  background: color-mix(in srgb, var(--ooa-gold, #5ba3f5) 24%, white);
+  color: color-mix(in srgb, var(--ooa-text, #1a1f36) 92%, black);
+  border-color: color-mix(in srgb, var(--ooa-gold, #5ba3f5) 55%, transparent);
+}
+
+.ooa-chat-ui-blocks .rpt-pill__icon {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.ooa-chat-ui-blocks .rpt-ui-block__prompt {
+  color: var(--ooa-text-muted, #5c6478);
+  font-size: 0.88rem;
+  margin-bottom: 8px;
+}
+
+.ooa-chat-ui-blocks .rpt-pill-select__pills,
+.ooa-chat-ui-blocks .rpt-date-quick__presets {
+  gap: 8px;
+}
+
 .ooa-response-card .ooa-visual-panel,
 .ooa-response-card .ooa-table-wrap,
 .ooa-response-card .ooa-chart-card,

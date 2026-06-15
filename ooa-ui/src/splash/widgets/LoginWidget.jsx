@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { resolveApiBase } from "../../config/api";
+import { isApiMisrouteResponse, resolveApiBase } from "../../config/api";
 
 const parseLoginError = (body, fallback) => {
   if (typeof body?.detail === "string") return body.detail;
@@ -36,7 +36,14 @@ export default function LoginWidget({ onSubmit, onMfaRequired, inputRef }) {
         body: JSON.stringify({ file_id: normalizedFileId }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(parseLoginError(body, "File ID not recognized"));
+      if (!res.ok) {
+        if (isApiMisrouteResponse(res, body)) {
+          throw new Error(
+            "Cannot reach the API gateway on port 8000. Start the backend, then restart the UI dev server.",
+          );
+        }
+        throw new Error(parseLoginError(body, "File ID not recognized"));
+      }
 
       if (body.mfa_required && body.mfa_token) {
         setMfaToken(body.mfa_token);

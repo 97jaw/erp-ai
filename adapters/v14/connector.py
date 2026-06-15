@@ -694,6 +694,71 @@ class OdooV14Adapter(BaseOdooAdapter):
         except Exception as exc:
             return {"rows": [], "total_count": 0, "error": str(exc)}
 
+    def read_ir_attachments(
+        self,
+        *,
+        res_model: str | None = None,
+        res_id: int | None = None,
+        res_ids: list[int] | None = None,
+        domain: list[list[Any]] | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Read ir.attachment metadata for one record, many records, or a custom domain."""
+        clauses: list[list[Any]] = list(domain or [])
+        if res_model:
+            clauses.append(["res_model", "=", res_model])
+        if res_id is not None:
+            clauses.append(["res_id", "=", int(res_id)])
+        if res_ids:
+            clauses.append(["res_id", "in", [int(item) for item in res_ids]])
+        fields = [
+            "name",
+            "mimetype",
+            "file_size",
+            "create_date",
+            "create_uid",
+            "res_model",
+            "res_id",
+            "description",
+            "type",
+        ]
+        rows = self.safe_search_read(
+            "ir.attachment",
+            clauses,
+            fields,
+            limit=limit,
+            offset=offset,
+            order="create_date desc, id desc",
+        )
+        total = self.search_count("ir.attachment", clauses)
+        return {"rows": rows, "total_count": total, "source_model": "ir.attachment"}
+
+    def read_attachment_binary(self, attachment_id: int) -> dict[str, Any] | None:
+        """Fetch ir.attachment binary payload (base64 datas field)."""
+        rows = self.safe_search_read(
+            "ir.attachment",
+            [["id", "=", int(attachment_id)]],
+            ["name", "mimetype", "datas", "file_size", "type"],
+            limit=1,
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        if row.get("type") == "url":
+            return {
+                "error": "url_attachment",
+                "name": row.get("name"),
+                "message": "This attachment is an external URL, not a downloadable file.",
+            }
+        return {
+            "id": row.get("id"),
+            "name": row.get("name"),
+            "mimetype": row.get("mimetype") or "application/octet-stream",
+            "datas": row.get("datas"),
+            "file_size": row.get("file_size"),
+        }
+
     def read_project_chatter_messages(
         self,
         project_id: int,

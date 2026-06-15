@@ -348,6 +348,10 @@ export const hasRenderableVisualization = (viz) => {
   if (visualType === "PROJECT_EXPENSE_COMPARISON") {
     return Array.isArray(normalized.projects) && normalized.projects.length >= 2;
   }
+  if (visualType === "FILE_LIST") {
+    const files = normalized.data?.files;
+    return Array.isArray(files) && files.length > 0;
+  }
   return false;
 };
 

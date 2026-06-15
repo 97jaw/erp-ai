@@ -236,6 +236,9 @@
 }
 
 .rpt-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: var(--rpt-pill-bg);
   border: 1.5px solid var(--rpt-border);
   border-radius: 20px;

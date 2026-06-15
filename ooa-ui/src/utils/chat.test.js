@@ -91,4 +91,21 @@ describe("hasRenderableVisualization", () => {
     };
     expect(hasRenderableVisualization(viz)).toBe(true);
   });
+
+  it("accepts file list viz with download rows", () => {
+    const viz = {
+      visual_type: "FILE_LIST",
+      label: "Al Hili Healthcare Center — documents",
+      data: {
+        files: [
+          {
+            name: "W.O AHS-C-21-2016-506.pdf",
+            mimetype: "application/pdf",
+            download_token: "tok-1",
+          },
+        ],
+      },
+    };
+    expect(hasRenderableVisualization(viz)).toBe(true);
+  });
 });

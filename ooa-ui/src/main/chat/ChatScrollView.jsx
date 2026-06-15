@@ -12,6 +12,7 @@ export default function ChatScrollView({
   toolSteps,
   language,
   onSuggestion,
+  onUiBlockAction,
   onClarificationSelect,
   onClarificationSkip,
   onShowMoreSuggestions,
@@ -70,7 +71,9 @@ export default function ChatScrollView({
             text: query.response?.text || "",
             visualization: query.response?.visualization || null,
             suggestions: query.response?.suggestions || [],
+            suggestionDetails: query.response?.suggestionDetails || null,
             suggestionMeta: query.response?.suggestionMeta || null,
+            uiBlocks: query.response?.uiBlocks || [],
           };
           const isActive = query.id === activeQueryId;
           const showPending = isActive && loading;
@@ -87,7 +90,9 @@ export default function ChatScrollView({
                 </div>
               ) : null}
               <div className="ooa-chat-thread__query">
-                <MessageBubble msg={userMessage} onSuggestion={onSuggestion} />
+                {!query.isWelcome && query.question ? (
+                  <MessageBubble msg={userMessage} onSuggestion={onSuggestion} />
+                ) : null}
               </div>
               <div
                 className="ooa-response-card"
@@ -107,7 +112,8 @@ export default function ChatScrollView({
                     pendingVizType={showPending ? pendingVizType : null}
                     toolSteps={showPending ? toolSteps : null}
                     isStreaming={showPending && Boolean(botMessage.text?.trim())}
-                    onSuggestion={onSuggestion}
+                    onSuggestion={(label) => onSuggestion?.(label, query.id)}
+                    onUiBlockAction={(action) => onUiBlockAction?.(action, query)}
                     onShowMoreSuggestions={
                       isActive ? () => onShowMoreSuggestions?.(query.id) : undefined
                     }

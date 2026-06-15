@@ -16,6 +16,7 @@ import VisualizationSkeleton from "../visualization/VisualizationSkeleton";
 import SuggestionChips from "./SuggestionChips";
 import TypingIndicator from "./TypingIndicator";
 import ToolProgress from "./ToolProgress";
+import AdaptiveUI from "../../reports/AdaptiveUI";
 
 export default function MessageBubble({
   msg,
@@ -24,6 +25,7 @@ export default function MessageBubble({
   toolSteps,
   parallaxOffset = 0,
   onSuggestion,
+  onUiBlockAction,
   onShowMoreSuggestions,
   loadingMoreSuggestions = false,
   language = "en",
@@ -47,7 +49,8 @@ export default function MessageBubble({
     : null;
   const displayText = isUser ? msg.text : humanizeOutput(msg.text);
   const showText = Boolean(displayText?.trim());
-  const showPending = Boolean(pendingLabel) && !showText && !visualization && !isStreaming;
+  const hasUiBlocks = Boolean(!isUser && msg.uiBlocks?.length);
+  const showPending = Boolean(pendingLabel) && !showText && !visualization && !isStreaming && !hasUiBlocks;
   const showSkeleton = Boolean(pendingVizType) && !visualization && !showPending;
   const depth = visualization ? 0.85 : msg.suggestions?.length ? 0.7 : 1;
   const parallaxShift = -(parallaxOffset || 0) * (1 - depth) * 0.04;
@@ -249,6 +252,17 @@ export default function MessageBubble({
           <motion.div layout initial={{ opacity: 0.85, y: 8 }} animate={{ opacity: 1, y: 0 }}>
             <VisualizationPanel viz={visualization} />
           </motion.div>
+        ) : null}
+        {msg.uiBlocks?.length ? (
+          <div className="ooa-chat-ui-blocks">
+            {msg.uiBlocks.map((block, index) => (
+              <AdaptiveUI
+                key={`${block.type}-${index}`}
+                block={block}
+                onUserAction={onUiBlockAction}
+              />
+            ))}
+          </div>
         ) : null}
         {msg.suggestions?.length ? (
           <SuggestionChips

@@ -212,6 +212,12 @@ def apply_progressive_disclosure(
     if not visualization:
         return None
 
+    if visualization.get("disclosure_exempt") or visualization.get("query_id"):
+        enriched = dict(visualization)
+        enriched.setdefault("level", visualization.get("level") or "standard")
+        enriched.setdefault("can_expand", False)
+        return enriched
+
     visual_type = visualization.get("visual_type")
     if visual_type not in _DISCLOSURE_TYPES:
         return visualization

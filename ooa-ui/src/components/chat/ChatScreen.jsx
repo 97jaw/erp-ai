@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { sound } from "../common/SoundManager";
 import { useSoundSettings } from "../../hooks/useSoundSettings";
 import {
-  API_BASE,
   decodeHeader,
   getChatThreadId,
   getRecordingMimeType,
@@ -38,6 +37,11 @@ import { ReportsPanel } from "../../reports";
 import "../../reports/reports.css";
 import { buildClarificationQuery, buildConfirmedEntities } from "../../utils/clarify";
 import { apiFetch } from "../../config/api";
+import { withWelcomeTurn, WELCOME_TURN_ID } from "../../chat/welcomeTurn";
+
+/** Agent-mode rebuild: main chat uses /agent/stream unless explicitly disabled. */
+const USE_AGENT_STREAM = process.env.REACT_APP_USE_AGENT_STREAM !== "false";
+const DOCUMENT_SCOPE_OPTION_IDS = new Set(["project", "agreement", "rfq", "record"]);
 
 const QUERIES_STORAGE_KEY = "ooa_queries";
 
@@ -85,7 +89,6 @@ export default function ChatScreen({
   const [loadingStage, setLoadingStage] = useState(null);
   const [toolSteps, setToolSteps] = useState([]);
   const [pendingVizType, setPendingVizType] = useState(null);
-  const [voicePlaying, setVoicePlaying] = useState(false);
   const [loadingMoreSuggestions, setLoadingMoreSuggestions] = useState(false);
   const [deepThink, setDeepThink] = useState(false);
   const [deepThinkEligible, setDeepThinkEligible] = useState(false);
@@ -94,6 +97,7 @@ export default function ChatScreen({
   const chunksRef = useRef([]);
   const recordingMimeRef = useRef("");
   const chatInputRef = useRef(null);
+  const sendingRef = useRef(false);
 
   const visualize = useVisualizePanel();
 
@@ -103,14 +107,6 @@ export default function ChatScreen({
     : visualize.droppedItems.length > 0
       ? "active"
       : "inactive";
-
-  const isPrintableKey = useCallback((event) => {
-    if (event.metaKey || event.ctrlKey || event.altKey) return false;
-    if (event.key.length !== 1) return false;
-    const tag = document.activeElement?.tagName;
-    if (tag === "TEXTAREA" || tag === "INPUT") return false;
-    return true;
-  }, []);
 
   useEffect(() => {
     try {
@@ -136,24 +132,37 @@ export default function ChatScreen({
     let cancelled = false;
     (async () => {
       const local = loadStoredQueries();
-      if (local.length > 0) {
-        setQueries(local);
-        setActiveQueryId(local[0]?.id || null);
-        if (user) fetchPastChats();
+      if (!user) {
+        if (local.length > 0) {
+          setQueries(local);
+          setActiveQueryId(local[0]?.id || null);
+        }
         return;
       }
-      if (!user) return;
       try {
-        const { queries: restored, conversationId } = await loadConversationHistory();
-        if (!cancelled && restored.length > 0) {
+        const { queries: restored, conversationId, threadId } = await loadConversationHistory();
+        const threadMatches = threadId === getChatThreadId();
+        if (!cancelled && restored.length > 0 && (local.length === 0 || threadMatches)) {
           setQueries(restored);
           setActiveQueryId(restored[0]?.id || null);
           setActiveConversationId(conversationId || null);
-          setChatThreadIdState(getChatThreadId());
+          if (threadId) {
+            setChatThreadId(threadId);
+            setChatThreadIdState(threadId);
+          }
+        } else if (!cancelled && local.length > 0) {
+          setQueries(local);
+          setActiveQueryId(local[0]?.id || null);
+        } else if (!cancelled) {
+          setQueries(withWelcomeTurn([], user));
+          setActiveQueryId(WELCOME_TURN_ID);
         }
         if (!cancelled) fetchPastChats();
       } catch {
-        /* offline or auth not ready */
+        if (!cancelled && local.length > 0) {
+          setQueries(local);
+          setActiveQueryId(local[0]?.id || null);
+        }
       }
     })();
     return () => {
@@ -182,8 +191,8 @@ export default function ChatScreen({
         setChatThreadId(loaded.threadId);
         setChatThreadIdState(loaded.threadId);
       }
-      setQueries(loaded.queries);
-      setActiveQueryId(loaded.queries[0]?.id || null);
+      setQueries(loaded.queries.length ? loaded.queries : withWelcomeTurn([], user));
+      setActiveQueryId(loaded.queries[0]?.id || WELCOME_TURN_ID);
       setActiveConversationId(loaded.conversationId);
       visualize.clearItems?.();
     } catch (err) {
@@ -191,7 +200,7 @@ export default function ChatScreen({
     } finally {
       setPastChatsLoading(false);
     }
-  }, [visualize]);
+  }, [visualize, user]);
 
   const handleNewChat = useCallback(async () => {
     const previousThread = chatThreadId;
@@ -204,14 +213,14 @@ export default function ChatScreen({
     }
     const nextThread = rotateChatThreadId();
     setChatThreadIdState(nextThread);
-    setQueries([]);
-    setActiveQueryId(null);
+    setQueries(withWelcomeTurn([], user));
+    setActiveQueryId(WELCOME_TURN_ID);
     setActiveConversationId(null);
     setInput("");
     setError(null);
     visualize.clearItems?.();
     fetchPastChats();
-  }, [chatThreadId, fetchPastChats, visualize]);
+  }, [chatThreadId, fetchPastChats, user, visualize]);
 
   const handleDeleteChat = useCallback(async (conversation) => {
     if (!conversation?.id) return;
@@ -336,8 +345,9 @@ export default function ChatScreen({
 
   const sendMessage = useCallback(async (text, options = {}) => {
     const trimmed = text.trim();
-    if (!trimmed || loading) return;
+    if (!trimmed || loading || sendingRef.current) return;
 
+    sendingRef.current = true;
     const useDeepThink = options.deepThink !== undefined
       ? Boolean(options.deepThink)
       : deepThink && deepThinkEligible;
@@ -350,6 +360,7 @@ export default function ChatScreen({
     const queryId = Date.now();
     let streamDone = false;
     const createdAt = Date.now();
+    const localUiBlocks = [];
     const nextQuery = {
       id: queryId,
       question: trimmed,
@@ -372,16 +383,29 @@ export default function ChatScreen({
     setToolSteps([]);
 
     try {
-      const res = await authFetch("/chat/stream", {
+      const res = await authFetch(USE_AGENT_STREAM ? "/agent/stream" : "/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: trimmed,
-          session_id: chatThreadId,
-          skip_clarification: Boolean(options.skipClarification),
-          confirmed_entities: options.confirmedEntities || [],
-          deep_think: useDeepThink,
-        }),
+        body: JSON.stringify(
+          USE_AGENT_STREAM
+            ? {
+                message: trimmed,
+                session_id: chatThreadId,
+                agent_type: "chat",
+                skip_clarification: Boolean(options.skipClarification),
+                confirmed_entities: options.confirmedEntities || [],
+                deep_think: useDeepThink,
+                documents_scope: options.documentsScope || null,
+              }
+            : {
+                message: trimmed,
+                session_id: chatThreadId,
+                skip_clarification: Boolean(options.skipClarification),
+                confirmed_entities: options.confirmedEntities || [],
+                deep_think: useDeepThink,
+                documents_scope: options.documentsScope || null,
+              },
+        ),
       });
 
       if (!res.ok) {
@@ -428,6 +452,16 @@ export default function ChatScreen({
               setToolSteps(data.steps || []);
             } else if (data.type === "status") {
               setLoadingStage(data.message);
+            } else if (data.type === "ui_block" && data.block) {
+              localUiBlocks.push(data.block);
+              updateQuery(queryId, {
+                response: {
+                  text: stripVisualization(streamedText),
+                  visualization: null,
+                  suggestions: [],
+                  uiBlocks: [...localUiBlocks],
+                },
+              });
             } else if (data.type === "clarify") {
               setLoading(false);
               setLoadingStage(null);
@@ -482,7 +516,9 @@ export default function ChatScreen({
                     text: finalText,
                     visualization,
                     suggestions: data.suggestions || [],
+                    suggestionDetails: data.suggestion_details || null,
                     suggestionMeta: data.suggestion_meta || null,
+                    uiBlocks: data.ui_blocks?.length ? data.ui_blocks : [...localUiBlocks],
                     clarification: null,
                     deepThinkAvailable: Boolean(data.deep_think_available),
                   },
@@ -490,7 +526,10 @@ export default function ChatScreen({
                 if (data.deep_think_available) {
                   setDeepThinkEligible(true);
                 }
-                /* Visualize opens only via top-bar / ⌘V — not auto on response */
+                if (data.conversation_id) {
+                  setActiveConversationId(data.conversation_id);
+                }
+                fetchPastChats();
               }
             }
           } catch (error) {}
@@ -507,12 +546,13 @@ export default function ChatScreen({
         },
       });
     } finally {
+      sendingRef.current = false;
       setLoading(false);
       setLoadingStage(null);
       setPendingVizType(null);
       setToolSteps([]);
     }
-  }, [loading, chatThreadId, updateQuery, visualize, deepThink, deepThinkEligible]);
+  }, [loading, chatThreadId, updateQuery, deepThink, deepThinkEligible, fetchPastChats]);
 
   const requestSend = useCallback((text, options = {}) => {
     const trimmed = String(text || "").trim();
@@ -524,6 +564,45 @@ export default function ChatScreen({
     if (!deepThinkEligible || loading) return;
     setDeepThink((prev) => !prev);
   }, [deepThinkEligible, loading]);
+
+  const handleSuggestionForQuery = useCallback((label, queryId) => {
+    const query = queries.find((item) => item.id === queryId);
+    const details = query?.response?.suggestionDetails;
+    const match = Array.isArray(details)
+      ? details.find((item) => item?.label === label)
+      : null;
+    requestSend(match?.query || label);
+  }, [queries, requestSend]);
+
+  const handleUiBlockAction = useCallback((action, sourceQuery) => {
+    const label = typeof action === "string" ? action : action?.label || "";
+    const option = typeof action === "object" ? action?.option : null;
+    const optionId = option?.id;
+    const confirmedEntities = [];
+    if (optionId != null && /^\d+$/.test(String(optionId))) {
+      confirmedEntities.push({
+        type: "project",
+        id: Number(optionId),
+        name: option?.label || label,
+      });
+    }
+    const originalQuery = sourceQuery?.question || "";
+    const cleanLabel = label
+      .replace(/^[\u{1F300}-\u{1FAFF}\s]+/u, "")
+      .trim();
+    const enriched = optionId != null && /^\d+$/.test(String(optionId))
+      ? `${originalQuery} — ${cleanLabel}`.trim()
+      : cleanLabel || label;
+    const documentsScope = optionId != null && DOCUMENT_SCOPE_OPTION_IDS.has(String(optionId))
+      ? String(optionId)
+      : null;
+    requestSend(enriched, {
+      skipClarification: true,
+      confirmedEntities,
+      documentsScope,
+      deepThink: Boolean(option?.deep_think),
+    });
+  }, [requestSend]);
 
   const handleClarificationSelect = useCallback((option, originalQuery) => {
     // Clarifications continue the original turn — preserve its Deep Think mode.
@@ -610,7 +689,10 @@ export default function ChatScreen({
   const handleInputKeyDown = (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      requestSend(input);
+      const text = String(event.currentTarget?.value || "").trim();
+      if (!text || loading || sendingRef.current) return;
+      setInput("");
+      requestSend(text);
     }
     if (event.key === "Escape") {
       event.preventDefault();
@@ -684,7 +766,6 @@ export default function ChatScreen({
       audioRef.current.currentTime = 0;
       audioRef.current = null;
     }
-    setVoicePlaying(false);
   };
 
   const sendVoice = async (blob) => {
@@ -750,14 +831,11 @@ export default function ChatScreen({
       audio.onended = () => {
         URL.revokeObjectURL(url);
         audioRef.current = null;
-        setVoicePlaying(false);
       };
-      setVoicePlaying(true);
       try {
         await audio.play();
       } catch {
         // TTS blocked after async /voice round-trip (autoplay policy). Text still lands in chat.
-        setVoicePlaying(false);
         URL.revokeObjectURL(url);
         audioRef.current = null;
       }
@@ -949,7 +1027,8 @@ export default function ChatScreen({
                 pendingVizType={pendingVizType}
                 toolSteps={toolSteps}
                 language={user?.language || "en"}
-                onSuggestion={requestSend}
+                onSuggestion={handleSuggestionForQuery}
+                onUiBlockAction={handleUiBlockAction}
                 onClarificationSelect={handleClarificationSelect}
                 onClarificationSkip={handleClarificationSelect}
                 onShowMoreSuggestions={() => handleShowMoreSuggestions(activeQueryId)}

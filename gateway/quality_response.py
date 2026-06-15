@@ -16,6 +16,7 @@ from gateway.quality_narrative import (
 )
 from gateway.quality_validation import validate_response_quality
 from gateway.progressive_disclosure import apply_progressive_disclosure
+from gateway.record_list_grouping import enhance_list_visualization
 from gateway.core.project_expense_routing import is_project_expense_tool_result
 from gateway.visualization_builder import (
     build_visualization_from_tool_results,
@@ -234,6 +235,7 @@ def polish_agent_response(
             user_message,
             tool_results,
         )
+        visualization = enhance_list_visualization(visualization, user_message)
 
     is_quality, issues = validate_response_quality({
         "text": clean_text,

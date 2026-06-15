@@ -150,9 +150,9 @@ class ConversationRepository:
     async def get_agent_messages(self, conversation_id: UUID, *, limit: int = _AGENT_MESSAGE_LIMIT) -> list[dict[str, Any]]:
         rows = await self._db.fetch(
             """
-            SELECT role, content
+            SELECT role, content, tool_calls
             FROM (
-                SELECT role, content, created_at
+                SELECT role, content, tool_calls, created_at
                 FROM messages
                 WHERE conversation_id = $1
                 ORDER BY created_at DESC
@@ -163,7 +163,11 @@ class ConversationRepository:
             conversation_id,
             limit,
         )
-        return [{"role": r["role"], "content": r["content"]} for r in rows]
+        messages: list[dict[str, Any]] = []
+        for row in rows:
+            # Claude Messages API accepts only role + content (no tool_calls metadata).
+            messages.append({"role": row["role"], "content": row["content"]})
+        return messages
 
     async def get_recent_messages(
         self,
@@ -175,7 +179,7 @@ class ConversationRepository:
         return await self._db.fetch(
             """
             SELECT id, role, content, language, visualization, suggestions,
-                   created_at, tokens_used, response_time_ms
+                   tool_calls, created_at, tokens_used, response_time_ms
             FROM messages
             WHERE conversation_id = $1
             ORDER BY created_at DESC

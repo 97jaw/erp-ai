@@ -1,3 +1,7 @@
+function isLocalDevHost(hostname) {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
 /** Resolve API base at call time so production always uses the page origin. */
 export function resolveApiBase() {
   const configured = process.env.REACT_APP_API_BASE;
@@ -5,12 +9,27 @@ export function resolveApiBase() {
     return configured.replace(/\/$/, "");
   }
   if (typeof window !== "undefined") {
-    if (window.location.port === "3000") {
-      return "http://localhost:8000";
+    const { hostname, port, protocol } = window.location;
+    if (isLocalDevHost(hostname)) {
+      // CRA dev server (any port): proxy in package.json forwards API routes to :8000.
+      if (process.env.NODE_ENV === "development") {
+        return "";
+      }
+      // Built UI opened on a non-gateway local port — talk to gateway directly.
+      if (port && port !== "8000") {
+        return `${protocol}//${hostname}:8000`;
+      }
     }
     return window.location.origin;
   }
   return "http://localhost:8000";
+}
+
+/** True when the response looks like a dev-server miss, not a real auth rejection. */
+export function isApiMisrouteResponse(res, body) {
+  if (res.ok) return false;
+  if (body?.detail) return false;
+  return res.status === 404 || res.status === 405;
 }
 
 /** @deprecated Prefer resolveApiBase() for network calls — kept for static imports. */

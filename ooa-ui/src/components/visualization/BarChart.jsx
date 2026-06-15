@@ -55,6 +55,9 @@ export default function BarChart({ data }) {
   const series = useMemo(() => normalizeBarSeries(data?.data), [data]);
   if (!series.length) return null;
 
+  const scrollable = Boolean(data?.scrollable) || series.length > 6;
+  const chartWidth = Math.max(series.length * 56, 400);
+
   return (
     <motion.div
       className="ooa-chart-card"
@@ -70,11 +73,21 @@ export default function BarChart({ data }) {
       >
         {data.label}
       </motion.div>
-      <div className="ooa-chart-card__canvas">
-        <ResponsiveContainer width="100%" height={240}>
-          <RechartsBarChart data={series} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+      <div
+        className={`ooa-chart-card__canvas${scrollable ? " ooa-chart-card__canvas--scroll" : ""}`}
+        style={scrollable ? { overflowX: "auto", overflowY: "hidden" } : undefined}
+      >
+        <ResponsiveContainer width={scrollable ? chartWidth : "100%"} height={scrollable ? 260 : 240}>
+          <RechartsBarChart data={series} margin={{ top: 8, right: 8, left: 8, bottom: scrollable ? 8 : 0 }}>
             <CartesianGrid stroke="var(--ooa-glass-border)" vertical={false} />
-            <XAxis dataKey="label" tick={{ fill: "var(--ooa-text-muted)", fontSize: 11 }} />
+            <XAxis
+              dataKey="label"
+              tick={{ fill: "var(--ooa-text-muted)", fontSize: 11 }}
+              angle={scrollable ? -35 : 0}
+              textAnchor={scrollable ? "end" : "middle"}
+              height={scrollable ? 56 : 30}
+              interval={0}
+            />
             <YAxis tickFormatter={fmtAxis} tick={{ fill: "var(--ooa-text-muted)", fontSize: 11 }} width={60} />
             <Tooltip
               formatter={(value) => [fmtTooltip(value), data.currency || "Value"]}

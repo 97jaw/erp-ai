@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import AdaptiveUI from "../reports/AdaptiveUI";
 import { streamAuditChat } from "./api";
 import { AUDIT_SUGGESTIONS, buildSummaryFromAuditData } from "./auditUtils";
 import AuditActivityLog from "./AuditActivityLog";
@@ -39,6 +40,8 @@ export default function AuditPanel({ user, embedded = false, onCloseToChat }) {
   const [status, setStatus] = useState("");
   const [narrative, setNarrative] = useState("");
   const [auditData, setAuditData] = useState(null);
+  const [uiBlocks, setUiBlocks] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
   const [viewStack, setViewStack] = useState([]);
   const [sessionId] = useState(() => readAuditSessionId());
   const scrollRef = useRef(null);
@@ -117,12 +120,15 @@ export default function AuditPanel({ user, embedded = false, onCloseToChat }) {
       setStatus("Analyzing audit trail...");
       setNarrative("");
       setAuditData(null);
+      setUiBlocks([]);
+      setSuggestions([]);
       window.requestAnimationFrame(() => {
         const el = scrollRef.current;
         if (el) el.scrollTop = 0;
       });
 
       let streamed = "";
+      const localBlocks = [];
       try {
         await streamAuditChat({
           sessionId,
@@ -135,12 +141,22 @@ export default function AuditPanel({ user, embedded = false, onCloseToChat }) {
               streamed += event.chunk;
               setNarrative(streamed);
             }
+            if (event.type === "ui_block" && event.block) {
+              localBlocks.push(event.block);
+              setUiBlocks([...localBlocks]);
+            }
             if (event.type === "audit_data" && event.audit_data) {
               setAuditData(event.audit_data);
             }
             if (event.type === "done") {
               if (event.text) setNarrative(event.text);
               if (event.audit_data) setAuditData(event.audit_data);
+              if (event.ui_blocks?.length) {
+                setUiBlocks(event.ui_blocks);
+              }
+              if (event.suggestions?.length) {
+                setSuggestions(event.suggestions);
+              }
             }
             if (event.type === "error" && event.message) {
               setStatus(event.message);
@@ -170,6 +186,13 @@ export default function AuditPanel({ user, embedded = false, onCloseToChat }) {
       historyLabel: name || model,
     });
   };
+
+  const handleUiAction = useCallback(
+    (selectionText) => {
+      sendQuery(selectionText);
+    },
+    [sendQuery],
+  );
 
   const backTargetLabel = viewStack.length
     ? viewStack[viewStack.length - 1]?.label
@@ -271,6 +294,33 @@ export default function AuditPanel({ user, embedded = false, onCloseToChat }) {
           <div className="ooa-audit-panel__narrative">
             <h3 className="ooa-audit-panel__narrative-label">Analysis</h3>
             <div className="ooa-audit-panel__narrative-text">{narrative}</div>
+          </div>
+        ) : null}
+
+        {uiBlocks.length ? (
+          <div className="ooa-audit-panel__ui-blocks">
+            {uiBlocks.map((block, index) => (
+              <AdaptiveUI
+                key={`${block.type}-${index}`}
+                block={block}
+                onUserAction={handleUiAction}
+              />
+            ))}
+          </div>
+        ) : null}
+
+        {suggestions.length ? (
+          <div className="ooa-audit-panel__suggestions">
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                className="ooa-audit-suggestion"
+                onClick={() => sendQuery(suggestion)}
+              >
+                {suggestion}
+              </button>
+            ))}
           </div>
         ) : null}
 

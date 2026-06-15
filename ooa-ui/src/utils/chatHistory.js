@@ -20,6 +20,20 @@ function parseStoredVisualization(viz) {
   return hasRenderableVisualization(normalized) ? normalized : null;
 }
 
+function parseUiBlocks(toolCalls) {
+  if (!toolCalls) return [];
+  let raw = toolCalls;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  const blocks = raw?.ui_blocks;
+  return Array.isArray(blocks) ? blocks : [];
+}
+
 /**
  * Convert server conversation messages into ChatScreen query objects.
  * Queries are newest-first (matches ChatScreen state).
@@ -41,23 +55,37 @@ export function messagesToQueries(messages = []) {
         createdAt,
         response: null,
       };
-    } else if (msg.role === "assistant" && current) {
+    } else if (msg.role === "assistant") {
       const visualization = parseStoredVisualization(msg.visualization);
-      current.response = {
-        text: String(msg.content || ""),
+      const uiBlocks = parseUiBlocks(msg.tool_calls);
+      const response = {
+        text: String(msg.content || "").trim(),
         visualization,
+        uiBlocks,
         suggestions: Array.isArray(msg.suggestions) ? msg.suggestions : [],
         suggestionMeta: null,
       };
-      if (visualization?.visual_type) {
-        current.vizType = visualization.visual_type;
+      if (current) {
+        current.response = response;
+        if (visualization?.visual_type) {
+          current.vizType = visualization.visual_type;
+        }
+        current.status = "complete";
+      } else if (queries.length) {
+        const orphan = queries[queries.length - 1];
+        if (!orphan.response) {
+          orphan.response = response;
+          orphan.status = "complete";
+          if (visualization?.visual_type) {
+            orphan.vizType = visualization.visual_type;
+          }
+        }
       }
-      current.status = "complete";
     }
   }
   if (current) queries.push(current);
 
-  return queries.filter((q) => q.question).reverse();
+  return queries.filter((q) => q.question || q.response?.text || q.response?.uiBlocks?.length).reverse();
 }
 
 export async function listPastConversations(limit = 30) {

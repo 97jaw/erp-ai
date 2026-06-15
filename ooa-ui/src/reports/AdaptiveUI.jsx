@@ -15,7 +15,7 @@ function PillSelect({ block, onSelect }) {
     } else {
       setSelected([optionId]);
       const option = block.options.find((o) => o.id === optionId);
-      if (option) onSelect(option.label);
+      if (option) onSelect(option.label, option);
     }
   };
 
@@ -40,7 +40,12 @@ function PillSelect({ block, onSelect }) {
             className={`rpt-pill${selected.includes(opt.id) ? " rpt-pill--active" : ""}`}
             onClick={() => handlePillClick(opt.id)}
           >
-            {opt.label}
+            {opt.icon ? (
+              <span className="rpt-pill__icon" aria-hidden="true">
+                {opt.icon}
+              </span>
+            ) : null}
+            <span className="rpt-pill__label">{opt.label}</span>
           </button>
         ))}
       </div>
@@ -193,25 +198,28 @@ function FileReady({ file }) {
 }
 
 /**
- * AdaptiveUI — renders any block type emitted by the Reports agent.
+ * AdaptiveUI — renders interactive blocks from the agent.
  *
- * Props:
- *   block: { type, ...fields }
- *   onUserAction: (messageText) => void  — called when user makes a selection
+ * onUserAction: (payload) => void
+ *   payload is string (legacy) or { label, option, block }
  */
 export default function AdaptiveUI({ block, onUserAction }) {
   if (!block) return null;
 
   const { type } = block;
 
+  const handleSelect = (label, option = null) => {
+    onUserAction?.({ label, option, block });
+  };
+
   if (type === "pill_select") {
-    return <PillSelect block={block} onSelect={onUserAction} />;
+    return <PillSelect block={block} onSelect={handleSelect} />;
   }
   if (type === "date_quick") {
-    return <DateQuick block={block} onSelect={onUserAction} />;
+    return <DateQuick block={block} onSelect={(text) => onUserAction?.(text)} />;
   }
   if (type === "format_select") {
-    return <FormatSelect block={block} onSelect={onUserAction} />;
+    return <FormatSelect block={block} onSelect={(text) => onUserAction?.(text)} />;
   }
   if (type === "file_ready") {
     return <FileReady file={block} />;

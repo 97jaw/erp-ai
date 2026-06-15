@@ -12,7 +12,9 @@ TREND_RE = re.compile(
     re.IGNORECASE,
 )
 GROUP_RE = re.compile(
-    r"\b(?:group(?:ed)? by|breakdown|distribution|distributed|per client|per project|per partner|by client|by partner|category(?:-wise)?|categor(?:y|ies))\b",
+    r"\b(?:group(?:ed)?\s*by|groupby|breakdown|distribution|distributed|"
+    r"per client|per project|per partner|per vendor|by client|by partner|by vendor|"
+    r"vendor[-\s]?wise|category(?:-wise)?|categor(?:y|ies))\b",
     re.IGNORECASE,
 )
 CHART_RE = re.compile(

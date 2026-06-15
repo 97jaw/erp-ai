@@ -368,6 +368,7 @@ async def get_conversation_detail(
                 "language": m["language"],
                 "visualization": m["visualization"],
                 "suggestions": m["suggestions"],
+                "tool_calls": m.get("tool_calls"),
                 "created_at": m["created_at"].isoformat() if m["created_at"] else None,
             }
             for m in reversed(messages)

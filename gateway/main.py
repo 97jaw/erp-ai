@@ -241,6 +241,11 @@ from gateway.tools.project_activity import (
     PROJECT_ACTIVITY_TOOL_NAMES,
     run_project_activity_tool,
 )
+from gateway.tools.list_attachments import (
+    LIST_ATTACHMENTS_TOOL_DEFINITIONS,
+    LIST_ATTACHMENTS_TOOL_NAMES,
+    run_list_attachments_tool,
+)
 from gateway.tools.project_records import (
     PROJECT_RECORDS_TOOL_DEFINITIONS,
     PROJECT_RECORDS_TOOL_NAMES,
@@ -1301,6 +1306,7 @@ TOOLS = [
     *PROJECT_PROFILE_TOOL_DEFINITIONS,
     *PROJECT_RECORDS_TOOL_DEFINITIONS,
     *PROJECT_ACTIVITY_TOOL_DEFINITIONS,
+    *LIST_ATTACHMENTS_TOOL_DEFINITIONS,
     *UNIVERSAL_ODOO_TOOL_DEFINITIONS,
     {
         "name": "search_entities",
@@ -1566,6 +1572,8 @@ def execute_tool(
             result = run_project_records_tool(tool_name, tool_input, adapter)
         elif tool_name in PROJECT_ACTIVITY_TOOL_NAMES:
             result = run_project_activity_tool(tool_name, tool_input, adapter)
+        elif tool_name in LIST_ATTACHMENTS_TOOL_NAMES:
+            result = run_list_attachments_tool(tool_name, tool_input, adapter)
         elif tool_name == "get_period_comparison":
             result = get_period_comparison(adapter, tool_input)
         elif tool_name == "get_projects_with_overrun":
@@ -2665,6 +2673,16 @@ class ChatRequest(BaseModel):
     deep_think          : bool = False
 
 
+class AgentStreamRequest(BaseModel):
+    message             : str
+    session_id          : str | None = None
+    agent_type          : str = "chat"  # chat | audit | reports
+    skip_clarification  : bool = False
+    confirmed_entities  : list[ConfirmedEntityModel] = []
+    deep_think          : bool = False
+    documents_scope     : str | None = None
+
+
 class QueryPageRequest(BaseModel):
     query_id  : str
     page      : int = 1
@@ -2933,6 +2951,90 @@ async def audit_stream(
     )
 
 
+@app.post("/agent/stream")
+async def agent_stream(
+    request: AgentStreamRequest,
+    http_request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+):
+    """Unified agent-mode endpoint — chat uses same handler as /chat/stream."""
+    from gateway.agent.handler import AgentHandler
+
+    chat_user = await require_chat_user(
+        http_request, credentials, session_id=request.session_id
+    )
+    session_id = request.session_id or str(uuid4())
+    agent_type = (request.agent_type or "chat").strip().lower()
+    if agent_type not in {"chat", "audit", "reports"}:
+        raise HTTPException(status_code=400, detail=f"Invalid agent_type: {agent_type}")
+
+    confirmed = _parse_confirmed_entities(request.confirmed_entities) if agent_type == "chat" else []
+
+    async def generate():
+        set_request_user(chat_user)
+        stream_started = time.perf_counter()
+        stream_status = "success"
+        language = _detect_language(request.message)
+        ai_streaming_connections.inc()
+        try:
+            try:
+                adapter = get_adapter()
+            except ConnectionError as exc:
+                stream_status = "error"
+                message = str(exc)
+                yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'text': message, 'session_id': session_id})}\n\n"
+                return
+
+            handler = AgentHandler(adapter, agent_type=agent_type)
+            stream_kwargs: dict[str, Any] = {}
+            if agent_type == "chat":
+                stream_kwargs = {
+                    "deep_think": request.deep_think,
+                    "skip_clarification": request.skip_clarification,
+                    "confirmed_entities": confirmed,
+                    "documents_scope": request.documents_scope,
+                }
+            async for chunk in handler.handle_stream(
+                request.message,
+                chat_user,
+                session_id,
+                **stream_kwargs,
+            ):
+                yield chunk
+        except Exception as exc:
+            stream_status = "error"
+            logger.error("[/agent/stream] Agent handler error: %s", exc)
+            message = (
+                "عذراً، حدث خطأ. يرجى المحاولة مرة أخرى."
+                if language == "ar"
+                else "Sorry, I encountered an error. Please try again."
+            )
+            yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'text': message, 'session_id': session_id})}\n\n"
+        finally:
+            ai_streaming_connections.dec()
+            chat_stream_duration.labels(status=stream_status).observe(
+                time.perf_counter() - stream_started
+            )
+            record_ai_query(
+                endpoint="/agent/stream",
+                language=language,
+                status=stream_status,
+            )
+            set_request_user(None)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
 @app.post("/reports/stream")
 async def reports_stream(
     request: ChatRequest,
@@ -2995,6 +3097,55 @@ async def reports_stream(
     )
 
 
+@app.get("/attachments/download/{token}")
+async def attachments_download(token: str):
+    """Stream a session-scoped Odoo attachment (not stored in chat DB)."""
+    import base64
+
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+
+    from gateway.ephemeral_files import EphemeralFileStore, MAX_DOWNLOAD_BYTES
+
+    ref = EphemeralFileStore.resolve(token)
+    if not ref:
+        raise HTTPException(status_code=404, detail="Download link expired or not found.")
+
+    if ref.size_bytes is not None and ref.size_bytes > MAX_DOWNLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds the maximum download size.")
+
+    try:
+        adapter = get_adapter()
+        payload = adapter.read_attachment_binary(ref.odoo_attachment_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not fetch file from Odoo: {exc}") from exc
+
+    if not payload:
+        raise HTTPException(status_code=404, detail="Attachment not found in Odoo.")
+    if payload.get("error") == "url_attachment":
+        raise HTTPException(status_code=400, detail=str(payload.get("message") or "URL attachment"))
+
+    raw = payload.get("datas")
+    if not raw:
+        raise HTTPException(status_code=404, detail="Attachment has no file content.")
+
+    try:
+        content = base64.b64decode(raw)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail="Could not decode attachment content.") from exc
+
+    if len(content) > MAX_DOWNLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds the maximum download size.")
+
+    filename = str(payload.get("name") or ref.name or "download")
+    media_type = str(payload.get("mimetype") or ref.mimetype or "application/octet-stream")
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/reports/download/{report_id}")
 async def reports_download(report_id: str):
     """Serve a generated report file (PDF or Excel)."""
@@ -3030,9 +3181,7 @@ async def chat_stream(
     credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
 ):
     """
-    Streaming chat endpoint.
-    Returns text chunks as they are generated.
-    Frontend renders text immediately.
+    Streaming chat endpoint — Day 5: unified agent handler (chat agent_type).
     """
     from fastapi.responses import StreamingResponse as SR
 
@@ -3040,6 +3189,7 @@ async def chat_stream(
         http_request, credentials, session_id=request.session_id
     )
     session_id = request.session_id or str(uuid4())
+    confirmed = _parse_confirmed_entities(request.confirmed_entities)
 
     async def generate():
         set_request_user(chat_user)
@@ -3049,7 +3199,7 @@ async def chat_stream(
         ai_streaming_connections.inc()
         try:
             try:
-                get_adapter()
+                adapter = get_adapter()
             except ConnectionError as exc:
                 stream_status = "error"
                 message = str(exc)
@@ -3057,85 +3207,21 @@ async def chat_stream(
                 yield f"data: {json.dumps({'type': 'done', 'text': message, 'session_id': session_id})}\n\n"
                 return
 
-            progress_steps = _intelligent_progress_steps(language, deep_think=request.deep_think)
-            if request.deep_think:
-                status_message = (
-                    "تفكير عميق — جاري جلب البيانات..."
-                    if language == "ar"
-                    else "Deep thinking — pulling live data..."
-                )
-            else:
-                status_message = (
-                    "جاري تحليل السؤال..."
-                    if language == "ar"
-                    else "Analyzing your question..."
-                )
-            yield f"data: {json.dumps({'type': 'status', 'message': status_message})}\n\n"
-            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
+            from gateway.agent.handler import AgentHandler
 
-            progress_steps[0]["status"] = "done"
-            progress_steps[1]["status"] = "running"
-            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
-
-            result = await _run_intelligent_chat(
+            handler = AgentHandler(adapter, agent_type="chat")
+            async for chunk in handler.handle_stream(
                 request.message,
-                session_id,
                 chat_user,
-                skip_clarification=request.skip_clarification,
-                confirmed_entities=_parse_confirmed_entities(request.confirmed_entities),
-                deep_think=request.deep_think,
-            )
-
-            progress_steps[1]["status"] = "done"
-            progress_steps[2]["status"] = "running"
-            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
-
-            conv_id = ConversationStore.conversation_id_for_session(session_id)
-
-            if result.awaiting_clarification and result.clarification:
-                prompt = result.text or (
-                    result.clarification.get("question_ar")
-                    if language == "ar"
-                    else result.clarification.get("question")
-                ) or result.clarification.get("question", "")
-                yield f"data: {json.dumps({'type': 'clarify', 'clarification': result.clarification})}\n\n"
-                yield f"data: {json.dumps({'type': 'done', 'text': prompt, 'clarification': result.clarification, 'awaiting_clarification': True, 'session_id': session_id, 'conversation_id': conv_id, 'interaction_id': result.interaction_id})}\n\n"
-                return
-
-            tools_called, tool_payloads = _tool_payloads_from_intelligent_result(result)
-            clean_text, visualization, suggestions, suggestion_meta = _finalize_agent_response(
-                result.text,
-                result.visualization,
-                result.suggestions,
-                tools_called,
-                tool_payloads,
-                language,
-                request.message,
                 session_id,
-            )
-            _log_agent_response(
-                user_message=request.message,
-                raw_text=result.text,
-                clean_text=clean_text,
-                visualization=visualization,
-                suggestions=suggestions,
-                tool_names=tools_called,
-            )
-
-            visual_type = (visualization or {}).get("visual_type")
-            if visual_type:
-                yield f"data: {json.dumps({'type': 'viz_hint', 'visual_type': visual_type})}\n\n"
-
-            for chunk in _iter_text_chunks(clean_text):
-                yield f"data: {json.dumps({'type': 'text', 'chunk': chunk})}\n\n"
-
-            progress_steps[2]["status"] = "done"
-            yield f"data: {json.dumps({'type': 'progress', 'steps': progress_steps})}\n\n"
-
-            yield f"data: {json.dumps({'type': 'done', 'text': clean_text, 'visualization': visualization, 'suggestions': suggestions, 'suggestion_meta': suggestion_meta, 'session_id': session_id, 'conversation_id': conv_id, 'interaction_id': result.interaction_id, 'deep_think_available': result.deep_think_available})}\n\n"
+                deep_think=request.deep_think,
+                skip_clarification=request.skip_clarification,
+                confirmed_entities=confirmed,
+            ):
+                yield chunk
         except Exception as exc:
             stream_status = "error"
-            logger.error("[/chat/stream] Intelligent handler error: %s", exc)
+            logger.error("[/chat/stream] Agent handler error: %s", exc)
             message = (
                 "عذراً، حدث خطأ. يرجى المحاولة مرة أخرى."
                 if language == "ar"
@@ -3157,13 +3243,14 @@ async def chat_stream(
 
     return SR(
         generate(),
-        media_type = "text/event-stream",
-        headers    = {
-            "Cache-Control"              : "no-cache",
-            "X-Accel-Buffering"          : "no",
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
             "Access-Control-Allow-Origin": "*",
         },
     )
+
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(
@@ -3354,18 +3441,32 @@ async def clear_session(
     http_request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
 ):
-    """Clear conversation history for a session."""
+    """Clear ephemeral session state (memory, entities). Keeps saved chat history in DB."""
     chat_user = await require_chat_user(
         http_request, credentials, session_id=session_id
     )
-    await ConversationStore.clear(
-        session_id,
-        user_id=chat_user.id if chat_user else None,
-    )
-    from gateway.session_scope import SessionScopeStore
+    from gateway.agent.session_entities import clear_entities
+    from gateway.agent.session_state import clear_session as clear_agent_session
 
+    clear_agent_session(session_id)
+    clear_entities(session_id)
     SessionScopeStore.clear(session_id)
-    conv_id = ConversationStore.conversation_id_for_session(session_id)
+    ConversationStore.clear_ephemeral(session_id)
+    conv_id = None
+    if chat_user:
+        conv_id = ConversationStore.conversation_id_for_session(session_id)
+        if not conv_id:
+            from admin.auth.config import auth_db_enabled
+
+            if auth_db_enabled():
+                from admin.db.connection import init_admin_db
+                from admin.db.repositories.conversations import ConversationRepository
+
+                db = await init_admin_db()
+                repo = ConversationRepository(db)
+                resolved = await repo.resolve_id(chat_user.id, session_id)
+                if resolved:
+                    conv_id = str(resolved)
     return {
         "status": "cleared",
         "session_id": session_id,
