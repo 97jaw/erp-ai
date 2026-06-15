@@ -280,6 +280,17 @@ def should_use_fast_lane(
         logger.debug("[FastLane] Signal 6 — document expiry query")
         return True
 
+    # Signal 7: fleet/vehicle query with a named entity (person name).
+    # "Adil Khan vehicle", "show car for Ahmed" → need employee lookup first.
+    # subject_area='fleet' with entities means cross-entity (person → vehicle).
+    if (
+        intent.subject_area == "fleet"
+        and any(w in msg_lower for w in ("vehicle", "vehicles", "car", "cars"))
+        and bool(intent.entities)
+    ):
+        logger.debug("[FastLane] Signal 7 — fleet query with named entity=%r", [e.value for e in intent.entities])
+        return True
+
     return False
 
 

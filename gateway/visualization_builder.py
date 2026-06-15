@@ -1110,6 +1110,78 @@ def _project_records_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _payslip_list_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Table of payslips from get_employee_payslips."""
+    slips = payload.get("payslips") or []
+    if not slips:
+        return None
+    rows: list[list[Any]] = []
+    for s in slips:
+        rows.append([
+            s.get("name") or s.get("period") or "—",
+            s.get("date_from") or "—",
+            s.get("date_to") or "—",
+            s.get("net_wage") or s.get("net") or 0,
+            s.get("total_deductions") or 0,
+        ])
+    employee_name = slips[0].get("employee_name") or payload.get("employee_name") or ""
+    title = f"Payslips — {employee_name}" if employee_name else "Payslips"
+    return {
+        "visual_type": "DATA_TABLE",
+        "label": title,
+        "data": {
+            "headers": ["Period", "From", "To", "Net Wage", "Deductions"],
+            "rows": rows,
+        },
+        "suggestions": [],
+    }
+
+
+def _payslip_detail_visual(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Bar chart of payslip line items from get_payslip_detail."""
+    lines = payload.get("lines") or []
+    if not lines:
+        # Fall back to deductions_summary bar chart if available
+        summary = payload.get("deductions_summary") or payload.get("payroll_summary") or {}
+        if summary and isinstance(summary, dict):
+            rows = [
+                {"label": k.replace("_", " ").title(), "value": v}
+                for k, v in summary.items()
+                if isinstance(v, (int, float)) and v != 0
+            ]
+            if rows:
+                header = payload.get("payslip", {})
+                emp = payload.get("employee_name") or ""
+                title = f"Payslip Summary — {emp}" if emp else "Payslip Summary"
+                return {
+                    "visual_type": "BAR_CHART",
+                    "label": title,
+                    "data": {"rows": rows},
+                    "currency": "AED",
+                }
+        return None
+
+    rows = [
+        {"label": ln.get("name") or ln.get("code") or "—", "value": ln.get("amount") or 0}
+        for ln in lines
+        if (ln.get("amount") or 0) != 0
+    ]
+    if not rows:
+        return None
+    emp = payload.get("employee_name") or ""
+    header = payload.get("payslip") or {}
+    period = header.get("name") or ""
+    title = f"Payslip — {emp}" if emp else "Payslip Detail"
+    if period:
+        title += f" ({period})"
+    return {
+        "visual_type": "BAR_CHART",
+        "label": title,
+        "data": {"rows": rows},
+        "currency": "AED",
+    }
+
+
 def _visual_from_payload(
     tool_name: str,
     payload  : dict[str, Any],
@@ -1154,6 +1226,10 @@ def _visual_from_payload(
         return _project_expense_comparison_visual(payload)
     if tool_name == "search_entities" or payload.get("_source") == "search_entities":
         return _entity_candidates_visual(payload)
+    if tool_name == "get_employee_payslips" or payload.get("_source") == "get_employee_payslips":
+        return _payslip_list_visual(payload)
+    if tool_name == "get_payslip_detail" or payload.get("_source") == "get_payslip_detail":
+        return _payslip_detail_visual(payload)
     if tool_name in {
         "get_financial_report",
         "get_project_expenses",
