@@ -50,7 +50,8 @@ from gateway.logging_config import LoggingContextMiddleware, setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
-AGENT_MODEL = "claude-sonnet-4-20250514"
+from gateway.model_config import AGENT_MODEL
+
 MAX_AGENT_TOKENS = 4096
 TOOL_RESULT_CHAR_LIMIT = 12000
 
@@ -2779,7 +2780,7 @@ async def health():
     return {
         "status" : "ok",
         "version": "3.0.0",
-        "model"  : "claude-sonnet-4-20250514",
+        "model"  : AGENT_MODEL,
     }
 
 

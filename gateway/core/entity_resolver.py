@@ -19,6 +19,7 @@ from gateway.core.project_query_utils import (
     project_record_matches_number,
 )
 from gateway.core.strategy_planner import ExecutionStep
+from gateway.model_config import AGENT_MODEL as DEFAULT_SEMANTIC_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -311,7 +312,7 @@ class EntityResolver:
         search: ProjectSearchClient,
         *,
         semantic_client: Any | None = None,
-        semantic_model: str = "claude-sonnet-4-20250514",
+        semantic_model: str = DEFAULT_SEMANTIC_MODEL,
     ) -> None:
         self._search = search
         self._semantic_client = semantic_client

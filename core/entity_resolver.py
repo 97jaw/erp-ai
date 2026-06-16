@@ -24,6 +24,8 @@ from typing import Any
 
 import anthropic
 
+from gateway.model_config import AGENT_MODEL
+
 from core.base_adapter import BaseOdooAdapter
 
 logger = logging.getLogger(__name__)
@@ -445,7 +447,7 @@ class EntityResolver:
         try:
             client = anthropic.Anthropic(api_key=self.api_key)
             message = client.messages.create(
-                model      = "claude-sonnet-4-20250514",
+                model      = AGENT_MODEL,
                 max_tokens = 100,
                 messages   = [{
                     "role"   : "user",

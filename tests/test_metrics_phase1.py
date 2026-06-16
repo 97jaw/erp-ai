@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from gateway.model_config import AGENT_MODEL
 from gateway.metrics import (
     REGISTRY,
     metrics_payload,
@@ -30,7 +31,7 @@ def test_record_claude_response() -> None:
         usage = Usage()
         stop_reason = "end_turn"
 
-    record_claude_response(Response(), 1.2, model="claude-sonnet-4-20250514")
+    record_claude_response(Response(), 1.2, model=AGENT_MODEL)
     body = metrics_payload().decode("utf-8")
     assert "ooa_ai_tokens_consumed_total" in body
     assert "ooa_ai_cost_cents_total" in body

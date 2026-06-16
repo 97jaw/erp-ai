@@ -22,6 +22,8 @@ from typing import Any
 import anthropic
 from dotenv import load_dotenv
 
+from gateway.model_config import AGENT_MODEL
+
 from core.state import AgentState
 
 load_dotenv()
@@ -107,7 +109,7 @@ class LanguageDetectionNode:
         Returns one of: 'en', 'ar', 'ur'.
         """
         message = self.client.messages.create(
-            model      = "claude-sonnet-4-20250514",
+            model      = AGENT_MODEL,
             max_tokens = 5,       # We only need 2 characters back
             messages   = [
                 {

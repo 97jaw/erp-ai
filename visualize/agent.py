@@ -15,9 +15,9 @@ from visualize.sessions import VisualizeSession, append_message, get_session
 from visualize.tool_runner import execute_visualize_tool
 from visualize.tools import TOOL_STATUS_LABELS, VISUALIZE_TOOLS
 
-logger = logging.getLogger(__name__)
+from gateway.model_config import AGENT_MODEL
 
-AGENT_MODEL = "claude-sonnet-4-20250514"
+logger = logging.getLogger(__name__)
 MAX_AGENT_TOKENS = 2048
 TOOL_RESULT_CHAR_LIMIT = 10000
 

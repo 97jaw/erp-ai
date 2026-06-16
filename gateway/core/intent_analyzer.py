@@ -16,7 +16,7 @@ from gateway.session_entities import build_session_context_prompt
 
 logger = logging.getLogger(__name__)
 
-INTENT_ANALYZER_MODEL = "claude-sonnet-4-20250514"
+from gateway.model_config import AGENT_MODEL as INTENT_ANALYZER_MODEL
 
 _WRITE_OPERATION_RE = re.compile(
     r"\b(create|delete|approve|post|cancel|validate|remove|archive|unlink|"

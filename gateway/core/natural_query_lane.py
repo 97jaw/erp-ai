@@ -32,7 +32,7 @@ from gateway.tools.universal_odoo import UNIVERSAL_ODOO_TOOL_DEFINITIONS
 
 logger = logging.getLogger(__name__)
 
-FAST_LANE_MODEL = "claude-sonnet-4-20250514"
+from gateway.model_config import AGENT_MODEL as FAST_LANE_MODEL
 FAST_LANE_MAX_TURNS = 5
 FAST_LANE_MAX_TOKENS = 2048
 TOOL_RESULT_CHAR_LIMIT = 10000

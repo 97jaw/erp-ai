@@ -15,6 +15,8 @@ import logging
 import os
 from typing import Any
 
+from gateway.model_config import AGENT_MODEL
+
 from core.state import IntentType, VisualType
 
 logger = logging.getLogger(__name__)
@@ -188,7 +190,7 @@ class SuggestionEngine:
             lang_name = "Arabic" if language == "ar" else "Urdu"
 
             message = client.messages.create(
-                model      = "claude-sonnet-4-20250514",
+                model      = AGENT_MODEL,
                 max_tokens = 200,
                 messages   = [{
                     "role"   : "user",

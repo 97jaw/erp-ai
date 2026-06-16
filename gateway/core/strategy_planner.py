@@ -20,7 +20,7 @@ from gateway.core.intent_analyzer import (
 
 logger = logging.getLogger(__name__)
 
-STRATEGY_PLANNER_MODEL = "claude-sonnet-4-20250514"
+from gateway.model_config import AGENT_MODEL as STRATEGY_PLANNER_MODEL
 STRATEGY_PLANNER_MAX_TOKENS = 2048
 
 # Company-wide financial report names → (tool, report_type). Used both for the

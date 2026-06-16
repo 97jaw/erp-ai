@@ -17,7 +17,7 @@ from starlette.responses import Response
 # Custom registry (isolated from default process metrics unless merged later)
 REGISTRY = CollectorRegistry()
 
-AGENT_MODEL_DEFAULT = "claude-sonnet-4-20250514"
+from gateway.model_config import AGENT_MODEL as AGENT_MODEL_DEFAULT
 
 # ─── API request metrics ───────────────────────────────────────────────────
 api_requests_total = Counter(

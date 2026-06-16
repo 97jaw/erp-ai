@@ -20,7 +20,7 @@ from gateway.core.result_synthesizer import SynthesizedResult
 
 logger = logging.getLogger(__name__)
 
-PROACTIVE_MODEL = "claude-sonnet-4-20250514"
+from gateway.model_config import AGENT_MODEL as PROACTIVE_MODEL
 LIKELIHOOD_THRESHOLD = 0.7
 MAX_BACKGROUND_TASKS = 3
 

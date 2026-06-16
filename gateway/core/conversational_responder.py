@@ -18,7 +18,7 @@ from gateway.core.intent_analyzer import Intent
 
 logger = logging.getLogger(__name__)
 
-CONVERSATIONAL_MODEL = "claude-sonnet-4-20250514"
+from gateway.model_config import AGENT_MODEL as CONVERSATIONAL_MODEL
 _MAX_RESPONSE_TOKENS = 600
 
 _GREETING_RE = re.compile(

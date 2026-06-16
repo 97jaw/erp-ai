@@ -22,6 +22,8 @@ from typing import Any
 import anthropic
 from dotenv import load_dotenv
 
+from gateway.model_config import AGENT_MODEL
+
 from core.state import AgentState, ErrorSeverity
 
 load_dotenv()
@@ -250,7 +252,7 @@ class ResponseFormatterNode:
     8. No markdown formatting — plain text only"""
 
         message = self.client.messages.create(
-            model      = "claude-sonnet-4-20250514",
+            model      = AGENT_MODEL,
             max_tokens = 150,
             messages   = [{"role": "user", "content": prompt}],
         )

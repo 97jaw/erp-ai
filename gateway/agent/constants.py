@@ -1,4 +1,5 @@
 """Shared constants for the unified agent loop."""
 
-AGENT_MODEL = "claude-sonnet-4-20250514"
+from gateway.model_config import AGENT_MODEL
+
 MAX_AGENT_TOKENS = 4096

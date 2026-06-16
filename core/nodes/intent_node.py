@@ -28,6 +28,8 @@ import anthropic
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
 
+from gateway.model_config import AGENT_MODEL
+
 from core.state import (
     AgentState,
     ErrorSeverity,
@@ -271,7 +273,7 @@ class IntentClassifierNode:
         )
 
         message = self.client.messages.create(
-            model      = "claude-sonnet-4-20250514",
+            model      = AGENT_MODEL,
             max_tokens = 400,
             messages   = [{"role": "user", "content": prompt}],
         )

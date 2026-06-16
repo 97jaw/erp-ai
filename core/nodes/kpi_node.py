@@ -24,6 +24,8 @@ import anthropic
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
+from gateway.model_config import AGENT_MODEL
+
 from core.base_adapter import BaseOdooAdapter, KPIRequest, KPIResponse
 from core.state import (
     AgentState,
@@ -453,7 +455,7 @@ class KPINode:
         )
 
         message = self.client.messages.create(
-            model      = "claude-sonnet-4-20250514",
+            model      = AGENT_MODEL,
             max_tokens = 300,
             messages   = [{"role": "user", "content": prompt}],
         )

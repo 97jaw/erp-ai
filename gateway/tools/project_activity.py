@@ -12,6 +12,7 @@ from html import unescape
 from typing import Any
 
 from gateway.core.context_stack import ContextStack
+from gateway.model_config import AGENT_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ ACTIVITY_TYPE_LABELS = {
 
 CHATTER_SUMMARY_MODEL = os.environ.get(
     "OOA_CHATTER_SUMMARY_MODEL",
-    "claude-sonnet-4-20250514",
+    AGENT_MODEL,
 )
 
 PROJECT_ACTIVITY_TOOL_DEFINITIONS: list[dict[str, Any]] = [
