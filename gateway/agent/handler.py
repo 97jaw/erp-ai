@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from typing import Any, AsyncIterator
 
+import anthropic
+
+from gateway.agent.claude_retry import is_transient_claude_error, log_claude_retry
 from gateway.agent.constants import AGENT_MODEL
 from gateway.agent.core import format_error
 from gateway.agent.tools_registry import execute_tool, format_tool_result, get_all_tools
@@ -515,6 +519,47 @@ class AgentHandler:
 
             await append_user_message(session_id, user, message, language=language)
 
+        if self.agent_type == "reports" and session_id:
+            from gateway.agent.reports_preflight import run_reports_preflight
+            from gateway.agent.reports_session import append_reports_message
+
+            reports_preflight = run_reports_preflight(
+                message,
+                session_id=session_id,
+                language=language,
+            )
+            if reports_preflight:
+                append_reports_message(session_id, "user", message)
+                if progress_steps:
+                    for step in progress_steps:
+                        step["status"] = "done"
+                    yield _sse({"type": "progress", "steps": progress_steps})
+                yield _sse({"type": "text", "chunk": reports_preflight.text})
+                for block in reports_preflight.ui_blocks:
+                    yield _sse({"type": "ui_block", "block": block})
+                await self._persist_turn(
+                    session_id,
+                    message,
+                    reports_preflight.text,
+                    user,
+                    language=language,
+                    ui_blocks=reports_preflight.ui_blocks,
+                    response_time_ms=int((time.perf_counter() - turn_started) * 1000),
+                )
+                reports_done: dict[str, Any] = {
+                    "type": "done",
+                    "text": reports_preflight.text,
+                    "session_id": session_id,
+                    "conversation_id": session_id,
+                    "agent_type": self.agent_type,
+                    "agent": "reports",
+                    "agent_mode": True,
+                    "ui_blocks": reports_preflight.ui_blocks,
+                    "suggestions": reports_preflight.suggestions,
+                }
+                yield _sse(reports_done)
+                return
+
         system_prompt = build_system_prompt(
             agent_type=self.agent_type,
             user=user,
@@ -540,20 +585,33 @@ class AgentHandler:
             for _round in range(self.max_rounds):
                 stream_started = time.perf_counter()
                 round_text_parts = []
-                async with self.client.messages.stream(
-                    model=AGENT_MODEL,
-                    max_tokens=4096,
-                    system=system_prompt,
-                    tools=tools,
-                    messages=messages,
-                ) as stream:
-                    async for text in stream.text_stream:
-                        if not text:
-                            continue
-                        round_text_parts.append(text)
-                        yield _sse({"type": "text", "chunk": text})
+                response = None
+                for attempt in range(3):
+                    try:
+                        round_text_parts = []
+                        async with self.client.messages.stream(
+                            model=AGENT_MODEL,
+                            max_tokens=4096,
+                            system=system_prompt,
+                            tools=tools,
+                            messages=messages,
+                        ) as stream:
+                            async for text in stream.text_stream:
+                                if not text:
+                                    continue
+                                round_text_parts.append(text)
+                                yield _sse({"type": "text", "chunk": text})
 
-                    response = await stream.get_final_message()
+                            response = await stream.get_final_message()
+                        break
+                    except anthropic.APIStatusError as exc:
+                        if attempt < 2 and is_transient_claude_error(exc):
+                            log_claude_retry(self.agent_type, attempt + 1, exc)
+                            await asyncio.sleep(0.75 * (attempt + 1))
+                            continue
+                        raise
+                if response is None:
+                    raise RuntimeError("Claude stream failed without a response")
                 last_response = response
 
                 from gateway.metrics import record_claude_response

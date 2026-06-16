@@ -19,6 +19,57 @@ from gateway.core.project_query_utils import extract_project_name_hint
 
 logger = logging.getLogger(__name__)
 
+_PROJECT_COST_SUMMARY_RE = re.compile(
+    r"\b(?:expense|cost|spend|spending|budget)\s+summary\b|"
+    r"\bproject\s+summary\b|"
+    r"\bsummary\s+(?:of|for)\s+(?:project|expenses?|costs?)\b|"
+    r"\b(?:expense|cost)\s+(?:breakdown|overview)\b",
+    re.I,
+)
+
+
+def is_project_cost_query(message: str) -> bool:
+    """True when the user is asking about spend/costs — not downloadable files."""
+    text = (message or "").strip()
+    if not text:
+        return False
+
+    from gateway.agent.session_entities import _PROJECT_INTENT_RE
+    from gateway.core.project_profile_routing import _SPEND_DISQUALIFIER_RE, has_project_context
+
+    if re.search(r"projects?\s*&\s*costs?", normalize_pick_text(text)):
+        return True
+    if _PROJECT_INTENT_RE.search(text):
+        return True
+    if _SPEND_DISQUALIFIER_RE.search(text):
+        return True
+    if _PROJECT_COST_SUMMARY_RE.search(text):
+        return True
+    if re.search(r"\b(breakdown|overview)\b", text, re.I) and has_project_context(text):
+        if derive_activity_type(text) not in {"attachments", "chatter_summary", "audit"}:
+            return True
+    return False
+
+
+def is_active_documents_session(entities: dict[str, Any]) -> bool:
+    """True when the user is mid-flow in the documents wizard."""
+    if entities.get("intent") != "attachments":
+        return False
+    if entities.get("documents_step") in {"scope", "target", "pick_project"}:
+        return True
+    return bool(entities.get("documents_scope"))
+
+
+def is_explicit_attachment_query(message: str) -> bool:
+    """True only when the message is clearly about files/documents/attachments."""
+    text = (message or "").strip()
+    if not text:
+        return False
+    if is_documents_category_pick(text) or detect_scope_pick(text):
+        return True
+    return is_attachment_list_query(text) or derive_activity_type(text) == "attachments"
+
+
 _DOCUMENTS_CATEGORY_LABELS = frozenset(
     {
         "documents & files",
@@ -93,7 +144,12 @@ def detect_scope_pick_from_option_id(option_id: str | None) -> str | None:
 
 
 def infer_documents_scope(message: str) -> str | None:
+    """Infer attachment scope only when the message is actually about files."""
     text = (message or "").strip()
+    if is_project_cost_query(text):
+        return None
+    if not is_explicit_attachment_query(text):
+        return None
     if _AGREEMENT_CONTEXT_RE.search(text):
         return "agreement"
     if re.search(r"\brfq\b|request\s+for\s+quotation", text, re.I):
@@ -168,6 +224,11 @@ def resolve_documents_project_id(message: str, entities: dict[str, Any]) -> int 
 
 def has_resolved_attachment_target(entities: dict[str, Any], message: str) -> bool:
     from gateway.agent.project_resolve import extract_project_id_from_message
+
+    if is_project_cost_query(message):
+        return False
+    if not is_explicit_attachment_query(message) and entities.get("intent") != "attachments":
+        return False
 
     if extract_project_id_from_message(message):
         return True
@@ -503,11 +564,20 @@ async def try_documents_flow(
     if not text:
         return None
 
+    if is_project_cost_query(text):
+        from gateway.agent.session_entities import clear_documents_entities
+
+        clear_documents_entities(session_id)
+        return None
+
     entities = get_entities(session_id)
+
+    if entities.get("intent") == "project_expense" and not is_explicit_attachment_query(text):
+        return None
 
     scope_pick = detect_scope_pick_from_option_id(documents_scope) or detect_scope_pick(text)
 
-    if confirmed_entities:
+    if confirmed_entities and is_active_documents_session(entities):
         for entity in confirmed_entities:
             etype = getattr(entity, "type", None) or (entity.get("type") if isinstance(entity, dict) else None)
             eid = getattr(entity, "id", None) or (entity.get("id") if isinstance(entity, dict) else None)
@@ -575,7 +645,12 @@ async def try_documents_flow(
             language=language,
         )
 
-    if entities.get("documents_scope") and entities.get("documents_step") == "target":
+    if (
+        entities.get("documents_scope")
+        and entities.get("documents_step") == "target"
+        and entities.get("intent") == "attachments"
+        and not is_project_cost_query(text)
+    ):
         return await _resolve_scope_target(
             scope=str(entities["documents_scope"]),
             message=text,
@@ -586,8 +661,11 @@ async def try_documents_flow(
             entities=entities,
         )
 
-    is_attachment = is_attachment_list_query(text) or derive_activity_type(text) == "attachments"
+    is_attachment = is_explicit_attachment_query(text)
     if not is_attachment and entities.get("intent") != "attachments":
+        return None
+
+    if is_attachment and is_project_cost_query(text):
         return None
 
     if has_resolved_attachment_target(entities, text) and (

@@ -144,6 +144,24 @@ def clear_financial_entities(session_id: str) -> None:
         bucket.pop(key, None)
 
 
+def clear_documents_entities(session_id: str) -> None:
+    """Drop documents wizard state when the user switches to costs, expenses, or another module."""
+    bucket = _entities.get(session_id)
+    if not bucket:
+        return
+    if bucket.get("intent") == "attachments":
+        bucket.pop("intent", None)
+    for key in (
+        "documents_scope",
+        "documents_step",
+        "rfq_id",
+        "agreement_id",
+        "attachment_res_model",
+        "attachment_res_id",
+    ):
+        bucket.pop(key, None)
+
+
 def clear_entities(session_id: str) -> None:
     _entities.pop(session_id, None)
 
@@ -191,11 +209,15 @@ def apply_confirmed_entities(
         entity_type = (ref.type or "").strip().lower()
         if entity_type in {"project", "project.project"}:
             existing = get_entities(session_id)
-            intent = (
-                "procurement"
-                if existing.get("intent") == "procurement"
-                else "project_expense"
-            )
+            if existing.get("intent") == "procurement":
+                intent = "procurement"
+            elif existing.get("intent") == "attachments" and (
+                existing.get("documents_step") in {"scope", "target", "pick_project"}
+                or existing.get("documents_scope")
+            ):
+                intent = "attachments"
+            else:
+                intent = "project_expense"
             update_entities(
                 session_id,
                 project_id=int(ref.id),
@@ -225,7 +247,14 @@ def update_entities_from_message(session_id: str, message: str) -> None:
     if _PAYSLIP_INTENT_RE.search(text):
         update_entities(session_id, intent="payslip")
 
-    if _PROJECT_INTENT_RE.search(text):
+    from gateway.agent.menu_preflight import normalize_pick_text
+
+    norm = normalize_pick_text(text)
+    if re.search(r"projects?\s*&\s*costs?", norm):
+        clear_documents_entities(session_id)
+        update_entities(session_id, intent="project_expense")
+    elif _PROJECT_INTENT_RE.search(text):
+        clear_documents_entities(session_id)
         update_entities(session_id, intent="project_expense")
 
     if _FLEET_INTENT_RE.search(text):
@@ -352,7 +381,6 @@ def update_entities_from_tool(
         "get_project_profile",
         "get_project_records",
         "get_project_activity",
-        "list_attachments",
     }:
         project_id = tool_input.get("project_id")
         if project_id:

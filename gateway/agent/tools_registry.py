@@ -88,7 +88,12 @@ def get_all_tools(agent_type: str, user: Any | None) -> list[dict[str, Any]]:
         )
         tools.extend(UI_INTERACTION_TOOLS)
     elif agent_type == "reports":
-        tools.extend(REPORTS_TOOL_DEFINITIONS)
+        from gateway.agent.ui_block_tools import show_ui_block_tool
+
+        tools.extend(
+            tool for tool in REPORTS_TOOL_DEFINITIONS if tool["name"] != "show_ui_block"
+        )
+        tools.append(show_ui_block_tool)
         tools.extend(
             tool
             for tool in UI_INTERACTION_TOOLS

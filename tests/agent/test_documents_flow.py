@@ -8,6 +8,7 @@ from gateway.agent.documents_flow import (
     extract_documents_project_hint,
     infer_documents_scope,
     is_documents_category_pick,
+    is_project_cost_query,
     try_documents_flow,
 )
 from gateway.agent.session_entities import get_entities, update_entities
@@ -41,6 +42,64 @@ async def test_documents_category_pick_shows_scope_picker() -> None:
 
 def test_infer_scope_from_project_files_query() -> None:
     assert infer_documents_scope("show me files for project national guard") == "project"
+
+
+def test_infer_scope_skips_project_expense_queries() -> None:
+    assert infer_documents_scope("show project expenses for national guard") is None
+    assert infer_documents_scope("project cost summary for zayidia boys school") is None
+
+
+def test_is_project_cost_query() -> None:
+    assert is_project_cost_query("Projects & Costs")
+    assert is_project_cost_query("show expense breakdown for national guard")
+    assert is_project_cost_query("project summary for al hili")
+    assert not is_project_cost_query("show me files for project national guard")
+
+
+@pytest.mark.asyncio
+async def test_expense_query_clears_stale_documents_session() -> None:
+    session_id = "sess-docs-expense-switch"
+    update_entities(
+        session_id,
+        intent="attachments",
+        documents_scope="project",
+        documents_step="target",
+        project_id=1374,
+        project_name="National Guard Health Affairs",
+    )
+    result = await try_documents_flow(
+        message="show project expenses for national guard",
+        user=None,
+        adapter=_SlowAdapter(),
+        session_id=session_id,
+    )
+    assert result is None
+    entities = get_entities(session_id)
+    assert entities.get("intent") != "attachments"
+    assert "documents_scope" not in entities
+
+
+@pytest.mark.asyncio
+async def test_project_picker_for_expense_does_not_list_attachments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = "sess-expense-pick"
+    update_entities(session_id, intent="project_expense")
+
+    async def _should_not_run(*args, **kwargs):
+        raise AssertionError("list_attachments should not run for expense project pick")
+
+    monkeypatch.setattr("gateway.agent.tools_registry.execute_tool", _should_not_run)
+
+    result = await try_documents_flow(
+        message="National Guard Health Affairs (ID: 1374)",
+        user=None,
+        adapter=_SlowAdapter(),
+        session_id=session_id,
+        skip_clarification=True,
+        confirmed_entities=[{"type": "project", "id": 1374, "name": "National Guard Health Affairs"}],
+    )
+    assert result is None
 
 
 def test_detect_scope_pick_normalizes_label() -> None:
