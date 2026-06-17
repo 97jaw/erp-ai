@@ -14,7 +14,7 @@ from gateway.agent.session_entities import (
 from gateway.clarify import _DATE_IN_QUERY_RE
 
 _EMOJI_RE = re.compile(
-    r"[\U0001F300-\U0001FAFF\u2600-\u27BF]",
+    r"[\U0001F300-\U0001FAFF\u2600-\u27BF\uFE00-\uFE0F\u200D\u20E3]",
     re.UNICODE,
 )
 _PICK_SEGMENT_RE = re.compile(r"\s*—\s*")
