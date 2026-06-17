@@ -586,6 +586,10 @@ class AgentHandler:
                 stream_started = time.perf_counter()
                 round_text_parts = []
                 response = None
+                # Audit/reports buffer text per-round and only emit on final turn.
+                # This prevents intermediate "thinking" text from appearing before
+                # tool results, which would cause a double-text effect in the UI.
+                _buffer_text = self.agent_type in ("audit", "reports")
                 for attempt in range(3):
                     try:
                         round_text_parts = []
@@ -600,7 +604,8 @@ class AgentHandler:
                                 if not text:
                                     continue
                                 round_text_parts.append(text)
-                                yield _sse({"type": "text", "chunk": text})
+                                if not _buffer_text:
+                                    yield _sse({"type": "text", "chunk": text})
 
                             response = await stream.get_final_message()
                         break
@@ -624,6 +629,10 @@ class AgentHandler:
 
                 if response.stop_reason == "end_turn":
                     full_text_parts = round_text_parts
+                    # Emit buffered text chunks now that we know this is the final turn
+                    if _buffer_text:
+                        for chunk in round_text_parts:
+                            yield _sse({"type": "text", "chunk": chunk})
 
                 for block in response.content:
                     if block.type == "tool_use" and block.name in UI_TOOL_NAMES:

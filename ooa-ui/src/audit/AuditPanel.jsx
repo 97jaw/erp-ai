@@ -140,6 +140,7 @@ export default function AuditPanel({ user, embedded = false, onCloseToChat }) {
             if (event.type === "text" && event.chunk) {
               streamed += event.chunk;
               setNarrative(streamed);
+              setStatus("");
             }
             if (event.type === "ui_block" && event.block) {
               localBlocks.push(event.block);
@@ -149,7 +150,9 @@ export default function AuditPanel({ user, embedded = false, onCloseToChat }) {
               setAuditData(event.audit_data);
             }
             if (event.type === "done") {
-              if (event.text) setNarrative(event.text);
+              // Only use done.text as fallback — if text was already streamed,
+              // keep the streamed version to avoid a double-text reset effect.
+              if (event.text && !streamed) setNarrative(event.text);
               if (event.audit_data) setAuditData(event.audit_data);
               if (event.ui_blocks?.length) {
                 setUiBlocks(event.ui_blocks);
