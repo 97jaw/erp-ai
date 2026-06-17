@@ -630,11 +630,16 @@ class AgentHandler:
                 )
 
                 if response.stop_reason == "end_turn":
-                    full_text_parts = round_text_parts
-                    # Emit buffered text chunks now that we know this is the final turn
                     if _buffer_text:
+                        # Audit/reports: only final-turn text; emit it now
+                        full_text_parts = round_text_parts
                         for chunk in round_text_parts:
                             yield _sse({"type": "text", "chunk": chunk})
+                    else:
+                        # Chat: accumulate text across ALL rounds so done.text
+                        # matches what was streamed. Assigning only the last
+                        # round caused done.text to truncate multi-round responses.
+                        full_text_parts.extend(round_text_parts)
 
                 for block in response.content:
                     if block.type == "tool_use" and block.name in UI_TOOL_NAMES:

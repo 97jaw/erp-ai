@@ -494,10 +494,14 @@ export default function ChatScreen({
               const visualization = hasRenderableVisualization(data.visualization)
                 ? normalizeVisualization(data.visualization)
                 : null;
+              const streamedStripped = stripVisualization(streamedText);
               const serverText = typeof data.text === "string"
                 ? stripVisualization(data.text)
-                : stripVisualization(streamedText);
-              const finalText = serverText || stripVisualization(streamedText);
+                : streamedStripped;
+              // Prefer whichever is longer — done.text can be shorter than
+              // streamedText when Claude emits text across multiple tool-use
+              // rounds (only the final round lands in done.text on the server).
+              const finalText = (streamedStripped.length > serverText.length ? streamedStripped : serverText) || streamedStripped;
               if (data.awaiting_clarification && data.clarification) {
                 updateQuery(queryId, {
                   status: "awaiting_clarification",
