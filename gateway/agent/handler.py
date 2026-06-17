@@ -259,7 +259,9 @@ class AgentHandler:
     ) -> AsyncIterator[str]:
         language = _detect_language(message)
         effective_deep_think = deep_think
-        if self.agent_type == "chat" and not effective_deep_think:
+        # Picker/menu clicks (skip_clarification=True) are always deterministic
+        # preflight responses — never need deep think regardless of keywords.
+        if self.agent_type == "chat" and not effective_deep_think and not skip_clarification:
             from gateway.core.deep_think import is_deep_think_eligible
 
             if is_deep_think_eligible(message):

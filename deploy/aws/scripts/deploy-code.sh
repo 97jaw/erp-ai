@@ -22,6 +22,9 @@ fi
 echo "==> git pull"
 git pull
 
+echo "==> build frontend"
+cd "${ROOT}/ooa-ui" && npm run build --silent && cd "${ROOT}"
+
 echo "==> recreate gateway (reload .env.production + live mount at /opt/ooa)"
 docker compose ${COMPOSE} --env-file "${ENV_FILE}" up -d --force-recreate gateway
 
