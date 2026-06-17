@@ -144,7 +144,9 @@ export default function ReportsPanel({ user, embedded = false, onCloseToChat }) 
             }
             if (event.type === "done") {
               if (event.text) streamed = event.text;
-              if (event.ui_blocks?.length) {
+              // Only use done.ui_blocks if none arrived via SSE events — the
+              // server emits blocks via both channels, so appending would duplicate.
+              if (event.ui_blocks?.length && !localBlocks.length) {
                 localBlocks.push(...event.ui_blocks);
                 setPendingBlocks([...localBlocks]);
               }
@@ -192,9 +194,11 @@ export default function ReportsPanel({ user, embedded = false, onCloseToChat }) 
   }, []);
 
   // When user makes a selection from AdaptiveUI
+  // AdaptiveUI pill_select passes { label, option, block }; date/format pass a string.
   const handleUiAction = useCallback(
-    (selectionText) => {
-      sendMessage(selectionText);
+    (payload) => {
+      const text = typeof payload === "string" ? payload : (payload?.label || "");
+      if (text) sendMessage(text);
     },
     [sendMessage],
   );
